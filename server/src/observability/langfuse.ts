@@ -12,6 +12,7 @@
  */
 import { Langfuse } from "langfuse";
 import type { LLMClient } from "../llm/client.js";
+import type { LLMRole } from "../llm/model-config.js";
 
 /**
  * Metadata carried by a traced client. Used both for trace tags
@@ -109,26 +110,28 @@ export class TracedLLMClient implements LLMClient {
   async streamResponse(
     system: string,
     messages: Array<{ role: "user" | "assistant"; content: string }>,
-    onChunk: (chunk: string) => void
+    onChunk: (chunk: string) => void,
+    role?: LLMRole
   ): Promise<string> {
+    const metadata = this.mergeRole(role);
     const client = getLangfuseClient();
     if (!client) {
-      return this.inner.streamResponse(system, messages, onChunk);
+      return this.inner.streamResponse(system, messages, onChunk, role);
     }
 
     const trace = client.trace({
-      name: this.traceName("stream"),
-      tags: buildTags(this.metadata),
-      metadata: { ...this.metadata },
+      name: this.traceName("stream", role),
+      tags: buildTags(metadata),
+      metadata: { ...metadata },
     });
     const generation = trace.generation({
-      name: this.metadata.role ?? "llm",
+      name: metadata.role ?? "llm",
       input: { system, messages },
-      metadata: { ...this.metadata },
+      metadata: { ...metadata },
     });
 
     try {
-      const result = await this.inner.streamResponse(system, messages, onChunk);
+      const result = await this.inner.streamResponse(system, messages, onChunk, role);
       generation.end({ output: result });
       return result;
     } catch (err) {
@@ -137,25 +140,31 @@ export class TracedLLMClient implements LLMClient {
     }
   }
 
-  async completeResponse(system: string, userMessage: string, maxTokens?: number): Promise<string> {
+  async completeResponse(
+    system: string,
+    userMessage: string,
+    maxTokens?: number,
+    role?: LLMRole
+  ): Promise<string> {
+    const metadata = this.mergeRole(role);
     const client = getLangfuseClient();
     if (!client) {
-      return this.inner.completeResponse(system, userMessage, maxTokens);
+      return this.inner.completeResponse(system, userMessage, maxTokens, role);
     }
 
     const trace = client.trace({
-      name: this.traceName("complete"),
-      tags: buildTags(this.metadata),
-      metadata: { ...this.metadata },
+      name: this.traceName("complete", role),
+      tags: buildTags(metadata),
+      metadata: { ...metadata },
     });
     const generation = trace.generation({
-      name: this.metadata.role ?? "llm",
+      name: metadata.role ?? "llm",
       input: { system, userMessage },
-      metadata: { ...this.metadata, maxTokens },
+      metadata: { ...metadata, maxTokens },
     });
 
     try {
-      const result = await this.inner.completeResponse(system, userMessage, maxTokens);
+      const result = await this.inner.completeResponse(system, userMessage, maxTokens, role);
       generation.end({ output: result });
       return result;
     } catch (err) {
@@ -164,25 +173,26 @@ export class TracedLLMClient implements LLMClient {
     }
   }
 
-  async completeJson<T>(system: string, userMessage: string): Promise<T> {
+  async completeJson<T>(system: string, userMessage: string, role?: LLMRole): Promise<T> {
+    const metadata = this.mergeRole(role);
     const client = getLangfuseClient();
     if (!client) {
-      return this.inner.completeJson<T>(system, userMessage);
+      return this.inner.completeJson<T>(system, userMessage, role);
     }
 
     const trace = client.trace({
-      name: this.traceName("complete_json"),
-      tags: buildTags(this.metadata),
-      metadata: { ...this.metadata },
+      name: this.traceName("complete_json", role),
+      tags: buildTags(metadata),
+      metadata: { ...metadata },
     });
     const generation = trace.generation({
-      name: this.metadata.role ?? "llm",
+      name: metadata.role ?? "llm",
       input: { system, userMessage },
-      metadata: { ...this.metadata },
+      metadata: { ...metadata },
     });
 
     try {
-      const result = await this.inner.completeJson<T>(system, userMessage);
+      const result = await this.inner.completeJson<T>(system, userMessage, role);
       generation.end({ output: result });
       return result;
     } catch (err) {
@@ -191,8 +201,14 @@ export class TracedLLMClient implements LLMClient {
     }
   }
 
-  private traceName(call: string): string {
-    const role = this.metadata.role ?? "llm";
-    return `${role}.${call}`;
+  /** Per-call role (model-config) takes precedence over the context role for
+   * trace tagging, so traces reflect the exact model that was selected. */
+  private mergeRole(role?: LLMRole): TraceMetadata {
+    return role ? { ...this.metadata, role } : this.metadata;
+  }
+
+  private traceName(call: string, role?: LLMRole): string {
+    const name = role ?? this.metadata.role ?? "llm";
+    return `${name}.${call}`;
   }
 }

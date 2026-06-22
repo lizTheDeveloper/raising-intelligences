@@ -6,7 +6,9 @@ import { createGameRoutes } from "./routes/game.js";
 import { createEndgameRoutes } from "./routes/endgame.js";
 import { ConversationEngine } from "./game/conversation-engine.js";
 import { EndgameEngine } from "./game/endgame-engine.js";
-import { ClaudeLLMClient } from "./llm/claude.js";
+import { OpenRouterLLMClient } from "./llm/openrouter.js";
+import type { LLMUsage } from "./llm/client.js";
+import type { ModelTier } from "./llm/model-config.js";
 import { TracedLLMClient, flushLangfuse, isLangfuseEnabled } from "./observability/langfuse.js";
 import {
   type GameRepository,
@@ -22,9 +24,17 @@ async function main() {
   app.use(cors());
   app.use(express.json());
 
-  // Wrap the Claude client in the Langfuse tracer. When Langfuse env vars are
-  // absent this is a transparent pass-through, so dev works without keys.
-  const llm = new TracedLLMClient(new ClaudeLLMClient());
+  // OpenRouter (OpenAI-compatible) drives all LLM calls, selecting a model per
+  // role and tier (see docs/monetization-strategy.md §3.1). Per-call token +
+  // cost accounting is logged so per-game cost can be tracked (§3.2). The
+  // Langfuse tracer wraps it transparently — a pass-through when no keys are set.
+  const tier: ModelTier = process.env.MODEL_TIER === "premium" ? "premium" : "standard";
+  const onUsage = (u: LLMUsage) => {
+    console.log(
+      `[llm] role=${u.role} model=${u.model} in=${u.inputTokens} out=${u.outputTokens} cost=$${u.costUsd.toFixed(5)}`
+    );
+  };
+  const llm = new TracedLLMClient(new OpenRouterLLMClient(tier, onUsage));
   const conversationEngine = new ConversationEngine(llm);
   const endgameEngine = new EndgameEngine(llm);
 
