@@ -1,329 +1,203 @@
 # Raising Intelligences — Monetization Strategy
 
-*Prepared 2026-06-22. Based on bottom-up cost analysis, the game design spec, PRD, and implementation plan.*
+*Revised 2026-06-22. OpenRouter + open-source model pricing. Credits-based monetization.*
 
 ---
 
-## 1. Cost Structure Analysis
+## 1. Cost Structure Analysis (OpenRouter)
 
-### Correcting the Initial Estimate
+### LLM Call Volume Per Game (unchanged)
 
-The original estimate of "30-50+ API calls per game" significantly undercounts the actual call volume. A bottom-up recount from the game mechanics yields **72-305 LLM calls per game** depending on player behavior — nearly an order of magnitude more than the initial estimate at the high end. The variance between light and heavy players is itself the pricing story. Here is the full breakdown:
+| Role | Calls Per Event | Events | Subtotal (Light/Typical/Heavy) |
+|------|-----------------|--------|-------------------------------|
+| **Kid — Family Chat** | 4-12 | 10-12 | 40 / 88 / 144 |
+| **Kid — Sidebars** | 0-12 | 10-12 | 0 / 24 / 96 |
+| **Kid — Adult Conversations** | 4-12 per convo | 2-3 | 8 / 18 / 36 |
+| **World Manager** | 1 per event + epilogue + scenarios | — | 13 / 14 / 16 |
+| **Psychologist** | 1 per event | 10-12 | 10 / 11 / 12 |
+| **Report Card** | 1 | — | 1 / 1 / 1 |
+| **Total** | | | **72 / 156 / 305** |
 
-### LLM Call Inventory Per Game
+### OpenRouter Model Tiering Strategy
 
-| Role | Mechanic | Calls Per Event | Events | Subtotal (Light/Heavy) |
-|------|----------|-----------------|--------|------------------------|
-| **Kid** — Family Chat | Up to 12 parent msgs/event, kid responds per-message (debounce combines rapid-fire, but each parent message after debounce triggers a call) | 4-12 | 10-12 | **40-144** |
-| **Kid** — Sidebars | Each parent can pull kid aside for up to 12 msgs. 0-2 sidebars per event, ~3-12 kid responses each | 0-12 | 10-12 | **0-96** (0 if unused, ~48 typical) |
-| **Kid** — Adult Conversations | 2-3 conversations, up to 12 msgs each | 4-12 per convo | 2-3 | **8-36** |
-| **World Manager** — Event Generation | 1 per event | 1 | 10-12 | **10-12** |
-| **World Manager** — Epilogue | 1 total | — | — | **1** |
-| **World Manager** — Adult Convo Scenarios | 1 per scenario | — | — | **2-3** |
-| **Psychologist** — Identity Updates | 1 per event | 1 | 10-12 | **10-12** |
-| **Report Card** | 1 total | — | — | **1** |
-| **Total** | | | | **72-305** |
+The key insight: the Kid role accounts for 70-90% of all LLM calls but only needs short, conversational responses. Use the cheapest viable model there and spend the savings on quality where it matters.
 
-Player profiles:
+**Recommended Model Assignments:**
 
-| Profile | Description | Estimated Calls |
-|---------|-------------|-----------------|
-| **Light** | Short conversations (~4 parent msgs/event), no sidebars, 10 events | ~72-90 |
-| **Typical** | ~8 parent msgs/event, 1 sidebar every other event, 11 events | ~140-180 |
-| **Heavy** | Max messages, both sidebars every event, 12 events, chatty adult convos | ~250-305 |
+| Role | Model | Why | Input $/MTok | Output $/MTok |
+|------|-------|-----|-------------|--------------|
+| Kid (family chat, sidebars) | **DeepSeek V4 Flash** | Highest call volume, short outputs, streaming. Absurdly cheap. Good enough for age-appropriate dialogue. | $0.09 | $0.18 |
+| Kid (adult conversations) | **Qwen 3.7 Plus** | Fewer calls, needs more nuance. Still cheap. | $0.32 | $1.28 |
+| World Manager (events) | **Qwen 3.7 Plus** | Needs narrative creativity, parenting-dynamic awareness. Low call count. | $0.32 | $1.28 |
+| Psychologist | **Qwen 3.7 Max** | Most critical prompt — personality formation. Worth spending here. | $1.25 | $3.75 |
+| Epilogue | **Qwen 3.7 Max** | 1 call, needs to be a compelling story. | $1.25 | $3.75 |
+| Report Card | **Qwen 3.7 Max** | The artifact players keep and share. Quality matters. | $1.25 | $3.75 |
 
-### Token Economics (the Real Cost Driver)
+**Upgrade tier (for premium credits):**
 
-Output tokens are expensive but predictable. **Input tokens are the dominant and growing cost** because the entire conversation history and identity document are re-sent on every Kid call, and the context window grows with each message.
+| Role | Model | Input $/MTok | Output $/MTok |
+|------|-------|-------------|--------------|
+| Kid (all) | **Qwen 3.7 Plus** | $0.32 | $1.28 |
+| World Manager | **Qwen 3.7 Max** | $1.25 | $3.75 |
+| Psychologist | **Gemini 3.5 Flash** | $1.50 | $9.00 |
+| Epilogue | **Claude Opus 4.7** | $5.00 | $25.00 |
+| Report Card | **Claude Opus 4.7** | $5.00 | $25.00 |
 
-**Claude Sonnet pricing (current as of mid-2026): ~$3/MTok input, ~$15/MTok output.**
+### Per-Game Cost Breakdown (Standard Tier)
 
-#### Output Token Estimates
+#### Kid — Family Chat + Sidebars (DeepSeek V4 Flash)
 
-| Call Type | Output Tokens Per Call | Calls (Typical) | Total Output Tokens |
-|-----------|----------------------|-----------------|---------------------|
-| Kid — Family Chat | 100-300 | ~88 | ~17,600 |
-| Kid — Sidebars | 100-300 | ~24 | ~4,800 |
-| Kid — Adult Convos | 150-400 | ~18 | ~5,400 |
-| World Manager — Events | 150-300 | ~11 | ~2,200 |
-| Psychologist | 300-500 | ~11 | ~4,400 |
-| Epilogue | 800-1,200 | 1 | ~1,000 |
-| Report Card | 1,000-2,000 | 1 | ~1,500 |
-| **Total Output** | | | **~37,000** |
+| Metric | Light | Typical | Heavy |
+|--------|-------|---------|-------|
+| Calls | 40 | 112 | 240 |
+| Input tokens (context grows per event) | ~100K | ~201K | ~400K |
+| Output tokens (~200 avg) | ~8K | ~22K | ~48K |
+| Input cost | $0.009 | $0.018 | $0.036 |
+| Output cost | $0.001 | $0.004 | $0.009 |
+| **Subtotal** | **$0.010** | **$0.022** | **$0.045** |
 
-**Output cost (typical game): ~37K tokens x $15/MTok = ~$0.56**
+#### Kid — Adult Conversations (Qwen 3.7 Plus)
 
-#### Input Token Estimates (Context Growth Model)
+| Metric | Light | Typical | Heavy |
+|--------|-------|---------|-------|
+| Calls | 8 | 18 | 36 |
+| Input tokens | ~24K | ~68K | ~162K |
+| Output tokens | ~2K | ~5K | ~14K |
+| Input cost | $0.008 | $0.022 | $0.052 |
+| Output cost | $0.003 | $0.006 | $0.018 |
+| **Subtotal** | **$0.011** | **$0.028** | **$0.070** |
 
-This is where the cost hides. Each Kid call sends: system prompt (~400 tokens) + identity document (~700 tokens by mid-game) + full event conversation history (grows with each message). By the end of event 10, the identity document alone is ~700 tokens, and each event's conversation history can reach ~2,000-3,000 tokens.
+#### World Manager (Qwen 3.7 Plus)
 
-| Call Type | Avg Input Tokens Per Call | Calls (Typical) | Total Input Tokens |
-|-----------|--------------------------|-----------------|-------------------|
-| Kid — early events (1-4) | ~800-1,500 | ~32 | ~36,800 |
-| Kid — mid events (5-8) | ~1,500-2,500 | ~32 | ~64,000 |
-| Kid — late events (9-12) | ~2,500-3,500 | ~24 | ~72,000 |
-| Kid — Sidebars (smaller context) | ~800-1,500 | ~24 | ~27,600 |
-| Kid — Adult Convos (full identity doc) | ~3,000-4,500 | ~18 | ~67,500 |
-| World Manager — Events | ~1,500-3,000 | ~11 | ~24,750 |
-| Psychologist (full transcript + identity doc) | ~2,000-4,000 | ~11 | ~33,000 |
-| Epilogue (full identity doc + all events) | ~5,000-8,000 | 1 | ~6,500 |
-| Report Card (all snapshots + epilogue + msgs) | ~8,000-15,000 | 1 | ~11,500 |
-| **Total Input** | | | **~344,000** |
+| Metric | Light | Typical | Heavy |
+|--------|-------|---------|-------|
+| Calls | 13 | 14 | 16 |
+| Input tokens | ~20K | ~31K | ~48K |
+| Output tokens | ~3K | ~3K | ~5K |
+| Input cost | $0.006 | $0.010 | $0.015 |
+| Output cost | $0.004 | $0.004 | $0.006 |
+| **Subtotal** | **$0.010** | **$0.014** | **$0.021** |
 
-**Input cost (typical game): ~344K tokens x $3/MTok = ~$1.03**
+#### Psychologist (Qwen 3.7 Max)
+
+| Metric | Light | Typical | Heavy |
+|--------|-------|---------|-------|
+| Calls | 10 | 11 | 12 |
+| Input tokens | ~20K | ~33K | ~48K |
+| Output tokens | ~3K | ~4K | ~6K |
+| Input cost | $0.025 | $0.041 | $0.060 |
+| Output cost | $0.011 | $0.015 | $0.023 |
+| **Subtotal** | **$0.036** | **$0.056** | **$0.083** |
+
+#### Epilogue + Report Card (Qwen 3.7 Max)
+
+| Metric | Light | Typical | Heavy |
+|--------|-------|---------|-------|
+| Input tokens | ~14K | ~18K | ~24K |
+| Output tokens | ~2K | ~3K | ~4K |
+| Input cost | $0.018 | $0.023 | $0.030 |
+| Output cost | $0.008 | $0.011 | $0.015 |
+| **Subtotal** | **$0.026** | **$0.034** | **$0.045** |
 
 ### Per-Game Cost Summary
 
-| Profile | Input Tokens | Output Tokens | Input Cost | Output Cost | **Total** |
-|---------|-------------|---------------|------------|-------------|-----------|
-| **Light** | ~200K | ~22K | $0.60 | $0.33 | **$0.93** |
-| **Typical** | ~344K | ~37K | $1.03 | $0.56 | **$1.59** |
-| **Heavy** | ~600K | ~65K | $1.80 | $0.98 | **$2.78** |
+| Profile | Standard Tier | Premium Tier (Claude report card) |
+|---------|--------------|-----------------------------------|
+| **Light** | **$0.09** | **$0.19** |
+| **Typical** | **$0.15** | **$0.35** |
+| **Heavy** | **$0.26** | **$0.55** |
 
-### Cost With Model Tiering (Recommended)
+**Compared to the original all-Claude analysis:**
 
-The existing `LLMClient` interface (NFR-051 in the PRD) is already designed to allow implementation swaps. Use this seam for per-role model selection:
+| Profile | Direct Claude (Sonnet) | Claude + Haiku Tiering | OpenRouter Standard | Savings vs Original |
+|---------|----------------------|----------------------|--------------------|--------------------|
+| Light | $0.93 | $0.35 | **$0.09** | **90%** |
+| Typical | $1.59 | $0.60 | **$0.15** | **91%** |
+| Heavy | $2.78 | $1.10 | **$0.26** | **91%** |
 
-| Role | Recommended Model | Why |
-|------|------------------|-----|
-| Kid (family chat, sidebars) | **Haiku** | High call volume, short outputs, latency-sensitive (streaming). Haiku is ~10-20x cheaper than Sonnet. Quality is sufficient for age-appropriate conversational responses. |
-| Kid (adult conversations) | **Sonnet** | Fewer calls, higher-stakes dialogue, players expect more nuance from the grown child. |
-| World Manager | **Sonnet** | Needs narrative creativity and awareness of parenting dynamics. Low call count (13-16/game), cost impact is minimal. |
-| Psychologist | **Sonnet** | The most critical prompt in the system. Identity document quality drives everything downstream. Low call count. |
-| Epilogue | **Sonnet** | 1 call, needs to be good. |
-| Report Card | **Opus** | 1 call, the artifact players keep and share. Worth the premium for depth and specificity. |
+At $0.09-$0.26 per game, **you can afford to give away a lot of free games.**
 
-**Haiku pricing (current): ~$0.25/MTok input, ~$1.25/MTok output.**
+### Infrastructure Costs
 
-| Profile | All-Sonnet Cost | Tiered Cost | Savings |
-|---------|----------------|-------------|---------|
-| **Light** | $0.93 | ~$0.35 | 62% |
-| **Typical** | $1.59 | ~$0.60 | 62% |
-| **Heavy** | $2.78 | ~$1.10 | 60% |
-
-**With model tiering, the cost floor per game drops to $0.35-$1.10.** This is the number that determines viable pricing.
-
-### Infrastructure Costs (Non-LLM)
-
-| Item | Estimated Monthly Cost | Notes |
-|------|----------------------|-------|
-| Managed Postgres (Neon/Supabase free tier) | $0-25 | Free tier covers early growth. ~50MB/1000 games. |
-| Server hosting (Fly.io/Railway) | $5-20 | Single container, autosleep when idle |
-| Domain + TLS | ~$12/year | Negligible |
-| Langfuse (self-hosted or free tier) | $0 | Self-hosted on same server or free cloud tier |
-| **Total infra (low traffic)** | **$5-45/month** | |
-
-Infrastructure is negligible until ~500+ concurrent games. **LLM API cost is 95%+ of marginal cost per game.**
+| Item | Estimated Monthly Cost |
+|------|----------------------|
+| Hosting (Fly.io/Railway) | $5-20 |
+| Postgres (Neon free tier → $25) | $0-25 |
+| Domain | ~$1/month |
+| **Total infra** | **$6-46/month** |
 
 ---
 
-## 2. Revenue Model Options
+## 2. Revenue Model: Credits System
 
-### Option A: Pay-Per-Game (RECOMMENDED)
+### Why Credits, Not Per-Game Purchase
 
-**How it works:** Each game costs a flat fee. One payment unlocks one full playthrough. The person who creates the game pays; the player who joins via link plays free.
+Per-game purchase ($4.99) has two problems:
+1. **Too much friction for an unknown game.** Nobody pays $5 for something they've never tried.
+2. **Overpriced for the cost.** At $0.15/game, a $4.99 price feels exploitative once players learn the economics.
 
-**Price point:** $4.99 per game.
+Credits solve both:
+- **Low entry price.** $1.99 gets you started. That's impulse-buy territory.
+- **Generous free tier.** You can afford 3 free games at $0.45 total acquisition cost.
+- **Repeat purchase.** Players buy more credits as they want to play with different people.
+- **Flexible pricing.** Bundle discounts reward commitment without locking people in.
 
-| Dimension | Assessment |
-|-----------|------------|
-| **Covers costs?** | Yes. At $4.99 with tiered models ($0.35-$1.10 cost), gross margin is 78-93%. Even a heavy all-Sonnet game ($2.78) leaves 44% margin. |
-| **Indie aesthetic fit** | Strong. "Pay for the experience" is how indie games work. No dark patterns, no recurring charges, no surprise costs. |
-| **Friction** | Moderate. Payment before first play is a barrier. Mitigated by the free-first-game offer (see Recommended Strategy). |
-| **Co-player dynamics** | Clean. Host pays, guest plays free. The invitation link remains frictionless — critical for the viral loop. |
-| **Replay incentive** | Natural. Different partner, different child, different outcome. Each game is genuinely unique. |
+### Credit Tiers
 
-**Pros:** Simple mental model. Aligns cost to value. Scales linearly. No ongoing commitment anxiety. Fits the "art game you play with a friend" positioning.
+| Package | Price | Credits | Per-Credit | Per-Game Cost | Margin |
+|---------|-------|---------|-----------|---------------|--------|
+| **Free** | $0 | 3 | — | $0.15 | -$0.45 total (acquisition) |
+| **Starter** | $1.99 | 5 | $0.40 | $0.15 | 63% |
+| **Standard** | $3.99 | 12 | $0.33 | $0.15 | 55% |
+| **Best Value** | $6.99 | 25 | $0.28 | $0.15 | 46% |
 
-**Cons:** Revenue is lumpy — requires continuous new games. No recurring revenue. First-purchase barrier.
+1 credit = 1 full game (10-12 events, epilogue, adult conversations, report card).
 
-### Option B: Subscription
+### How Credits Work
 
-**How it works:** Monthly fee for unlimited games.
+- **Creating a game costs 1 credit.** The host spends the credit.
+- **Joining a game is always free.** Guest clicks the link, plays immediately, no account needed to join.
+- **Guests are prompted to create an account after the report card.** "Want to raise your own? Sign up for 3 free games."
+- **Credits never expire.** Buy them whenever, use them whenever.
 
-**Why it's wrong for this game:** Subscription works when marginal cost per session is near-zero and engagement is daily/weekly. Raising Intelligences has high marginal cost ($0.35-$1.10/game) and episodic engagement (play a game with a friend, come back weeks later with a different friend). A $9.99/month subscriber who plays 4+ games costs you more than they pay. A subscriber who plays once is overpaying and feels bad about it.
+### Premium Credits (Future, Post-Launch)
 
-**Verdict: Reject.** The marginal cost structure makes subscription a losing bet on either side of the engagement spectrum.
+Once the standard tier is validated, introduce premium credits that unlock higher-quality AI:
 
-### Option C: Freemium / Premium Tiers
+| Package | Price | Credits | What's Different |
+|---------|-------|---------|-----------------|
+| **Premium 5** | $3.99 | 5 | Claude Opus for report card + epilogue. Richer, more specific narrative. |
+| **Premium 12** | $7.99 | 12 | Same |
 
-**How it works:** Free tier gives a truncated experience (4-5 events, no epilogue/adult conversations, basic report card). Premium unlocks the full game.
+Premium games cost ~$0.35/game (vs $0.15 standard), so margins are still 47-56%.
 
-| Dimension | Assessment |
-|-----------|------------|
-| **Covers costs?** | Partially. Free tier costs ~$0.15-$0.30 (4-5 events with Haiku). Acceptable as acquisition cost. |
-| **Conversion driver** | Strong — players are emotionally invested by event 4-5. The "what happens next" pull is powerful. |
-| **Risk** | Cutting the game at event 5 feels like a cliffhanger, not a complete experience. Players may feel manipulated. |
+The pitch: *"Premium games use a more powerful AI. The report card goes deeper — more specific memories, sharper observations, quotes you actually said."*
 
-**Verdict: Use as the free-first-game mechanic, not as the permanent model.** First game free, truncated to ~5 events. Full games cost $4.99. This gives players the emotional hook without permanently offering a half-experience.
+### Free Games Are the Funnel
 
-### Option D: Tip Jar / Pay-What-You-Want
+At $0.15/game, the math on free games is generous:
 
-**How it works:** Game is free. Players tip after seeing their report card.
+| Free Games Given | Total Acquisition Cost | Break-Even (1 Starter Purchase) |
+|-----------------|----------------------|-------------------------------|
+| 3 (default) | $0.45 | 1 in 4 players converts (25%) |
+| 5 (promotional) | $0.75 | 1 in 3 players converts (33%) |
 
-| Dimension | Assessment |
-|-----------|------------|
-| **Covers costs?** | Unlikely. PWYW conversion rates are 1-5% on the web. At $1.59 cost/game, you need an average tip of $1.67+ per game across *all* players (tippers and non-tippers) to break even. That requires tips of $33-167 from the 1-5% who pay. Not viable. |
-| **Indie aesthetic fit** | Excellent. "Pay what it's worth to you" is peak indie. |
+**Earning free credits:**
+- Sign up: **3 free credits**
+- Invite a friend who signs up: **1 free credit** (both players get one)
+- Share a report card that gets 10+ views: **1 free credit**
 
-**Verdict: Reject as primary model.** Could work as an optional add-on ("leave a tip for the developers") on the report card screen, but cannot be the revenue foundation.
-
-### Option E: Cosmetic / Report Card Upgrades
-
-**How it works:** Base game is free or cheap. Premium report card features (shareable link, print-quality layout, animated timeline, downloadable PDF) cost extra.
-
-| Dimension | Assessment |
-|-----------|------------|
-| **Covers costs?** | Only if upgrade rate is high. Report card is the most shareable artifact — gating its shareability hurts virality. |
-| **Risk** | The report card IS the emotional payoff. Degrading it for non-payers damages the core experience. |
-
-**Verdict: Never gate the report card itself.** Premium presentation layers (animated web version, physical print, framed art print) could work as upsells *after* the core report card is delivered for free.
-
-### Option F: Season Pass / "Year of Parenting"
-
-**How it works:** Pay $14.99-$19.99 upfront for a bundle of 5 games.
-
-| Dimension | Assessment |
-|-----------|------------|
-| **Covers costs?** | Yes. $14.99 for 5 games = $3/game vs ~$0.60 typical cost. 80% margin. |
-| **Value perception** | Strong. ~40% discount vs $4.99 x 5 = $24.95. Players who know they'll play multiple times get a deal. |
-| **Timing** | Too early for launch. Requires proven replay demand. |
-
-**Verdict: Excellent for post-launch.** Introduce after data shows repeat play rates. Don't launch with this — you need single-game pricing to establish the value anchor first.
-
-### Option G: "What If" Replay Premium
-
-**How it works:** After completing a game, pay $2.99 to replay from any event with different choices. Only the divergent events + new endgame cost API tokens.
-
-| Dimension | Assessment |
-|-----------|------------|
-| **Covers costs?** | Yes. A replay from event 7 costs ~40% of a full game. $2.99 is high-margin. |
-| **Fit** | Natural. "What if I'd handled the divorce differently?" is the thought every player has after the report card. |
-| **Timing** | Post-v1 feature (explicitly out of scope in PRD). |
-
-**Verdict: Build the architecture for this now (identity snapshots are already per-event). Monetize it post-launch.**
+This turns every player into a growth engine. The referral credit costs $0.15 — an absurdly cheap acquisition channel.
 
 ---
 
 ## 3. Monetization-Ready Architecture (Build NOW)
 
-These are the specific schema additions, services, and hooks to add to the current implementation plan. Each one is painful to retrofit after launch and trivial to add now.
-
-### 3.1 Per-Game Cost Tracking
-
-Langfuse captures token usage per LLM call, but you need cost data in Postgres to gate access and report margins.
-
-**New table:**
-
-```sql
-CREATE TABLE llm_usage (
-    id              SERIAL PRIMARY KEY,
-    game_id         UUID NOT NULL REFERENCES games(id),
-    event_number    INTEGER,
-    llm_role        TEXT NOT NULL,           -- 'kid', 'world_manager', 'psychologist', 'report_card'
-    model           TEXT NOT NULL,           -- 'claude-haiku-3', 'claude-sonnet-4', etc.
-    input_tokens    INTEGER NOT NULL,
-    output_tokens   INTEGER NOT NULL,
-    cost_cents      INTEGER NOT NULL,        -- cost in hundredths of a cent for precision
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_llm_usage_game ON llm_usage(game_id);
-```
-
-**New column on `games`:**
-
-```sql
-ALTER TABLE games ADD COLUMN total_cost_cents INTEGER NOT NULL DEFAULT 0;
-```
-
-**Implementation:** After every LLM call, record usage in `llm_usage` and increment `games.total_cost_cents`. The Anthropic SDK returns token counts in the response metadata. Wrap this in the `LLMClient` interface — every call flows through one place.
-
-### 3.2 Account Identity (Nullable FK, No Auth Yet)
-
-The PRD explicitly puts auth out of scope for v1. But every game needs to be attributable to an account *later*. Add the FK now, leave it nullable.
-
-**New table:**
-
-```sql
-CREATE TABLE accounts (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    email           TEXT UNIQUE,             -- NULL until auth is added
-    display_name    TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-```
-
-**New column on `games`:**
-
-```sql
-ALTER TABLE games ADD COLUMN created_by_account_id UUID REFERENCES accounts(id);
-```
-
-**Implementation:** For v1, `created_by_account_id` is NULL. When auth is added, associate games with accounts. This avoids a painful migration that requires backfilling creator identity from IP logs or guesswork.
-
-### 3.3 Entitlement & Payment Records
-
-Don't build Stripe integration now. Build the internal tables that Stripe will write to.
-
-**New tables:**
-
-```sql
-CREATE TABLE entitlements (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id      UUID REFERENCES accounts(id),
-    type            TEXT NOT NULL,           -- 'free_trial', 'single_game', 'bundle_5', 'replay'
-    games_remaining INTEGER,                 -- NULL = unlimited (not used now)
-    stripe_payment_id TEXT,                  -- NULL until Stripe is wired
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at      TIMESTAMPTZ              -- NULL = never expires
-);
-
-CREATE TABLE payments (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id      UUID REFERENCES accounts(id),
-    amount_cents    INTEGER NOT NULL,
-    currency        TEXT NOT NULL DEFAULT 'usd',
-    stripe_payment_intent_id TEXT,
-    status          TEXT NOT NULL DEFAULT 'pending',  -- 'pending', 'completed', 'refunded'
-    entitlement_id  UUID REFERENCES entitlements(id),
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-```
-
-**New column on `games`:**
-
-```sql
-ALTER TABLE games ADD COLUMN entitlement_id UUID REFERENCES entitlements(id);
-```
-
-### 3.4 Entitlement Gate (Middleware)
-
-Add a server-side check before game creation. For v1, it always passes. When payments go live, flip it on.
+### 3.1 OpenRouter Client (replaces direct Anthropic SDK)
 
 ```typescript
-// server/src/middleware/entitlement.ts
-export async function checkEntitlement(accountId: string | null): Promise<{
-  allowed: boolean;
-  reason?: string;
-  entitlementId?: string;
-}> {
-  // V1: always allow (no auth, no payments)
-  return { allowed: true };
-
-  // Future: check accounts.entitlements for remaining games
-}
-```
-
-Wire this into the `POST /api/game` route now. The check is a no-op, but the hook is in place.
-
-### 3.5 Model Configuration Externalization
-
-The `LLMClient` interface already supports swapping implementations (NFR-051). Extend this to per-role model selection via configuration, not code changes.
-
-```typescript
-// server/src/llm/model-config.ts
-export interface ModelConfig {
+// server/src/llm/openrouter.ts
+interface ModelConfig {
   kid_family_chat: string;
   kid_sidebar: string;
   kid_adult_chat: string;
@@ -333,296 +207,351 @@ export interface ModelConfig {
   report_card: string;
 }
 
-export const DEFAULT_MODEL_CONFIG: ModelConfig = {
-  kid_family_chat: "claude-haiku-3",
-  kid_sidebar: "claude-haiku-3",
-  kid_adult_chat: "claude-sonnet-4-20250514",
-  world_manager: "claude-sonnet-4-20250514",
-  psychologist: "claude-sonnet-4-20250514",
-  epilogue: "claude-sonnet-4-20250514",
-  report_card: "claude-opus-4-20250514",
+const STANDARD_MODELS: ModelConfig = {
+  kid_family_chat: "deepseek/deepseek-v4-flash",
+  kid_sidebar: "deepseek/deepseek-v4-flash",
+  kid_adult_chat: "qwen/qwen3.7-plus",
+  world_manager: "qwen/qwen3.7-plus",
+  psychologist: "qwen/qwen3.7-max",
+  epilogue: "qwen/qwen3.7-max",
+  report_card: "qwen/qwen3.7-max",
+};
+
+const PREMIUM_MODELS: ModelConfig = {
+  kid_family_chat: "qwen/qwen3.7-plus",
+  kid_sidebar: "qwen/qwen3.7-plus",
+  kid_adult_chat: "qwen/qwen3.7-max",
+  world_manager: "qwen/qwen3.7-max",
+  psychologist: "google/gemini-3.5-flash",
+  epilogue: "anthropic/claude-opus-4.7",
+  report_card: "anthropic/claude-opus-4.7",
 };
 ```
 
-Store as environment variables or a config table. The `ClaudeLLMClient` reads from this config instead of hardcoding the model string.
+OpenRouter uses the OpenAI-compatible API format, so the `LLMClient` interface stays the same — only the implementation changes. The `@anthropic-ai/sdk` dependency becomes `openai` (OpenRouter is OpenAI-compatible).
 
-### 3.6 Report Card as Standalone Shareable Artifact
+### 3.2 Per-Game Cost Tracking
 
-The report card is the viral vector. It needs its own access path independent of the game session.
+```sql
+CREATE TABLE llm_usage (
+    id              SERIAL PRIMARY KEY,
+    game_id         UUID NOT NULL REFERENCES games(id),
+    event_number    INTEGER,
+    llm_role        TEXT NOT NULL,
+    model           TEXT NOT NULL,
+    input_tokens    INTEGER NOT NULL,
+    output_tokens   INTEGER NOT NULL,
+    cost_cents      INTEGER NOT NULL DEFAULT 0,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-**New column on `endgames`:**
+ALTER TABLE games ADD COLUMN total_cost_cents INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE games ADD COLUMN model_tier TEXT NOT NULL DEFAULT 'standard';
+```
+
+OpenRouter returns token counts and cost in response headers (`x-ratelimit-*`) and response body. Log every call.
+
+### 3.3 Accounts & Credits
+
+```sql
+CREATE TABLE accounts (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email           TEXT UNIQUE NOT NULL,
+    display_name    TEXT,
+    credits         INTEGER NOT NULL DEFAULT 3,
+    referral_code   TEXT UNIQUE NOT NULL,
+    referred_by     UUID REFERENCES accounts(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE credit_transactions (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id      UUID NOT NULL REFERENCES accounts(id),
+    amount          INTEGER NOT NULL,          -- positive = earned/purchased, negative = spent
+    reason          TEXT NOT NULL,             -- 'signup_bonus', 'purchase', 'referral', 'game_created', 'share_bonus'
+    game_id         UUID REFERENCES games(id), -- which game consumed this credit
+    stripe_payment_id TEXT,                    -- NULL for non-purchase transactions
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE games ADD COLUMN created_by UUID REFERENCES accounts(id);
+ALTER TABLE games ADD COLUMN credit_transaction_id UUID REFERENCES credit_transactions(id);
+```
+
+### 3.4 Report Card Sharing (Viral Engine)
 
 ```sql
 ALTER TABLE endgames ADD COLUMN share_token TEXT UNIQUE;
+ALTER TABLE endgames ADD COLUMN share_views INTEGER NOT NULL DEFAULT 0;
 ```
 
-Generate a short, memorable share token (e.g., 8-character alphanumeric) when the report card is created. Serve it at `/report/<share_token>` as a standalone, publicly accessible page. No game session required to view it.
+Public route: `GET /report/:share_token` — no auth required.
 
-This is the architecture that powers "share your kid's report card on social media" — the single highest-leverage viral mechanic.
+OG meta tags for social preview:
+```html
+<meta property="og:title" content="We raised Luna" />
+<meta property="og:description" content="She became someone who laughs at things that scare her." />
+<meta property="og:image" content="/api/report/:token/og-image" />
+```
 
-### 3.7 Billable vs. Free Route Separation
+The OG image is generated server-side: a clean typographic card with the child's name and 1-2 key traits.
 
-Tag every route as billable or free in the route definition. This enables the entitlement gate to know which actions consume paid resources.
+### 3.5 Credit Gate Middleware
 
 ```typescript
-// In route metadata or middleware
-const BILLABLE_ROUTES = [
-  'POST /api/game',           // Creating a game consumes an entitlement
-  'POST /api/game/:id/message', // Each message costs API tokens
-  'POST /api/game/:id/next-event',
-];
+// server/src/middleware/credits.ts
+export async function requireCredit(accountId: string): Promise<{
+  allowed: boolean;
+  creditsRemaining: number;
+  reason?: string;
+}> {
+  const account = await db.getAccount(accountId);
+  if (!account) return { allowed: false, creditsRemaining: 0, reason: "Account not found" };
+  if (account.credits <= 0) return { allowed: false, creditsRemaining: 0, reason: "No credits remaining" };
+  return { allowed: true, creditsRemaining: account.credits };
+}
 
-const FREE_ROUTES = [
-  'GET /api/game/:id/state',   // Viewing state is free
-  'GET /report/:token',        // Viewing shared report cards is free
-];
+export async function spendCredit(accountId: string, gameId: string): Promise<void> {
+  // Atomic: decrement credits + insert transaction in one query
+  await db.query(`
+    WITH deducted AS (
+      UPDATE accounts SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING id
+    )
+    INSERT INTO credit_transactions (account_id, amount, reason, game_id)
+    SELECT $1, -1, 'game_created', $2 FROM deducted
+  `, [accountId, gameId]);
+}
 ```
+
+### 3.6 Guest-to-Account Conversion Flow
+
+After the report card, guests (players who joined via link without an account) see:
+
+```
+"Want to raise your own?"
+[Sign up — get 3 free games]
+```
+
+If the host had a referral code in the game link, both players get a bonus credit on signup.
 
 ### Architecture Summary
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    New Tables (add to 001-initial.sql)       │
-├─────────────────────────────────────────────────────────────┤
-│  accounts          (id, email, display_name)                │
-│  entitlements       (id, account_id, type, games_remaining) │
-│  payments           (id, account_id, amount, status)        │
-│  llm_usage          (id, game_id, role, model, tokens, cost)│
-├─────────────────────────────────────────────────────────────┤
-│                    New Columns                               │
-├─────────────────────────────────────────────────────────────┤
-│  games.created_by_account_id  (nullable FK → accounts)      │
-│  games.entitlement_id         (nullable FK → entitlements)  │
-│  games.total_cost_cents       (running cost tracker)        │
-│  endgames.share_token         (public report card URL)      │
-├─────────────────────────────────────────────────────────────┤
-│                    New Services                              │
-├─────────────────────────────────────────────────────────────┤
-│  entitlement.ts    (gate check, no-op in v1)                │
-│  model-config.ts   (per-role model selection)               │
-│  cost-tracker.ts   (records llm_usage after every call)     │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  New Tables                                                   │
+├──────────────────────────────────────────────────────────────┤
+│  accounts            (id, email, credits, referral_code)      │
+│  credit_transactions (id, account_id, amount, reason, game_id)│
+│  llm_usage           (id, game_id, role, model, tokens, cost) │
+├──────────────────────────────────────────────────────────────┤
+│  Modified Tables                                              │
+├──────────────────────────────────────────────────────────────┤
+│  games.created_by         (FK → accounts)                     │
+│  games.total_cost_cents   (running cost tracker)              │
+│  games.model_tier         ('standard' | 'premium')            │
+│  games.credit_txn_id      (FK → credit_transactions)          │
+│  endgames.share_token     (public report card URL)            │
+│  endgames.share_views     (viral tracking)                    │
+├──────────────────────────────────────────────────────────────┤
+│  New Services                                                 │
+├──────────────────────────────────────────────────────────────┤
+│  openrouter.ts       (OpenRouter LLM client, OpenAI-compat)  │
+│  model-config.ts     (per-role model selection, std/premium)  │
+│  credits.ts          (credit gate, spend, earn middleware)    │
+│  cost-tracker.ts     (logs llm_usage after every call)        │
+│  referral.ts         (referral code gen, credit award)        │
+└──────────────────────────────────────────────────────────────┘
 ```
-
-**Total effort: ~2-3 hours.** All of this is additive (new tables, nullable columns, pass-through middleware). None of it changes existing game logic or blocks the v1 milestone plan.
 
 ---
 
-## 4. Pricing Strategy
+## 4. Pricing & Positioning
 
-### Primary Price: $4.99 Per Game
+### Price Anchoring
 
-**Justification:**
+The game is positioned as **cheaper than a coffee, more memorable than a movie.**
 
-| Factor | Analysis |
-|--------|----------|
-| **Cost floor** | $0.35-$1.10 per game (tiered models). $4.99 provides 78-93% gross margin on typical games. |
-| **Heavy game safety** | Even a worst-case all-Sonnet heavy game ($2.78) leaves 44% gross margin at $4.99. |
-| **Indie game comps** | Mobile indie games: $2.99-$6.99. Premium narrative games (Florence, Device 6, 80 Days): $4.99. This game delivers a 60-90 minute unique experience with a partner — $4.99 is well within the expected range. |
-| **Per-hour value** | $4.99 / 75 minutes = $3.99/hour. A movie ticket is ~$8-12/hour. A board game cafe is ~$5-8/hour. Competitive. |
-| **Psychological pricing** | $4.99 is below the $5 threshold. It's an impulse purchase for most target demographics. |
+| Comparison | Price | Duration | $/hour |
+|-----------|-------|----------|--------|
+| Raising Intelligences (1 credit) | $0.40 | ~75 min | $0.32 |
+| Mobile game (premium) | $4.99-6.99 | varies | varies |
+| Movie ticket | $12-16 | 120 min | $6-8 |
+| Board game cafe | $10-15 | 120 min | $5-8 |
+| Escape room (per person) | $30-40 | 60 min | $30-40 |
 
-### Who Pays: The Host
+At $0.28-$0.40 per game (credit pricing), this is an impulse-level commitment.
 
-The player who creates the game pays. The player who receives the invite link plays free. This is non-negotiable for the viral mechanics:
+### Why This Works Better Than $4.99/Game
 
-- If both players must pay, the invitation friction doubles and the "send this to a friend" loop breaks.
-- If payment happens mid-game, you shatter immersion during the most emotionally engaged moment.
-- "I'll pay, you just click this link" is a natural, generous social gesture that fits the game's emotional tone.
-
-### Free First Game (Truncated)
-
-The first game is free but truncated to ~5 events (roughly ages 3-10). No epilogue, no adult conversations, and a simplified report card. Cost to serve: ~$0.15-$0.30 with Haiku.
-
-**Why truncated, not full:** A full free game costs $0.35-$1.10. At scale (10K free games), that's $3,500-$11,000 in API costs before a single dollar of revenue. Truncation at event 5 is the natural midpoint — the child is ~10 years old, the identity is forming, and the player is emotionally invested. The pull of "what happens in the teenage years?" is the conversion trigger.
-
-**Why not zero free games:** Two-player games require trust. Players need to experience the game before paying $4.99 for something they can't return. The truncated free game is the demo.
-
-### Future Price Points
-
-| Product | Price | When to Introduce |
-|---------|-------|-------------------|
-| Single game | $4.99 | Launch |
-| 5-game bundle | $14.99 (40% off) | After proving repeat play demand (~3 months post-launch) |
-| "What If" replay | $2.99 | When replay feature ships (post-v1) |
-| Premium report card (animated web page, printable PDF, physical print) | $1.99 / $4.99 / $19.99 | When share feature ships |
+| Factor | $4.99/game | Credits ($1.99-$6.99) |
+|--------|-----------|----------------------|
+| First purchase barrier | High — $5 for unknown game | Low — $1.99 to try |
+| Free games possible | 1 (expensive at $0.60+ cost) | 3 (cheap at $0.45 cost) |
+| Repeat purchase | Same $5 every time | Bulk discounts reward loyalty |
+| Social pressure | "Pay $5 to play with me" | "I already have credits, just click the link" |
+| Perceived value | Fixed, may feel expensive | Flexible, volume discounts feel generous |
 
 ---
 
 ## 5. Growth & Viral Mechanics
 
-### The Report Card Is the Viral Engine
-
-The report card is the single most shareable artifact in the game. It is personalized, emotional, and conversation-starting. The entire viral strategy hinges on making report cards easy to share and compelling to view.
-
-**Mechanics:**
-
-1. **Standalone shareable URL.** Every report card gets a public URL (`raisingintelligences.com/report/a7f3k9m2`). No login required to view. The page is beautifully designed — the "most designed screen" in the game.
-
-2. **Social sharing hooks.** The report card page includes Open Graph meta tags with a preview that shows the child's name and 1-2 key traits. When shared on social media, the preview is intriguing enough to click. Example preview text: *"We raised Luna. She became someone who laughs at things that scare her."*
-
-3. **Call to action on shared report cards.** The public report card page includes a single, non-pushy CTA: *"Raise your own. Play with a friend."* Links to the game creation flow.
-
-4. **The share prompt is after the emotional peak.** Players see the report card *after* the epilogue and adult conversations — the most emotionally intense part of the game. The share prompt arrives when they're most likely to act on it. Don't bury the share button. Don't add extra steps. One tap: share.
-
-### Co-Play Invitations as Viral Loops
-
-Every game requires two players. Every game creates a new potential evangelist. The invitation is the growth loop:
+### The Flywheel
 
 ```
-Player A plays with Player B
-→ Player B is hooked
-→ Player B creates a game and invites Player C (new player)
-→ Player C plays, shares report card
-→ Player D sees report card, creates a game, invites Player E
+Sign up (3 free credits)
+  → Play with a friend (guest joins free)
+    → Both see report card
+      → Guest signs up (3 free credits + 1 referral bonus each)
+        → Guest plays with a NEW friend
+          → Repeat
 ```
 
-**Key insight:** The guest plays free. The guest becomes a future host. This is the "first hit is free" dynamic, but with genuine generosity — the guest gets a full, emotional experience at no cost.
+**Every game spawns two potential new hosts.** At $0.15/game, you can fuel this flywheel aggressively.
 
-**Mechanics to amplify this:**
+### Credit-Earning Mechanics
 
-- After the report card, prompt: *"Play again with someone new?"* Pre-fill a creation flow.
-- Let players add a personal message to the invitation link: *"You have to try this with me. I just raised an AI kid who became a jazz musician."*
-- Track invitation chains. If Player B (invited by A) later creates a game, Player A could get a notification: *"Your friend raised a kid named [name]. Want to see how they turned out?"* (Only if Player B opts in.)
+| Action | Credits Earned | Cost to You | Why It's Worth It |
+|--------|---------------|-------------|-------------------|
+| Sign up | 3 | $0.45 | Core acquisition |
+| Referral (friend signs up) | 1 (both get it) | $0.30 total | Cheapest acquisition channel possible |
+| Report card gets 10+ views | 1 | $0.15 | Rewards organic sharing |
+| Seasonal promotion | 1-2 | $0.15-$0.30 | Reactivation |
 
-### The "Kids You've Raised" Gallery
+### Report Card Sharing
 
-Once accounts exist, the gallery becomes a retention and viral surface:
+The report card page is public, beautiful, and has one CTA:
 
-- Players see a grid of all the kids they've raised (child name, age photo placeholder, 1-line personality summary from report card).
-- Each entry links to the full report card.
-- The gallery is itself shareable: *"I've raised 7 AI kids. Here's who they became."*
-- Social proof for new players: *"4,000 kids raised this month."*
+*"We raised [name]. Raise your own — play with a friend."*
 
-### How Monetization Amplifies (Not Kills) Virality
-
-- **Report card viewing is always free.** Never gate the viral artifact behind a paywall.
-- **The free truncated game is itself a viral unit.** Two players share a free experience, both may convert.
-- **The host-pays model makes invitations generous.** "I already paid, just click the link" is a gift, not a sales pitch.
-- **Bundles reward repeat hosts.** Players who regularly invite new people get a volume discount, incentivizing more invitations.
+The OG preview shows: child's name + 1-2 key traits. Designed to be conversation-starting on social media.
 
 ---
 
 ## 6. Anti-Patterns to Avoid
 
-### Never Paywall the Emotional Payoff
+1. **Never paywall the report card or epilogue.** Once a game starts, the player sees the ending. Credits are spent at game creation, not mid-game.
 
-The cardinal sin: letting a player invest 60-90 minutes of emotional energy and then demanding payment before they see the epilogue or report card. This destroys trust, generates rage, and creates negative word-of-mouth that no amount of marketing can overcome.
+2. **Never make guests pay.** The frictionless invite link is the entire viral mechanic. Adding a paywall to joining kills it.
 
-**Rule:** Once a game has started, the player will see the ending. Period. Payment happens *before* the game begins, never during or after.
+3. **No ads.** Aesthetic suicide in a typography-driven art game.
 
-The free truncated game is an exception that proves the rule — players know upfront that the free game covers ages 3-10. The boundary is set before they start, not sprung on them mid-experience.
+4. **No "energy" or "stamina" timers.** Credits are purchased, not refilled over time. This isn't a mobile gacha game.
 
-### Never Gate Report Card Sharing
+5. **No gameplay advantages for purchase.** You can't buy a smarter kid or easier events.
 
-The report card is the viral engine. Making it "premium" to share is optimizing for short-term revenue at the cost of long-term growth. Premium *presentation* upgrades (animated timeline, print layout) are fine. Preventing a player from showing their friend what they created is not.
+6. **Don't show monetization UI during gameplay.** Credits are managed in the lobby and account screens. During a game session: zero payment surfaces.
 
-### Never Add Ads
-
-Ads in a black-and-white typography-driven emotional experience are absurd. This is a game about raising a child with someone you care about. A banner ad for credit cards at the bottom of the epilogue would be aesthetic suicide. Beyond aesthetics, the CPMs achievable on a niche art game would generate negligible revenue relative to the damage.
-
-### Never Sell Gameplay Advantages
-
-There is nothing to "boost" in this game. If you could pay to make the kid smarter, more obedient, or more successful, you would destroy the game's thesis — that outcomes emerge from how you parent, not from what you spend. No XP boosters, no "premium personality traits," no "unlock the gifted child."
-
-### Never Add Loot Boxes or Gacha Mechanics
-
-The game has no randomized rewards, no collectibles, no inventory. These mechanics have no natural home here and would signal that the developers have no idea what their game is.
-
-### Never Break Immersion With Monetization UI
-
-Payment and monetization should exist entirely outside the game loop. The lobby (before the game starts) and the report card screen (after the game ends) are the only acceptable locations for monetization surfaces. During gameplay, there should be zero indication that money exists.
-
-### Avoid Subscription Until Proven Wrong
-
-Subscription models create expectations of continuous content delivery. This game delivers discrete, complete experiences. A subscription signals "we'll keep making new stuff" when what you're really selling is "play the same game with different people." Wait until you have content like seasonal scenarios, themed event packs, or cooperative challenges before considering subscription — and only if the marginal cost math has changed.
+7. **Don't over-differentiate standard vs premium.** Standard games must be great. Premium is "extra polish," not "the real game."
 
 ---
 
-## 7. Recommended Strategy
+## 7. Recommended Rollout
 
-### The Model: Freemium With Pay-Per-Game
+### Phase 1: Soft Launch (no payments)
 
-**Phase 1 (Launch):**
-- First game free (truncated to ~5 events, ~ages 3-10, simplified report card)
-- Full games: $4.99 each
-- Host pays, guest plays free
-- Report card sharing is always free
-- Model tiering (Haiku for Kid/family chat, Sonnet for everything else, Opus for report card)
-- Per-game cost tracking from day one
+- Free for everyone, no credit system yet
+- Add `llm_usage` tracking and `model-config.ts` from day one
+- Use standard tier models (DeepSeek + Qwen)
+- Add `share_token` to report cards
+- Collect cost data, validate model quality, playtest
+- **Goal:** Prove the game is fun. Get 50-100 games played.
 
-**Phase 2 (Month 2-3, after launch data):**
-- Introduce accounts (email-based, lightweight)
-- "Kids You've Raised" gallery for returning players
-- 5-game bundle for $14.99
+### Phase 2: Accounts + Credits (month 1-2)
 
-**Phase 3 (Month 4-6):**
-- Shareable report card public pages with social preview
-- Premium report card upgrades (animated web version: $1.99, print-quality PDF: $4.99)
-- Stripe integration for payments
+- Add account system (email + magic link, no password)
+- 3 free credits on signup
+- Credit purchase via Stripe ($1.99 / $3.99 / $6.99)
+- Referral system (unique codes, bonus credits)
+- Guest-to-account conversion after report card
+- **Goal:** Prove conversion. Target 20-30% free-to-paid.
 
-**Phase 4 (Post-v1, when replay feature ships):**
-- "What If" replays: $2.99 each
-- Physical report card prints: $19.99 (partner with a print-on-demand service)
+### Phase 3: Viral Features (month 2-3)
 
-### Implementation Priority (What to Build in What Order)
+- Public report card pages with OG previews
+- "Kids You've Raised" gallery
+- Share-for-credits mechanic
+- **Goal:** Organic growth exceeds paid acquisition.
 
-| Priority | Item | Effort | Why Now |
-|----------|------|--------|---------|
-| **P0** | `llm_usage` table + cost tracking in `LLMClient` wrapper | 2 hours | You cannot price without data. Start capturing costs from your first playtest. |
-| **P0** | Model config externalization (`model-config.ts`) | 1 hour | Reduces costs 60% immediately. Changes one config object, not code. |
-| **P0** | `accounts` table + nullable FK on `games` | 30 min | Painless now. Painful migration later. |
-| **P1** | `endgames.share_token` + public report card route | 2 hours | The viral engine. Build it before you need it. |
-| **P1** | Entitlement gate (no-op middleware) | 1 hour | The hook for payment. No-op in v1, flip-on later. |
-| **P2** | `entitlements` + `payments` tables | 30 min | Schema only. No Stripe integration yet. |
-| **P2** | Free game truncation logic (stop at event 5, skip to simplified report card) | 2 hours | Required for the freemium model. Can be a config flag. |
-| **P3** | Stripe integration | 4-6 hours | Only needed when you're ready to charge. |
+### Phase 4: Premium Tier (month 3-4)
 
-### The Bet
-
-This strategy bets that:
-
-1. **The game is good enough that 5 free events create conversion pressure.** If players finish the truncated game and shrug, the pricing model doesn't matter — the game needs work.
-
-2. **Emotional investment converts to payment.** "I need to know what my kid becomes as a teenager" is a stronger conversion trigger than any marketing copy.
-
-3. **Report card sharing drives organic growth.** If report cards are compelling enough to share, acquisition cost is near-zero. If they're not, you need to iterate on the report card, not the marketing.
-
-4. **Two-player co-play creates natural invitation loops.** Every game requires a second player, and every guest is a future host.
-
-If any of these assumptions prove wrong, the architecture supports pivoting: drop prices, extend the free game, try PWYW as a supplement, or add seasonal content. The cost tracking and entitlement infrastructure let you experiment without rebuilding.
+- Premium credits with Claude-powered report cards
+- Premium indicator on report cards ("powered by Claude Opus")
+- A/B test premium vs standard quality perception
+- **Goal:** 15-20% of purchases are premium.
 
 ### What Success Looks Like
 
 | Metric | 3-Month Target | 6-Month Target |
 |--------|---------------|----------------|
-| Games played (total) | 1,000 | 10,000 |
-| Free-to-paid conversion rate | 15-25% | 20-30% |
-| Average revenue per paying user | $4.99 | $6-8 (mix of singles + bundles) |
-| Monthly revenue | $750-$1,250 | $4,000-$8,000 |
-| Report card share rate | 30% | 40%+ |
-| Organic (non-paid) acquisition | 80%+ | 70%+ |
-| LLM cost as % of revenue | 15-25% | 10-20% (model improvements + caching) |
-
-These numbers assume indie-scale growth: word of mouth, social sharing, a few press mentions. Not venture-scale. This is a sustainable art game, not a growth-at-all-costs startup.
+| Games played (total) | 1,500 | 15,000 |
+| Registered accounts | 1,000 | 8,000 |
+| Free-to-paid conversion | 20-30% | 25-35% |
+| Average revenue per paying user | $3.50 | $5-7 (repeat purchases) |
+| Monthly revenue | $700-$1,000 | $4,000-$8,000 |
+| LLM cost as % of revenue | 8-12% | 6-10% |
+| Report card share rate | 30% | 45%+ |
+| Organic acquisition | 80%+ | 75%+ |
 
 ---
 
-## Appendix: Per-Game Economics at $4.99
+## Appendix A: Per-Game Economics at Credit Pricing
 
 ```
-Revenue:                          $4.99
-├── Payment processing (Stripe):  -$0.45  (2.9% + $0.30)
-├── LLM cost (typical, tiered):   -$0.60
-├── Infrastructure (amortized):   -$0.05
-└── Gross profit:                  $3.89  (78% margin)
+Revenue per credit (avg across packs):     $0.33
+├── Payment processing (Stripe 2.9%+30¢):  ~$0.04 (amortized across pack)
+├── LLM cost (typical, standard tier):      -$0.15
+├── Infrastructure (amortized):             -$0.01
+└── Gross profit per game:                   $0.13  (39% margin on avg credit)
 
-At 1,000 games/month:
-├── Revenue:       $4,990
-├── Stripe fees:   -$450
-├── LLM costs:     -$600
-├── Infrastructure: -$45
-└── Net:           $3,895/month
+At best-value pricing ($6.99/25):           $0.28/credit
+├── LLM cost:                               -$0.15
+├── Stripe (amortized):                     -$0.02
+└── Gross profit:                            $0.11  (39% margin)
+
+At starter pricing ($1.99/5):               $0.40/credit
+├── LLM cost:                               -$0.15
+├── Stripe (amortized):                     -$0.08
+└── Gross profit:                            $0.17  (43% margin)
 ```
 
-At scale, the biggest lever for margin improvement is LLM cost reduction through prompt optimization, response caching (for World Manager event templates), and next-generation model pricing. Anthropic's pricing trends downward over time — every price cut is a margin expansion.
+### Break-Even Analysis
+
+| Scenario | Monthly Games | LLM Cost | Revenue Needed | Credits Sold |
+|----------|-------------|----------|---------------|-------------|
+| Cover infra only | any | — | $25/month | ~75 credits |
+| Cover infra + LLM | 500 | $75 | $100/month | ~300 credits |
+| Sustainable indie | 2,000 | $300 | $2,000/month | ~6,000 credits |
+| Comfortable | 5,000 | $750 | $5,000/month | ~15,000 credits |
+
+## Appendix B: Model Quality Validation Plan
+
+Before committing to the model tiering, run a quality gauntlet:
+
+1. **Play 5 full games** with DeepSeek V4 Flash as the Kid. Note where it breaks character, gives age-inappropriate responses, or feels robotic.
+2. **Play 3 games** with Qwen 3.7 Plus as the Kid for comparison.
+3. **Generate 10 report cards** with Qwen 3.7 Max. Compare 3 with Claude Opus. Is the quality difference noticeable?
+4. **Test the Psychologist** with both Qwen 3.7 Max and Gemini 3.5 Flash. Does the identity document evolve convincingly?
+
+If DeepSeek V4 Flash doesn't hold up for the Kid role, fall back to Qwen 3.6 Flash ($0.19/$1.13 per MTok) — still 5-10x cheaper than Sonnet. The cost difference between these two for the Kid role is ~$0.01-$0.04/game, so quality wins.
+
+## Appendix C: OpenRouter Integration Notes
+
+- **API format:** OpenAI-compatible. Use the `openai` npm package pointed at `https://openrouter.ai/api/v1`.
+- **Auth:** Single API key via `OPENROUTER_API_KEY` env var.
+- **Streaming:** Supported via SSE, same as OpenAI.
+- **Cost tracking:** Response includes `usage.prompt_tokens` and `usage.completion_tokens`. OpenRouter also returns cost in the response body under `usage.cost` (in USD).
+- **Fallback routing:** OpenRouter supports fallback models via the `route` parameter. If DeepSeek is down, fall back to Qwen automatically.
+- **Rate limits:** Vary by model and account tier. Monitor via response headers.
+
+```typescript
+import OpenAI from "openai";
+
+const openrouter = new OpenAI({
+  baseURL: "https://openrouter.ai/api/v1",
+  apiKey: process.env.OPENROUTER_API_KEY,
+  defaultHeaders: {
+    "HTTP-Referer": "https://raisingintelligences.com",
+    "X-Title": "Raising Intelligences",
+  },
+});
+```
