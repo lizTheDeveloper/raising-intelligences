@@ -68,7 +68,7 @@ export function canTransition(state: GameState, action: GameAction): boolean {
     case "END_DEBRIEF":
       return state.phase === "debrief";
     case "START_EPILOGUE":
-      return state.phase === "event_intro";
+      return state.phase === "event_intro" || state.phase === "debrief";
     case "START_ADULT_CHAT":
       return state.phase === "epilogue" || state.phase === "event_intro";
     case "SHOW_REPORT_CARD":

@@ -143,4 +143,22 @@ describe("transition", () => {
     expect(state.sidebarUsed).toEqual({ parent1: false, parent2: false });
     expect(state.sidebarActive).toBeNull();
   });
+
+  it("START_EPILOGUE can transition from event_intro or debrief", () => {
+    let state = createGame("Luna");
+    expect(canTransition(state, { type: "START_EPILOGUE", epilogue: "Test" })).toBe(true);
+
+    // Transition to debrief phase
+    state = transition(state, { type: "START_EVENT", event: testEvent });
+    state = transition(state, { type: "END_FAMILY_CHAT" });
+    state = transition(state, {
+      type: "IDENTITY_UPDATED",
+      document: "Core beliefs: the world is safe.",
+    });
+    expect(state.phase).toBe("debrief");
+    expect(canTransition(state, { type: "START_EPILOGUE", epilogue: "Test" })).toBe(true);
+
+    const epilogueState = transition(state, { type: "START_EPILOGUE", epilogue: "Test" });
+    expect(epilogueState.phase).toBe("epilogue");
+  });
 });
