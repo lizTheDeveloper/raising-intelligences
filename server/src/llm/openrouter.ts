@@ -25,7 +25,14 @@ export class OpenRouterLLMClient implements LLMClient {
     private readonly tier: ModelTier = "standard",
     private readonly onUsage?: UsageSink,
     /** Fallback model when a call supplies no role (e.g. legacy callers/tests). */
-    private readonly defaultRole: LLMRole = "kid_family_chat"
+    private readonly defaultRole: LLMRole = "kid_family_chat",
+    /**
+     * Optional deterministic seed forwarded to OpenRouter on every call. A fixed
+     * seed makes outputs reproducible for the same inputs and lets OpenRouter
+     * serve from its prompt cache — which is how the integration/E2E suite
+     * records stable cassettes (LLM_SEED). Omit in production for variety.
+     */
+    private readonly seed?: number
   ) {
     this.client = new OpenAI({
       baseURL: "https://openrouter.ai/api/v1",
@@ -61,6 +68,7 @@ export class OpenRouterLLMClient implements LLMClient {
       max_tokens: 500,
       stream: true,
       stream_options: { include_usage: true },
+      ...(this.seed !== undefined ? { seed: this.seed } : {}),
       messages: [{ role: "system", content: system }, ...promptMessages],
     }, { signal: AbortSignal.timeout(90_000) });
 
@@ -91,6 +99,7 @@ export class OpenRouterLLMClient implements LLMClient {
     const response = await this.client.chat.completions.create({
       model,
       max_tokens: maxTokens,
+      ...(this.seed !== undefined ? { seed: this.seed } : {}),
       messages: [
         { role: "system", content: system },
         { role: "user", content: userMessage },
