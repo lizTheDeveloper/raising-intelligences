@@ -3,7 +3,7 @@ import type { GameState, Sender } from "../types.js";
 import type { ConversationEngine } from "../game/conversation-engine.js";
 import type { EndgameEngine } from "../game/endgame-engine.js";
 import type { GameRepository } from "../db/repository.js";
-import { createGame } from "../game/state-machine.js";
+import { createGame, PARENT_MESSAGE_CAP } from "../game/state-machine.js";
 import {
   type Session,
   createSession,
@@ -24,8 +24,6 @@ import {
   type LobbyState,
   type ViewerState,
 } from "./protocol.js";
-
-const PARENT_MESSAGE_CAP = 12;
 
 export interface SocketDeps {
   io: Server;
@@ -336,8 +334,13 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       // it so the seat can be reclaimed. We free on disconnect and let reconnect
       // re-add — the game state itself persists in the games Map / repo.
       if (getPlayer(session, socket.id)) {
-        sessions.set(gameId, removePlayer(session, socket.id));
-        broadcastLobby(gameId);
+        const updated = removePlayer(session, socket.id);
+        if (updated.players.length === 0) {
+          sessions.delete(gameId);
+        } else {
+          sessions.set(gameId, updated);
+          broadcastLobby(gameId);
+        }
       }
     });
   });

@@ -5,6 +5,10 @@ import { createGame } from "../game/state-machine.js";
 import type { GameState, Sender } from "../types.js";
 import type { GameRepository } from "../db/repository.js";
 
+const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
+const MAX_CHILD_NAME_LENGTH = 50;
+const MAX_MESSAGE_LENGTH = 2000;
+
 export function createGameRoutes(
   engine: ConversationEngine,
   games: Map<string, GameState>,
@@ -29,6 +33,10 @@ export function createGameRoutes(
     };
     if (!childName) {
       res.status(400).json({ error: "childName is required" });
+      return;
+    }
+    if (childName.length > MAX_CHILD_NAME_LENGTH) {
+      res.status(400).json({ error: `childName must be ${MAX_CHILD_NAME_LENGTH} characters or fewer` });
       return;
     }
     const state = createGame(childName, relationshipType);
@@ -60,7 +68,8 @@ export function createGameRoutes(
       await repo.saveGame(next);
       res.json({ event: next.currentEvent, phase: next.phase });
     } catch (err) {
-      res.status(500).json({ error: String(err) });
+      console.error("[game] next-event error:", err);
+      res.status(500).json({ error: "An internal error occurred" });
     }
   });
 
@@ -72,6 +81,19 @@ export function createGameRoutes(
     }
 
     const { sender, content } = req.body as { sender: Sender; content: string };
+
+    if (!VALID_SENDERS.includes(sender)) {
+      res.status(400).json({ error: "sender must be parent1 or parent2" });
+      return;
+    }
+    if (!content || typeof content !== "string") {
+      res.status(400).json({ error: "content is required" });
+      return;
+    }
+    if (content.length > MAX_MESSAGE_LENGTH) {
+      res.status(400).json({ error: `content must be ${MAX_MESSAGE_LENGTH} characters or fewer` });
+      return;
+    }
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -95,7 +117,8 @@ export function createGameRoutes(
       );
       res.end();
     } catch (err) {
-      res.write(`data: ${JSON.stringify({ type: "error", error: String(err) })}\n\n`);
+      console.error("[game] message error:", err);
+      res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
       res.end();
     }
   });
@@ -114,7 +137,8 @@ export function createGameRoutes(
       await repo.saveGame(next);
       res.json({ phase: next.phase });
     } catch (err) {
-      res.status(500).json({ error: String(err) });
+      console.error("[game] end-chat error:", err);
+      res.status(500).json({ error: "An internal error occurred" });
     }
   });
 

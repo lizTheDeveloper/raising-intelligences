@@ -62,7 +62,7 @@ export class OpenRouterLLMClient implements LLMClient {
       stream: true,
       stream_options: { include_usage: true },
       messages: [{ role: "system", content: system }, ...promptMessages],
-    });
+    }, { signal: AbortSignal.timeout(45_000) });
 
     let fullResponse = "";
     let usage: OpenAIUsage | undefined;
@@ -95,7 +95,7 @@ export class OpenRouterLLMClient implements LLMClient {
         { role: "system", content: system },
         { role: "user", content: userMessage },
       ],
-    });
+    }, { signal: AbortSignal.timeout(60_000) });
 
     this.report(resolvedRole, model, response.usage as OpenAIUsage | undefined);
 

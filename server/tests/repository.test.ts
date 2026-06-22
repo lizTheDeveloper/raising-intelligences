@@ -18,6 +18,7 @@ function baseState(overrides: Partial<GameState> = {}): GameState {
     parentMessageCount: 0,
     sidebarUsed: { parent1: false, parent2: false },
     sidebarActive: null,
+    lastActivityAt: 0,
     ...overrides,
   };
 }

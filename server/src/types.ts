@@ -45,4 +45,6 @@ export interface GameState {
   parentMessageCount: number;
   sidebarUsed: { parent1: boolean; parent2: boolean };
   sidebarActive: Sender | null;
+  /** Unix ms of the last state transition; used for TTL eviction. */
+  lastActivityAt: number;
 }

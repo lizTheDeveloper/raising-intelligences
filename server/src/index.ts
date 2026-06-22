@@ -20,9 +20,25 @@ import { registerSocketHandlers } from "./socket/handlers.js";
 import type { Session } from "./game/session-manager.js";
 import type { GameState } from "./types.js";
 
+const REQUIRED_ENV_VARS = ["OPENROUTER_API_KEY"];
+const GAME_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+const EVICTION_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+
+function validateConfig(): void {
+  const missing = REQUIRED_ENV_VARS.filter((k) => !process.env[k]);
+  if (missing.length) {
+    console.error(`Missing required environment variables: ${missing.join(", ")}`);
+    process.exit(1);
+  }
+}
+
 async function main() {
+  validateConfig();
+
   const app = express();
-  app.use(cors());
+
+  const allowedOrigin = process.env.ALLOWED_ORIGIN ?? "http://localhost:5173";
+  app.use(cors({ origin: allowedOrigin }));
   app.use(express.json());
 
   // OpenRouter (OpenAI-compatible) drives all LLM calls, selecting a model per
@@ -45,7 +61,8 @@ async function main() {
   // Use Postgres when DATABASE_URL is configured; otherwise an in-memory
   // repository so the server runs with no external dependencies.
   let repo: GameRepository;
-  if (process.env.DATABASE_URL) {
+  const usingPostgres = !!process.env.DATABASE_URL;
+  if (usingPostgres) {
     const { migrate } = await import("./db/migrate.js");
     await migrate();
     repo = new PgGameRepository();
@@ -58,10 +75,20 @@ async function main() {
   console.log(`Observability: Langfuse ${isLangfuseEnabled() ? "enabled" : "disabled"}`);
 
   app.use("/api", createGameRoutes(conversationEngine, games, repo));
-  app.use("/api", createEndgameRoutes(endgameEngine, games));
+  app.use("/api", createEndgameRoutes(endgameEngine, games, repo));
 
-  app.get("/health", (_req, res) => {
-    res.json({ status: "ok" });
+  app.get("/health", async (_req, res) => {
+    if (!usingPostgres) {
+      res.json({ status: "ok", db: "in-memory" });
+      return;
+    }
+    try {
+      const { pool } = await import("./db/pool.js");
+      await pool.query("SELECT 1");
+      res.json({ status: "ok", db: "postgres" });
+    } catch {
+      res.status(503).json({ status: "error", db: "unreachable" });
+    }
   });
 
   if (process.env.NODE_ENV === "production") {
@@ -77,7 +104,7 @@ async function main() {
   // engines, games Map, and repository.
   const sessions = new Map<string, Session>();
   const httpServer = createServer(app);
-  const io = new SocketServer(httpServer, { cors: { origin: "*" } });
+  const io = new SocketServer(httpServer, { cors: { origin: allowedOrigin } });
   registerSocketHandlers({
     io,
     games,
@@ -87,12 +114,26 @@ async function main() {
     repo,
   });
 
+  // Evict ended or long-idle games from the in-memory Map to prevent unbounded
+  // heap growth. Persisted games can always be reconstructed from the DB on
+  // reconnect; in-memory-only games (no DATABASE_URL) are intentionally ephemeral.
+  const evictionTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [id, state] of games) {
+      if (state.phase === "ended" || now - state.lastActivityAt > GAME_TTL_MS) {
+        games.delete(id);
+      }
+    }
+  }, EVICTION_INTERVAL_MS);
+  evictionTimer.unref();
+
   const PORT = process.env.PORT || 3000;
   const server = httpServer.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
   });
 
   const shutdown = async () => {
+    clearInterval(evictionTimer);
     await flushLangfuse();
     server.close(() => process.exit(0));
   };

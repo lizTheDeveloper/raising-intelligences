@@ -84,6 +84,7 @@ function reconstructState(input: {
     parentMessageCount,
     sidebarUsed: { parent1: false, parent2: false },
     sidebarActive: null,
+    lastActivityAt: Date.now(),
   };
 }
 

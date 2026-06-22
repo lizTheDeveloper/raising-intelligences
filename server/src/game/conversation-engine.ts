@@ -1,5 +1,5 @@
 import type { GameState, GameEvent, GamePhase, Sender } from "../types.js";
-import { transition } from "./state-machine.js";
+import { transition, PARENT_MESSAGE_CAP } from "./state-machine.js";
 import type { LLMRole } from "../llm/model-config.js";
 import {
   buildKidContext,
@@ -7,8 +7,6 @@ import {
   buildWorldManagerContext,
 } from "./context-assembler.js";
 import type { LLMClient } from "../llm/client.js";
-
-const PARENT_MESSAGE_CAP = 12;
 
 /** Which Kid model serves the child's reply, by the phase it's spoken in. */
 function kidRoleForPhase(phase: GamePhase): LLMRole {
