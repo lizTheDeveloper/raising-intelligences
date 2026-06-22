@@ -58,6 +58,9 @@ export async function createTestServer(cassetteName: string): Promise<TestServer
     repo: memRepo,
     enableEviction: false,
     allowedOrigin: "*",
+    // The test socket client dials the default path; pin it so the harness is
+    // independent of NODE_ENV (which would otherwise switch to the prod subpath).
+    socketPath: "/socket.io",
   });
 
   await new Promise<void>((resolve) => {

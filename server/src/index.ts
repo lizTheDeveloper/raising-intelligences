@@ -55,11 +55,20 @@ async function main() {
 
   console.log(`Observability: Langfuse ${isLangfuseEnabled() ? "enabled" : "disabled"}`);
 
+  // In production the app is deployed under the /raising-intelligences subpath,
+  // so socket.io must be served there too — the client dials the matching path
+  // (client/src/hooks/useMultiplayer.ts).
+  const socketPath =
+    process.env.NODE_ENV === "production"
+      ? "/raising-intelligences/socket.io"
+      : "/socket.io";
+
   const { httpServer, close } = buildServer({
     llm,
     repo,
     serveStatic: process.env.NODE_ENV === "production",
     dbLabel: usingPostgres ? "postgres" : "in-memory",
+    socketPath,
     // When on Postgres, /health pings the DB to report real reachability.
     healthHandler: usingPostgres
       ? async (_req, res) => {

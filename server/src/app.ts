@@ -30,6 +30,10 @@ export interface BuildServerOptions {
   enableEviction?: boolean;
   /** Reported by /health to describe the persistence backend. */
   dbLabel?: string;
+  /** socket.io mount path. In production the app is deployed under a subpath
+   * (/raising-intelligences/socket.io) that the client dials; tests and dev use
+   * the default /socket.io. Defaults to the NODE_ENV-derived value. */
+  socketPath?: string;
   /** Custom /health handler (e.g. one that pings Postgres). Defaults to a
    * static `{ status: "ok", db: dbLabel }`. */
   healthHandler?: RequestHandler;
@@ -68,6 +72,9 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     serveStatic = process.env.NODE_ENV === "production",
     enableEviction = true,
     dbLabel = "in-memory",
+    socketPath = process.env.NODE_ENV === "production"
+      ? "/raising-intelligences/socket.io"
+      : "/socket.io",
     healthHandler,
   } = options;
 
@@ -105,7 +112,10 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   }
 
   const httpServer = createServer(app);
-  const io = new SocketServer(httpServer, { cors: { origin: allowedOrigin } });
+  const io = new SocketServer(httpServer, {
+    cors: { origin: allowedOrigin },
+    path: socketPath,
+  });
   registerSocketHandlers({
     io,
     games,
