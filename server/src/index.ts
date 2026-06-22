@@ -108,7 +108,12 @@ async function main() {
   // engines, games Map, and repository.
   const sessions = new Map<string, Session>();
   const httpServer = createServer(app);
-  const io = new SocketServer(httpServer, { cors: { origin: allowedOrigin } });
+  const socketPath =
+    process.env.NODE_ENV === "production" ? "/raising-intelligences/socket.io" : "/socket.io";
+  const io = new SocketServer(httpServer, {
+    cors: { origin: allowedOrigin },
+    path: socketPath,
+  });
   registerSocketHandlers({
     io,
     games,

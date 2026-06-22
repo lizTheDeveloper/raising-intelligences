@@ -72,7 +72,8 @@ export function useMultiplayer() {
 
   const ensureSocket = useCallback((): Socket => {
     if (socketRef.current) return socketRef.current;
-    const socket = io({ autoConnect: true });
+    const socketPath = import.meta.env.PROD ? "/raising-intelligences/socket.io" : "/socket.io";
+    const socket = io({ autoConnect: true, path: socketPath });
     socket.on("connect", () => setConnected(true));
     socket.on("disconnect", () => setConnected(false));
     socket.on(E.JOINED, (d: { gameId: string; slot: Slot }) => {
