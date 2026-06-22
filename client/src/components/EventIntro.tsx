@@ -5,9 +5,10 @@ interface Props {
   event: { age: number; description: string } | null;
   onReady: () => void;
   waiting: boolean;
+  gameId?: string | null;
 }
 
-export function EventIntro({ event, onReady, waiting }: Props) {
+export function EventIntro({ event, onReady, waiting, gameId }: Props) {
   if (waiting) {
     return (
       <div className="event-intro">
@@ -31,7 +32,7 @@ export function EventIntro({ event, onReady, waiting }: Props) {
   return (
     <div className="event-intro">
       <div className="event-intro-figure">
-        <ChildPortrait age={event.age} size={180} />
+        <ChildPortrait age={event.age} size={180} gameId={gameId} />
       </div>
       <p className="age-marker">— age {event.age} —</p>
       <p className="event-description">{event.description}</p>

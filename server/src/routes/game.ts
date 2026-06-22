@@ -4,6 +4,7 @@ import { ConversationEngine } from "../game/conversation-engine.js";
 import { createGame } from "../game/state-machine.js";
 import type { GameState, Sender } from "../types.js";
 import type { GameRepository } from "../db/repository.js";
+import { generatePortraitsForGame } from "../portrait-gen.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -43,6 +44,7 @@ export function createGameRoutes(
     games.set(state.id, state);
     await repo.saveGame(state);
     res.json({ gameId: state.id });
+    generatePortraitsForGame(state.id).catch(() => {});
   });
 
   router.get("/game/:id/state", async (req: Request, res: Response) => {

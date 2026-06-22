@@ -4,6 +4,7 @@ import type { ConversationEngine } from "../game/conversation-engine.js";
 import type { EndgameEngine } from "../game/endgame-engine.js";
 import type { GameRepository } from "../db/repository.js";
 import { createGame, PARENT_MESSAGE_CAP } from "../game/state-machine.js";
+import { generatePortraitsForGame } from "../portrait-gen.js";
 import {
   type Session,
   createSession,
@@ -120,6 +121,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
       socket.emit(E.JOINED, { gameId: state.id, slot: added.player.slot });
       broadcastLobby(state.id);
+      generatePortraitsForGame(state.id).catch(() => {});
     });
 
     socket.on(E.JOIN_GAME, async (payload: JoinGamePayload) => {

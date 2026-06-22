@@ -77,6 +77,10 @@ async function main() {
   app.use("/api", createGameRoutes(conversationEngine, games, repo));
   app.use("/api", createEndgameRoutes(endgameEngine, games, repo));
 
+  // Serve per-game generated portraits (dynamic, not part of client build)
+  const { PORTRAITS_DIR } = await import("./portrait-gen.js");
+  app.use("/portraits", express.static(PORTRAITS_DIR));
+
   app.get("/health", async (_req, res) => {
     if (!usingPostgres) {
       res.json({ status: "ok", db: "in-memory" });

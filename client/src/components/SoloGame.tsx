@@ -9,6 +9,7 @@ import { ProcessingScreen } from "./ProcessingScreen";
 
 export function SoloGame() {
   const {
+    gameId,
     phase,
     childName,
     currentEvent,
@@ -101,6 +102,7 @@ export function SoloGame() {
           event={currentEvent}
           onReady={currentEvent ? beginChat : handleNextEvent}
           waiting={loadingEvent}
+          gameId={gameId}
         />
       </div>
     );
@@ -126,7 +128,7 @@ export function SoloGame() {
   if (phase === "processing") {
     return (
       <div className="app">
-        <ProcessingScreen childName={childName} age={currentEvent?.age} />
+        <ProcessingScreen childName={childName} age={currentEvent?.age} gameId={gameId} />
       </div>
     );
   }

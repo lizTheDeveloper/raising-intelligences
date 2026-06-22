@@ -15,9 +15,10 @@ const FRAGMENTS = [
 interface Props {
   childName: string;
   age?: number;
+  gameId?: string | null;
 }
 
-export function ProcessingScreen({ childName, age = 6 }: Props) {
+export function ProcessingScreen({ childName, age = 6, gameId }: Props) {
   const [fragmentIdx, setFragmentIdx] = useState(0);
 
   useEffect(() => {
@@ -30,7 +31,7 @@ export function ProcessingScreen({ childName, age = 6 }: Props) {
   return (
     <div className="processing-screen">
       <div className="processing-figure">
-        <ChildPortrait age={age} size={140} />
+        <ChildPortrait age={age} size={140} gameId={gameId} />
       </div>
       <p className="processing-name">{childName}</p>
       <div className="processing-fragment-area">

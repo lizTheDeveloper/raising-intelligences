@@ -154,6 +154,7 @@ export function useGame() {
   }, [gameId, epilogue]);
 
   return {
+    gameId,
     phase,
     childName,
     currentEvent,
