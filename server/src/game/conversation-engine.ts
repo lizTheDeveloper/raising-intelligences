@@ -1,5 +1,6 @@
-import type { GameState, GameEvent, Sender } from "../types.js";
+import type { GameState, GameEvent, GamePhase, Sender } from "../types.js";
 import { transition } from "./state-machine.js";
+import type { LLMRole } from "../llm/model-config.js";
 import {
   buildKidContext,
   buildPsychologistContext,
@@ -9,12 +10,23 @@ import type { LLMClient } from "../llm/client.js";
 
 const PARENT_MESSAGE_CAP = 12;
 
+/** Which Kid model serves the child's reply, by the phase it's spoken in. */
+function kidRoleForPhase(phase: GamePhase): LLMRole {
+  if (phase === "adult_chat") return "kid_adult_chat";
+  if (phase === "sidebar") return "kid_sidebar";
+  return "kid_family_chat";
+}
+
 export class ConversationEngine {
   constructor(private llm: LLMClient) {}
 
   async startEvent(state: GameState): Promise<GameState> {
     const ctx = buildWorldManagerContext(state);
-    const event = await this.llm.completeJson<GameEvent>(ctx.system, ctx.userMessage);
+    const event = await this.llm.completeJson<GameEvent>(
+      ctx.system,
+      ctx.userMessage,
+      "world_manager"
+    );
     return transition(state, { type: "START_EVENT", event });
   }
 
@@ -30,7 +42,8 @@ export class ConversationEngine {
     const kidResponse = await this.llm.streamResponse(
       ctx.system,
       ctx.messages as Array<{ role: "user" | "assistant"; content: string }>,
-      onKidChunk ?? (() => {})
+      onKidChunk ?? (() => {}),
+      kidRoleForPhase(next.phase)
     );
 
     next = transition(next, { type: "KID_MESSAGE", content: kidResponse });
@@ -48,7 +61,12 @@ export class ConversationEngine {
   async endFamilyChat(state: GameState): Promise<GameState> {
     let next = transition(state, { type: "END_FAMILY_CHAT" });
     const ctx = buildPsychologistContext(next);
-    const updatedDoc = await this.llm.completeResponse(ctx.system, ctx.userMessage);
+    const updatedDoc = await this.llm.completeResponse(
+      ctx.system,
+      ctx.userMessage,
+      undefined,
+      "psychologist"
+    );
     next = transition(next, { type: "IDENTITY_UPDATED", document: updatedDoc });
     return next;
   }

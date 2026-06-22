@@ -71,5 +71,7 @@ describe("EndgameEngine", () => {
     expect(result.state.phase).toBe("report_card");
     expect(result.reportCard).toContain("# Luna");
     expect(result.reportCard).toContain("Personality");
+    // Epilogue and report card route to their dedicated model roles.
+    expect(mock.roleCalls).toEqual(["epilogue", "report_card"]);
   });
 });

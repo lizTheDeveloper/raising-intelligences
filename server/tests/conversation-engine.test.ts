@@ -64,6 +64,37 @@ describe("ConversationEngine", () => {
     expect(engine.getMessageCapRemaining(result.state)).toBe(11);
   });
 
+  it("routes each LLM call to the model role from the monetization doc", async () => {
+    const mock = new MockLLMClient();
+    mock.events = [testEvent];
+    mock.kidResponses = ["I'm sorry!"];
+    mock.identityUpdates = ["Core beliefs: accidents are forgivable."];
+    const engine = new ConversationEngine(mock);
+    let state = createGame("Luna");
+    state = await engine.startEvent(state);
+    const result = await engine.handleParentMessage(state, "parent1", "It's okay.");
+    await engine.endFamilyChat(result.state);
+
+    expect(mock.roleCalls).toEqual([
+      "world_manager", // startEvent
+      "kid_family_chat", // handleParentMessage during family chat
+      "psychologist", // endFamilyChat
+    ]);
+  });
+
+  it("uses the sidebar Kid model when the child replies in a sidebar", async () => {
+    const mock = new MockLLMClient();
+    mock.events = [testEvent];
+    mock.kidResponses = ["our secret"];
+    const engine = new ConversationEngine(mock);
+    let state = createGame("Luna");
+    state = await engine.startEvent(state);
+    state = engine.startSidebar(state, "parent1");
+    await engine.handleParentMessage(state, "parent1", "Just between us");
+
+    expect(mock.roleCalls).toEqual(["world_manager", "kid_sidebar"]);
+  });
+
   it("sidebar messages use private context for kid responses", async () => {
     const mock = new MockLLMClient();
     mock.events = [testEvent];

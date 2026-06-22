@@ -24,7 +24,12 @@ export class EndgameEngine {
     state: GameState
   ): Promise<{ state: GameState; epilogue: string }> {
     const ctx = buildEpilogueContext(state);
-    const epilogue = await this.llm.completeResponse(ctx.system, ctx.userMessage);
+    const epilogue = await this.llm.completeResponse(
+      ctx.system,
+      ctx.userMessage,
+      undefined,
+      "epilogue"
+    );
     const next = transition(state, { type: "START_EPILOGUE", epilogue });
     return { state: next, epilogue };
   }
@@ -57,7 +62,12 @@ export class EndgameEngine {
     epilogue: string
   ): Promise<{ state: GameState; reportCard: string }> {
     const ctx = buildReportCardContext(state, epilogue);
-    const reportCard = await this.llm.completeResponse(ctx.system, ctx.userMessage);
+    const reportCard = await this.llm.completeResponse(
+      ctx.system,
+      ctx.userMessage,
+      undefined,
+      "report_card"
+    );
     const next = transition(state, { type: "SHOW_REPORT_CARD", reportCard });
     return { state: next, reportCard };
   }
