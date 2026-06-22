@@ -17,7 +17,6 @@ All services run on the Hetzner box at `multiversegames.ai`, managed by Coolify 
 | **Postgres (game)** | Game state, users, sessions, credits | internal |
 | **Langfuse** | Self-hosted LLM observability | `langfuse.multiversegames.ai` |
 | **Postgres (Langfuse)** | Dedicated DB for Langfuse | internal |
-| **Redis** | Required by Langfuse | internal |
 | **Traefik** | Reverse proxy — already running | — |
 
 ---
@@ -77,12 +76,11 @@ Set in Coolify's environment variable UI. `DATABASE_URL` is auto-injected when t
 
 ## Langfuse Self-Hosted Setup
 
-Use **Langfuse v2** (not v3). v3 adds a ClickHouse dependency that's resource-heavy for a single server; v2 runs on Postgres + Redis alone, which is sufficient for this scale.
+Use **Langfuse v2** (not v3). v3 adds a ClickHouse dependency that's resource-heavy for a single server; v2 runs on Postgres alone, which is sufficient for this scale.
 
 Langfuse is deployed as a separate Coolify service using the official Langfuse v2 Docker image. It requires:
 
-- Its own Coolify-managed Postgres instance (separate from the game DB)
-- A Coolify-managed Redis instance
+- Its own Postgres instance (separate from the game DB), deployed alongside Langfuse as a Docker Compose stack in Coolify
 - Traefik routing for `langfuse.multiversegames.ai`
 
 After Langfuse is running, create a project inside it and copy the public/secret key pair into the game app's environment variables.
@@ -99,8 +97,7 @@ After Langfuse is running, create a project inside it and copy the public/secret
    - Link `ri-postgres` → injects `DATABASE_URL`
    - Set remaining env vars
    - Domain: `multiversegames.ai`
-4. **Deploy Langfuse** — use Coolify one-click or manual Docker Compose service
-   - Create `langfuse-postgres` and `langfuse-redis` services
+4. **Deploy Langfuse** — use Coolify one-click or manual Docker Compose service (Langfuse + Postgres only, no Redis needed)
    - Domain: `langfuse.multiversegames.ai`
 5. **Copy Langfuse keys** into game app env vars, redeploy
 
