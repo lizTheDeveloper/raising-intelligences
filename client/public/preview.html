@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UI Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #0a0a0a;
+  --fg: #e8e8e8;
+  --fg-dim: #888;
+  --accent: #7a6f5d;
+  --kid: #c4b99a;
+  --warm: #e8b96a;
+  --warm-glow: rgba(232, 185, 106, 0.12);
+  --font: 'IBM Plex Mono', monospace;
+}
+body { font-family: var(--font); background: var(--bg); color: var(--fg); font-size: 15px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
+  opacity: 0.028;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+.section { max-width: 600px; margin: 0 auto; padding: 32px 16px; border-bottom: 1px solid #1a1a1a; }
+.label { font-size: 10px; letter-spacing: 3px; color: #444; text-transform: uppercase; margin-bottom: 24px; }
+
+/* --- Child Presence --- */
+.child-presence { display: block; animation: presenceBreathe 5.5s ease-in-out infinite; }
+@keyframes presenceBreathe {
+  0%, 100% { transform: scale(1); opacity: 0.88; }
+  50%       { transform: scale(1.03); opacity: 1; }
+}
+
+/* --- Event Intro --- */
+.event-intro { display: flex; flex-direction: column; align-items: center; gap: 20px; text-align: center; padding: 48px 24px; }
+.age-marker { text-align: center; color: var(--fg-dim); font-size: 13px; letter-spacing: 3px; }
+.event-description { font-size: 16px; line-height: 1.8; max-width: 400px; font-style: italic; }
+.btn { background: transparent; border: 1px solid var(--fg-dim); color: var(--fg); font-family: var(--font); font-size: 13px; padding: 8px 24px; cursor: pointer; letter-spacing: 1px; margin-top: 8px; }
+.btn:hover { border-color: var(--fg); }
+
+/* --- Processing Screen --- */
+.processing-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 400px; gap: 10px; }
+.processing-name { font-size: 11px; letter-spacing: 4px; color: var(--kid); opacity: 0.65; text-transform: lowercase; }
+.processing-fragment-area { height: 18px; display: flex; align-items: center; justify-content: center; margin-top: 6px; }
+.processing-fragment-text { font-size: 11px; color: var(--fg-dim); letter-spacing: 2px; opacity: 0.7; }
+
+/* --- Debrief --- */
+.debrief-enhanced { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 400px; gap: 32px; text-align: center; }
+.debrief-text-block { display: flex; flex-direction: column; gap: 10px; }
+.debrief-line-1 { font-size: 11px; color: var(--fg-dim); letter-spacing: 5px; text-transform: lowercase; opacity: 0.7; }
+.debrief-line-2 { font-size: 17px; font-weight: 300; color: var(--kid); letter-spacing: 1px; }
+
+/* --- Chat / Message Dots --- */
+.message-dots { display: flex; gap: 5px; justify-content: flex-end; align-items: center; padding: 8px 0 4px; }
+.message-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--fg-dim); }
+.dot-active { opacity: 0.45; }
+.dot-used   { opacity: 0.08; }
+.dot-urgent { background: var(--warm); opacity: 0.9; }
+.message-input { display: flex; gap: 8px; padding: 8px 0; border-top: 1px solid #222; }
+.message-input input { flex: 1; background: transparent; border: none; color: var(--fg); font-family: var(--font); font-size: 15px; outline: none; color: var(--fg-dim); }
+
+/* --- Start Screen Glow --- */
+.start-screen { position: relative; display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 80px 16px; }
+.start-glow { position: absolute; top: 30%; left: 50%; transform: translateX(-50%); width: 300px; height: 200px; background: radial-gradient(ellipse at center, var(--warm-glow) 0%, transparent 70%); pointer-events: none; }
+h1 { font-weight: 300; font-size: 24px; letter-spacing: 2px; }
+.dim { color: var(--fg-dim); }
+.mode-choice { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+.btn-secondary { border-color: var(--fg-dim); color: var(--fg-dim); font-size: 11px; }
+
+/* --- Epilogue --- */
+.epilogue-body { display: flex; flex-direction: column; gap: 20px; }
+.epilogue-para { font-size: 16px; line-height: 1.9; font-style: italic; color: var(--fg); opacity: 0.9; }
+.endgame-label { text-align: center; color: var(--fg-dim); font-size: 11px; letter-spacing: 4px; text-transform: uppercase; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+
+<!-- START SCREEN -->
+<div class="section">
+  <p class="label">01 — start screen</p>
+  <div class="start-screen">
+    <div class="start-glow"></div>
+    <h1>raising intelligences</h1>
+    <p class="dim">raise a child through conversation</p>
+    <div class="mode-choice">
+      <button class="btn">play with a partner</button>
+      <button class="btn btn-secondary">play solo</button>
+    </div>
+  </div>
+</div>
+
+<!-- EVENT INTRO -->
+<div class="section">
+  <p class="label">02 — event intro (age 7)</p>
+  <div class="event-intro">
+    <svg width="100" height="100" viewBox="0 0 120 120" class="child-presence" aria-hidden="true">
+      <defs>
+        <radialGradient id="g7" cx="50%" cy="36%" r="55%">
+          <stop offset="0%"   stop-color="#e8b96a" stop-opacity="0.3" />
+          <stop offset="50%"  stop-color="#e8b96a" stop-opacity="0.09" />
+          <stop offset="100%" stop-color="#e8b96a" stop-opacity="0" />
+        </radialGradient>
+      </defs>
+      <ellipse cx="60" cy="42" rx="46" ry="36" fill="url(#g7)" />
+      <ellipse cx="60" cy="67" rx="9.4" ry="10.7" fill="#0a0a0a" stroke="#c4b99a" stroke-width="0.8" opacity="0.7"/>
+      <path d="M 37 90 Q 48 80 60 78 Q 72 80 83 90" fill="none" stroke="#c4b99a" stroke-width="1" opacity="0.3"/>
+    </svg>
+    <p class="age-marker">— age 7 —</p>
+    <p class="event-description">It's a Tuesday afternoon and your child comes home quiet. Something happened at school — you're not sure what, but something in them has shifted.</p>
+    <button class="btn">enter</button>
+  </div>
+</div>
+
+<!-- PROCESSING SCREEN -->
+<div class="section">
+  <p class="label">03 — processing / time passes</p>
+  <div class="processing-screen">
+    <svg width="110" height="110" viewBox="0 0 120 120" class="child-presence" aria-hidden="true">
+      <defs>
+        <radialGradient id="gp" cx="50%" cy="36%" r="55%">
+          <stop offset="0%"   stop-color="#e8b96a" stop-opacity="0.32" />
+          <stop offset="50%"  stop-color="#e8b96a" stop-opacity="0.09" />
+          <stop offset="100%" stop-color="#e8b96a" stop-opacity="0" />
+        </radialGradient>
+      </defs>
+      <ellipse cx="60" cy="42" rx="46" ry="36" fill="url(#gp)" />
+      <ellipse cx="60" cy="67" rx="9.4" ry="10.7" fill="#0a0a0a" stroke="#c4b99a" stroke-width="0.8" opacity="0.7"/>
+      <path d="M 37 90 Q 48 80 60 78 Q 72 80 83 90" fill="none" stroke="#c4b99a" stroke-width="1" opacity="0.3"/>
+    </svg>
+    <p class="processing-name">maya</p>
+    <div class="processing-fragment-area">
+      <span class="processing-fragment-text">they made a friend</span>
+    </div>
+  </div>
+</div>
+
+<!-- DEBRIEF -->
+<div class="section">
+  <p class="label">04 — debrief (solo)</p>
+  <div class="debrief-enhanced">
+    <div class="debrief-text-block">
+      <p class="debrief-line-1">time passed</p>
+      <p class="debrief-line-2">they are a little different now</p>
+    </div>
+    <button class="btn">next event</button>
+  </div>
+</div>
+
+<!-- CHAT WITH DOTS -->
+<div class="section">
+  <p class="label">05 — chat (8 messages used, 4 urgent remaining)</p>
+  <div style="padding: 16px 0;">
+    <div class="message-dots">
+      <!-- 12 dots, 8 used, 4 remaining (urgent) -->
+      <span class="message-dot dot-used"></span>
+      <span class="message-dot dot-used"></span>
+      <span class="message-dot dot-used"></span>
+      <span class="message-dot dot-used"></span>
+      <span class="message-dot dot-used"></span>
+      <span class="message-dot dot-used"></span>
+      <span class="message-dot dot-used"></span>
+      <span class="message-dot dot-used"></span>
+      <span class="message-dot dot-urgent"></span>
+      <span class="message-dot dot-urgent"></span>
+      <span class="message-dot dot-urgent"></span>
+      <span class="message-dot dot-urgent"></span>
+    </div>
+    <div class="message-input">
+      <input type="text" placeholder="type something..." />
+      <button style="background:transparent;border:1px solid #333;color:#888;font-family:var(--font);font-size:12px;padding:6px 16px;cursor:pointer;">send</button>
+    </div>
+  </div>
+</div>
+
+<!-- EPILOGUE -->
+<div class="section">
+  <p class="label">06 — epilogue (staggered)</p>
+  <div style="padding: 32px 0;">
+    <p class="endgame-label">years later</p>
+    <div class="epilogue-body" style="margin-top: 28px;">
+      <p class="epilogue-para">Maya is twenty-three now. She lives in a small apartment with two roommates, one of whom she met in the first week of college and has been inseparable from since.</p>
+      <p class="epilogue-para">She calls on Sunday evenings, usually when she's walking somewhere—to the grocery store, to meet a friend. The calls are short but she always makes them.</p>
+      <p class="epilogue-para">She still gets quiet sometimes. You've learned not to push.</p>
+    </div>
+  </div>
+</div>
+
+<!-- YOUNG CHILD vs TEEN comparison -->
+<div class="section">
+  <p class="label">07 — child presence: age 3 vs age 16</p>
+  <div style="display: flex; justify-content: space-around; align-items: center; padding: 40px 0;">
+    <!-- Age 3 -->
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
+      <svg width="100" height="100" viewBox="0 0 120 120" class="child-presence">
+        <defs>
+          <radialGradient id="g3" cx="50%" cy="36%" r="55%">
+            <stop offset="0%"   stop-color="#e8b96a" stop-opacity="0.38" />
+            <stop offset="50%"  stop-color="#e8b96a" stop-opacity="0.11" />
+            <stop offset="100%" stop-color="#e8b96a" stop-opacity="0" />
+          </radialGradient>
+        </defs>
+        <ellipse cx="60" cy="42" rx="46" ry="36" fill="url(#g3)" />
+        <!-- bigger head for young child -->
+        <ellipse cx="60" cy="70" rx="11" ry="13" fill="#0a0a0a" stroke="#c4b99a" stroke-width="0.8" opacity="0.7"/>
+        <path d="M 38 91 Q 47 83 60 81 Q 73 83 82 91" fill="none" stroke="#c4b99a" stroke-width="1" opacity="0.3"/>
+      </svg>
+      <p style="font-size: 11px; color: var(--fg-dim); letter-spacing: 2px;">age 3</p>
+    </div>
+    <!-- Age 16 -->
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
+      <svg width="100" height="100" viewBox="0 0 120 120" class="child-presence">
+        <defs>
+          <radialGradient id="g16" cx="50%" cy="36%" r="55%">
+            <stop offset="0%"   stop-color="#e8b96a" stop-opacity="0.22" />
+            <stop offset="50%"  stop-color="#e8b96a" stop-opacity="0.06" />
+            <stop offset="100%" stop-color="#e8b96a" stop-opacity="0" />
+          </radialGradient>
+        </defs>
+        <ellipse cx="60" cy="42" rx="46" ry="36" fill="url(#g16)" />
+        <!-- narrower head, wider shoulders for teen -->
+        <ellipse cx="60" cy="63" rx="9.2" ry="11.5" fill="#0a0a0a" stroke="#c4b99a" stroke-width="0.8" opacity="0.7"/>
+        <path d="M 33 91 Q 46 76 60 74 Q 74 76 87 91" fill="none" stroke="#c4b99a" stroke-width="1" opacity="0.3"/>
+      </svg>
+      <p style="font-size: 11px; color: var(--fg-dim); letter-spacing: 2px;">age 16</p>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

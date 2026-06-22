@@ -13,23 +13,23 @@
   --accent: #7a6f5d;
   --kid: #c4b99a;
   --warm: #e8b96a;
-  --warm-glow: rgba(232, 185, 106, 0.06);
+  --warm-glow: rgba(232, 185, 106, 0.12);
   --font: 'IBM Plex Mono', monospace;
 }
 
-/* Ocean Grunge theme — add class="theme-ocean-grunge" to .app */
-.theme-ocean-grunge {
+/* Ocean Grunge theme */
+body.theme-ocean-grunge {
   --bg: #090e18;
   --fg: #bdd0d8;
   --fg-dim: #4d6e7a;
   --accent: #2b6272;
   --kid: #7fb0be;
   --warm: #3d7a6a;
-  --warm-glow: rgba(61, 122, 106, 0.07);
+  --warm-glow: rgba(61, 122, 106, 0.1);
 }
 
-/* Cyberminimalism theme — add class="theme-cyber" to .app */
-.theme-cyber {
+/* Cyberminimalism theme */
+body.theme-cyber {
   --bg: #080808;
   --fg: #d8d8d8;
   --fg-dim: #484848;
@@ -80,8 +80,9 @@ body::after {
 
 .start-screen h1 {
   font-weight: 300;
-  font-size: 24px;
-  letter-spacing: 2px;
+  font-size: 42px;
+  letter-spacing: 3px;
+  line-height: 1.15;
 }
 
 .dim {
@@ -149,8 +150,8 @@ body::after {
 .age-marker {
   text-align: center;
   color: var(--fg-dim);
-  font-size: 13px;
-  letter-spacing: 3px;
+  font-size: 16px;
+  letter-spacing: 5px;
   padding: 24px 0 16px;
 }
 
@@ -160,14 +161,14 @@ body::after {
   align-items: center;
   justify-content: center;
   min-height: 80dvh;
-  gap: 24px;
+  gap: 20px;
   text-align: center;
   padding: 0 24px;
 }
 
 .event-description {
-  font-size: 16px;
-  line-height: 1.8;
+  font-size: 18px;
+  line-height: 1.85;
   max-width: 400px;
   font-style: italic;
 }
@@ -283,8 +284,9 @@ body::after {
 
 .lobby h1 {
   font-weight: 300;
-  font-size: 22px;
-  letter-spacing: 2px;
+  font-size: 30px;
+  letter-spacing: 3px;
+  line-height: 1.2;
 }
 
 .lobby-players {
@@ -377,6 +379,10 @@ body::after {
 @media (max-width: 480px) {
   .app { padding: 12px; }
   .message-content { font-size: 16px; }
+  .start-screen h1 { font-size: 28px; letter-spacing: 2px; }
+  .debrief-line-2   { font-size: 28px; }
+  .processing-name  { font-size: 24px; }
+  .lobby h1         { font-size: 22px; }
 }
 
 /* ─── Child Presence (lo-fi silhouette) ──────────────────────── */
@@ -407,10 +413,11 @@ body::after {
 }
 
 .processing-name {
-  font-size: 11px;
-  letter-spacing: 4px;
+  font-size: 32px;
+  letter-spacing: 6px;
   color: var(--kid);
-  opacity: 0.65;
+  opacity: 0.75;
+  font-weight: 300;
   text-transform: lowercase;
 }
 
@@ -495,10 +502,12 @@ body::after {
 }
 
 .debrief-line-2 {
-  font-size: 17px;
+  font-size: 40px;
   font-weight: 300;
   color: var(--kid);
-  letter-spacing: 1px;
+  letter-spacing: 0;
+  line-height: 1.2;
+  max-width: 480px;
   opacity: 0;
   animation: fadeIn 900ms ease both;
   animation-delay: 1500ms;
@@ -541,3 +550,37 @@ body::after {
 }
 
 .start-screen { position: relative; }
+
+/* ─── Theme Picker ───────────────────────────────────────────── */
+
+.theme-picker {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 20px;
+  align-items: center;
+}
+
+.theme-btn {
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  font-family: var(--font);
+  font-size: 10px;
+  letter-spacing: 3px;
+  cursor: pointer;
+  padding: 4px 0;
+  opacity: 0.45;
+  transition: opacity 0.2s ease, color 0.2s ease;
+  text-transform: lowercase;
+}
+
+.theme-btn:hover { opacity: 0.75; }
+
+.theme-btn-active {
+  opacity: 1;
+  color: var(--kid);
+  border-bottom: 1px solid var(--kid);
+}
