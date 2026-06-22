@@ -18,6 +18,7 @@ export function SoloGame() {
     messagesRemaining,
     streamingMessage,
     isStreaming,
+    error,
     createGame,
     nextEvent,
     beginChat,
@@ -31,24 +32,17 @@ export function SoloGame() {
   } = useGame();
 
   const [nameInput, setNameInput] = useState("");
-  const [relationshipInput, setRelationshipInput] = useState("romantic partners");
   const [loadingEvent, setLoadingEvent] = useState(false);
   const [showGuardian, setShowGuardian] = useState(false);
 
-  const RELATIONSHIP_OPTIONS = [
-    "romantic partners",
-    "friends",
-    "siblings",
-    "ex-partners",
-    "co-parents who were never together",
-  ];
-
   const handleStart = async () => {
     if (!nameInput.trim()) return;
-    await createGame(nameInput.trim(), relationshipInput);
-    // Show guardian screen immediately, generate first event in the background
+    // Set UI state synchronously before any awaits so there is no render window
+    // where phase === "event_intro" but showGuardian === false (which would flash
+    // the empty EventIntro "begin" button).
     setShowGuardian(true);
     setLoadingEvent(true);
+    await createGame(nameInput.trim());
     await nextEvent();
     setLoadingEvent(false);
   };
@@ -79,20 +73,6 @@ export function SoloGame() {
               autoFocus
               className="name-input"
             />
-            <p className="dim" style={{ marginTop: "24px" }}>
-              your relationship
-            </p>
-            <select
-              value={relationshipInput}
-              onChange={(e) => setRelationshipInput(e.target.value)}
-              className="relationship-select"
-            >
-              {RELATIONSHIP_OPTIONS.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
-            </select>
             <button type="submit" className="btn" disabled={!nameInput.trim()}>
               begin
             </button>
@@ -135,6 +115,7 @@ export function SoloGame() {
         {currentEvent?.description && (
           <p className="event-context">{currentEvent.description}</p>
         )}
+        {error && <p className="error-message">{error}</p>}
         <Chat
           messages={messages}
           streamingMessage={streamingMessage}
