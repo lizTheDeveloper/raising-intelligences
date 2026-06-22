@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: raising_intelligences_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: raising_intelligences
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - raising_intelligences_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d raising_intelligences"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  raising_intelligences_pgdata:

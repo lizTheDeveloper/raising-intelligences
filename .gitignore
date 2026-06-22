@@ -1,0 +1,9 @@
+node_modules/
+.claude/worktrees/
+dist/
+*.log
+.env
+.DS_Store
+server/dist/
+client/dist/
+*.tsbuildinfo
