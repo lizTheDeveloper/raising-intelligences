@@ -1,7 +1,7 @@
 import type { GameState, GameEvent, Message, Sender } from "../types.js";
 import { randomUUID } from "crypto";
 
-const PARENT_MESSAGE_CAP = 12;
+export const PARENT_MESSAGE_CAP = 12;
 
 export type GameAction =
   | { type: "LOAD_EVENT"; event: GameEvent }
@@ -35,6 +35,7 @@ export function createGame(childName: string, relationshipType = "co-parents"): 
     parentMessageCount: 0,
     sidebarUsed: { parent1: false, parent2: false },
     sidebarActive: null,
+    lastActivityAt: Date.now(),
   };
 }
 
@@ -88,7 +89,10 @@ export function transition(state: GameState, action: GameAction): GameState {
   if (!canTransition(state, action)) {
     throw new Error(`Invalid transition: ${action.type} from phase ${state.phase}`);
   }
+  return { ...applyTransition(state, action), lastActivityAt: Date.now() };
+}
 
+function applyTransition(state: GameState, action: GameAction): GameState {
   switch (action.type) {
     case "LOAD_EVENT":
       return {
@@ -223,3 +227,4 @@ export function transition(state: GameState, action: GameAction): GameState {
       return state;
   }
 }
+

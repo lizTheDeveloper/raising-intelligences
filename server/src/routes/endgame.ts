@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
 import { EndgameEngine } from "../game/endgame-engine.js";
+import type { GameRepository } from "../db/repository.js";
 import type { GameState } from "../types.js";
 
 /**
@@ -10,7 +11,8 @@ import type { GameState } from "../types.js";
  */
 export function createEndgameRoutes(
   engine: EndgameEngine,
-  games: Map<string, GameState>
+  games: Map<string, GameState>,
+  repo: GameRepository
 ): Router {
   const router = Router();
 
@@ -23,9 +25,11 @@ export function createEndgameRoutes(
     try {
       const result = await engine.generateEpilogue(state);
       games.set(result.state.id, result.state);
+      await repo.saveGame(result.state);
       res.json({ phase: result.state.phase, epilogue: result.epilogue });
     } catch (err) {
-      res.status(500).json({ error: String(err) });
+      console.error("[endgame] epilogue error:", err);
+      res.status(500).json({ error: "An internal error occurred" });
     }
   });
 
@@ -43,9 +47,11 @@ export function createEndgameRoutes(
     try {
       const next = await engine.startAdultConversation(state, scenario);
       games.set(next.id, next);
+      await repo.saveGame(next);
       res.json({ phase: next.phase, event: next.currentEvent });
     } catch (err) {
-      res.status(500).json({ error: String(err) });
+      console.error("[endgame] adult-chat error:", err);
+      res.status(500).json({ error: "An internal error occurred" });
     }
   });
 
@@ -59,9 +65,12 @@ export function createEndgameRoutes(
     try {
       const result = await engine.generateReportCard(state, epilogue ?? "");
       games.set(result.state.id, result.state);
+      await repo.saveEndgame(result.state.id, epilogue ?? "", result.reportCard);
+      await repo.saveGame(result.state);
       res.json({ phase: result.state.phase, reportCard: result.reportCard });
     } catch (err) {
-      res.status(500).json({ error: String(err) });
+      console.error("[endgame] report-card error:", err);
+      res.status(500).json({ error: "An internal error occurred" });
     }
   });
 
