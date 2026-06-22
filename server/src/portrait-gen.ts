@@ -1,4 +1,4 @@
-import { writeFileSync, mkdirSync, existsSync } from "fs";
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from "fs";
 import path from "path";
 
 export const PORTRAITS_DIR =
@@ -37,13 +37,13 @@ export function childDescriptorFromGameId(gameId: string) {
 
 const AGE_BUCKETS = [
   { slug: "age-03", figure: "tiny round-headed toddler, maybe 3 years old," },
-  { slug: "age-07", figure: "small 7-year-old child," },
+  { slug: "age-07", figure: "7-year-old child," },
   { slug: "age-12", figure: "12-year-old preteen," },
   { slug: "age-16", figure: "16-year-old teenager with slightly slumped posture," },
   { slug: "age-20", figure: "person in their mid-twenties," },
 ];
 
-function buildPrompt(figure: string, hair: string, clothing: string): string {
+function firstPortraitPrompt(figure: string, hair: string, clothing: string): string {
   return [
     `Lo-fi anime illustration of a ${figure} with ${hair},`,
     `wearing a ${clothing}, seen from behind,`,
@@ -58,57 +58,126 @@ function buildPrompt(figure: string, hair: string, clothing: string): string {
   ].join(" ");
 }
 
-async function generateOne(
-  slug: string,
+function agingPrompt(figure: string, hair: string, clothing: string): string {
+  return [
+    `The same character from the reference image, now ${figure}`,
+    `Seen from behind at the same cozy desk, same ${hair}, same ${clothing}.`,
+    `They have grown — body proportions have changed with age — but the setting and mood are the same.`,
+    `Dark cozy bedroom, warm amber desk lamp glow, rain on window, bookshelf behind.`,
+    `Lo-fi anime illustration style, muted warm palette, soft film grain. Square 1:1.`,
+    `No text, no watermark.`,
+  ].join(" ");
+}
+
+async function generateFirst(
   figure: string,
   hair: string,
   clothing: string,
   outPath: string,
   apiKey: string,
-): Promise<void> {
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+): Promise<Buffer> {
+  const res = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
-      "HTTP-Referer": "https://raisingintelligences.com",
-      "X-Title": "Raising Intelligences",
     },
     body: JSON.stringify({
-      model: "google/gemini-2.5-flash-image",
-      messages: [{ role: "user", content: buildPrompt(figure, hair, clothing) }],
+      model: "gpt-image-1",
+      prompt: firstPortraitPrompt(figure, hair, clothing),
+      n: 1,
+      size: "1024x1024",
+      output_format: "png",
     }),
   });
 
   const data = (await res.json()) as {
     error?: { message: string };
-    choices?: Array<{ message?: { images?: Array<{ image_url?: { url: string } }> } }>;
+    data?: Array<{ b64_json?: string; url?: string }>;
   };
 
   if (data.error) throw new Error(data.error.message);
-  const url = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
-  if (!url) throw new Error(`No image returned for ${slug}`);
+  const b64 = data.data?.[0]?.b64_json;
+  if (!b64) throw new Error("No image returned from gpt-image-1");
 
-  const b64 = url.replace(/^data:image\/\w+;base64,/, "");
+  const buf = Buffer.from(b64, "base64");
+  writeFileSync(outPath, buf);
+  return buf;
+}
+
+async function generateWithReference(
+  figure: string,
+  hair: string,
+  clothing: string,
+  outPath: string,
+  referenceImagePath: string,
+  apiKey: string,
+): Promise<void> {
+  // Use FormData so we can attach the reference image
+  const form = new FormData();
+  form.append("model", "gpt-image-1");
+  form.append("prompt", agingPrompt(figure, hair, clothing));
+  form.append("n", "1");
+  form.append("size", "1024x1024");
+
+  const refBuf = readFileSync(referenceImagePath);
+  const blob = new Blob([refBuf], { type: "image/png" });
+  form.append("image", blob, "reference.png");
+
+  const res = await fetch("https://api.openai.com/v1/images/edits", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
+  });
+
+  const data = (await res.json()) as {
+    error?: { message: string };
+    data?: Array<{ b64_json?: string; url?: string }>;
+  };
+
+  if (data.error) throw new Error(data.error.message);
+  const b64 = data.data?.[0]?.b64_json;
+  if (!b64) throw new Error("No image returned from gpt-image-1 edits");
+
   writeFileSync(outPath, Buffer.from(b64, "base64"));
 }
 
 export async function generatePortraitsForGame(gameId: string): Promise<void> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) return;
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    console.warn("[portraits] OPENAI_API_KEY not set — skipping portrait generation");
+    return;
+  }
 
   const dir = path.join(PORTRAITS_DIR, gameId);
   mkdirSync(dir, { recursive: true });
 
   const { hair, clothing } = childDescriptorFromGameId(gameId);
+  const [first, ...rest] = AGE_BUCKETS;
 
-  await Promise.allSettled(
-    AGE_BUCKETS.map(({ slug, figure }) => {
-      const outPath = path.join(dir, `${slug}.png`);
-      if (existsSync(outPath)) return Promise.resolve();
-      return generateOne(slug, figure, hair, clothing, outPath, apiKey).catch((e) => {
-        console.error(`[portraits] ${gameId}/${slug} failed:`, e.message);
-      });
-    }),
-  );
+  // Generate serially: each age uses the previous as a visual reference
+  // age-03 → age-07 → age-12 → age-16 → age-20
+  let prevPath: string | null = null;
+
+  for (const { slug, figure } of AGE_BUCKETS) {
+    const outPath = path.join(dir, `${slug}.png`);
+
+    if (existsSync(outPath)) {
+      prevPath = outPath;
+      continue;
+    }
+
+    try {
+      if (!prevPath) {
+        await generateFirst(figure, hair, clothing, outPath, apiKey);
+      } else {
+        await generateWithReference(figure, hair, clothing, outPath, prevPath, apiKey);
+      }
+      console.log(`[portraits] ${gameId}/${slug} ready`);
+      prevPath = outPath;
+    } catch (e) {
+      console.error(`[portraits] ${gameId}/${slug} failed:`, (e as Error).message);
+      // keep prevPath as-is — next age will still reference the last successful one
+    }
+  }
 }
