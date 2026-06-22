@@ -25,6 +25,8 @@ export function useGame() {
   const [messagesRemaining, setMessagesRemaining] = useState(12);
   const [streamingMessage, setStreamingMessage] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [epilogue, setEpilogue] = useState("");
+  const [reportCard, setReportCard] = useState("");
 
   const createGame = useCallback(
     async (name: string, relationshipType = "co-parents") => {
@@ -123,6 +125,28 @@ export function useGame() {
     setCurrentEvent(null);
   }, [gameId]);
 
+  const generateEpilogue = useCallback(async () => {
+    if (!gameId) return;
+    setPhase("processing");
+    const res = await fetch(`${API}/game/${gameId}/epilogue`, { method: "POST" });
+    const data = await res.json();
+    setEpilogue(data.epilogue);
+    setPhase(data.phase);
+  }, [gameId]);
+
+  const generateReportCard = useCallback(async () => {
+    if (!gameId) return;
+    setPhase("processing");
+    const res = await fetch(`${API}/game/${gameId}/report-card`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ epilogue }),
+    });
+    const data = await res.json();
+    setReportCard(data.reportCard);
+    setPhase(data.phase);
+  }, [gameId, epilogue]);
+
   return {
     phase,
     childName,
@@ -131,10 +155,14 @@ export function useGame() {
     messagesRemaining,
     streamingMessage,
     isStreaming,
+    epilogue,
+    reportCard,
     createGame,
     nextEvent,
     sendMessage,
     endChat,
     endDebrief,
+    generateEpilogue,
+    generateReportCard,
   };
 }

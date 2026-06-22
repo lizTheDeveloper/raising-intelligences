@@ -2,6 +2,9 @@ import { useState } from "react";
 import { useGame } from "./hooks/useGame";
 import { EventIntro } from "./components/EventIntro";
 import { Chat } from "./components/Chat";
+import { Debrief } from "./components/Debrief";
+import { Endgame } from "./components/Endgame";
+import { ReportCard } from "./components/ReportCard";
 
 export function App() {
   const {
@@ -17,6 +20,10 @@ export function App() {
     sendMessage,
     endChat,
     endDebrief,
+    epilogue,
+    reportCard,
+    generateEpilogue,
+    generateReportCard,
   } = useGame();
 
   const [nameInput, setNameInput] = useState("");
@@ -120,12 +127,45 @@ export function App() {
   if (phase === "debrief") {
     return (
       <div className="app">
+        <Debrief onContinue={endDebrief} />
         <div className="debrief">
-          <p className="dim">debrief — in the solo prototype, just continue</p>
-          <button onClick={endDebrief} className="btn">
-            next event
+          <button onClick={generateEpilogue} className="btn btn-secondary">
+            end childhood → epilogue
           </button>
         </div>
+      </div>
+    );
+  }
+
+  if (phase === "epilogue") {
+    return (
+      <div className="app">
+        <Endgame epilogue={epilogue} onContinue={generateReportCard} />
+      </div>
+    );
+  }
+
+  if (phase === "adult_chat") {
+    return (
+      <div className="app">
+        <p className="age-marker">— adulthood —</p>
+        <Chat
+          messages={messages}
+          streamingMessage={streamingMessage}
+          childName={childName}
+          messagesRemaining={messagesRemaining}
+          isStreaming={isStreaming}
+          onSend={sendMessage}
+          onEndChat={generateReportCard}
+        />
+      </div>
+    );
+  }
+
+  if (phase === "report_card") {
+    return (
+      <div className="app">
+        <ReportCard reportCard={reportCard} childName={childName} />
       </div>
     );
   }

@@ -1,1 +1,0 @@
-{"root":["./src/App.tsx","./src/main.tsx","./src/components/Chat.tsx","./src/components/EventIntro.tsx","./src/components/MessageInput.tsx","./src/components/MessageList.tsx","./src/hooks/useGame.ts"],"version":"5.9.3"}

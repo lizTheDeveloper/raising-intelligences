@@ -1,1 +1,0 @@
-{"root":["./src/index.ts","./src/types.ts","./src/game/context-assembler.ts","./src/game/conversation-engine.ts","./src/game/state-machine.ts","./src/llm/claude.ts","./src/llm/client.ts","./src/llm/mock.ts","./src/llm/prompts.ts","./src/routes/game.ts"],"version":"5.9.3"}
