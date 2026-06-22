@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import path from "path";
 import { createServer } from "http";
 import { Server as SocketServer } from "socket.io";
 import { createGameRoutes } from "./routes/game.js";
@@ -62,6 +63,14 @@ async function main() {
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
   });
+
+  if (process.env.NODE_ENV === "production") {
+    const clientDist = path.join(process.cwd(), "client", "dist");
+    app.use(express.static(clientDist));
+    app.get("*", (_req, res) => {
+      res.sendFile(path.join(clientDist, "index.html"));
+    });
+  }
 
   // Realtime multiplayer transport (M2/M3). The REST routes above remain for
   // solo play and reconnect; socket.io drives two-player games over the same
