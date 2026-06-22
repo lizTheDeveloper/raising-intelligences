@@ -83,7 +83,7 @@ async function generateFirst(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "gpt-image-1",
+      model: "gpt-image-2",
       prompt: firstPortraitPrompt(figure, hair, clothing),
       n: 1,
       size: "1024x1024",
@@ -98,7 +98,7 @@ async function generateFirst(
 
   if (data.error) throw new Error(data.error.message);
   const b64 = data.data?.[0]?.b64_json;
-  if (!b64) throw new Error("No image returned from gpt-image-1");
+  if (!b64) throw new Error("No image returned from gpt-image-2");
 
   const buf = Buffer.from(b64, "base64");
   writeFileSync(outPath, buf);
@@ -115,7 +115,7 @@ async function generateWithReference(
 ): Promise<void> {
   // Use FormData so we can attach the reference image
   const form = new FormData();
-  form.append("model", "gpt-image-1");
+  form.append("model", "gpt-image-2");
   form.append("prompt", agingPrompt(figure, hair, clothing));
   form.append("n", "1");
   form.append("size", "1024x1024");
@@ -137,7 +137,7 @@ async function generateWithReference(
 
   if (data.error) throw new Error(data.error.message);
   const b64 = data.data?.[0]?.b64_json;
-  if (!b64) throw new Error("No image returned from gpt-image-1 edits");
+  if (!b64) throw new Error("No image returned from gpt-image-2 edits");
 
   writeFileSync(outPath, Buffer.from(b64, "base64"));
 }

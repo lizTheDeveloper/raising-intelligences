@@ -1,5 +1,5 @@
 /**
- * Generate lo-fi child portraits using OpenAI gpt-image-1.
+ * Generate lo-fi child portraits using OpenAI gpt-image-2.
  * Generates the youngest age first, then uses it as a visual reference
  * for subsequent ages so the same kid is recognizable growing up.
  *
@@ -65,7 +65,7 @@ async function generateFirst(figure, outPath) {
     method: "POST",
     headers: { "Authorization": `Bearer ${KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "gpt-image-1",
+      model: "gpt-image-2",
       prompt: firstPrompt(figure),
       n: 1,
       size: "1024x1024",
@@ -85,7 +85,7 @@ async function generateFirst(figure, outPath) {
 async function generateWithReference(figure, outPath, refPath) {
   console.log(`Generating with reference: ${figure}…`);
   const form = new FormData();
-  form.append("model", "gpt-image-1");
+  form.append("model", "gpt-image-2");
   form.append("prompt", agingPrompt(figure));
   form.append("n", "1");
   form.append("size", "1024x1024");

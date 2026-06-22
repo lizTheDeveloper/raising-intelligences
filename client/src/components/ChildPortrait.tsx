@@ -24,8 +24,31 @@ export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
 
     const slug = ageSlug(age);
     const url = `/portraits/${gameId}/${slug}.png`;
+    const fallbackUrl = `/portraits/${slug}.png`;
     let mounted = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const tryLoadFallback = () => {
+      if (!mounted) return;
+      const img = new Image();
+      img.onload = () => {
+        if (mounted) {
+          setSrc((currentSrc) => {
+            // Only use fallback if we haven't successfully loaded the custom portrait yet
+            if (currentSrc === url) return currentSrc;
+            onLoad?.();
+            return fallbackUrl;
+          });
+        }
+      };
+      img.onerror = () => {
+        // If even the fallback fails, make sure the user isn't permanently blocked
+        if (mounted) {
+          onLoad?.();
+        }
+      };
+      img.src = fallbackUrl;
+    };
 
     const tryLoad = (attempts = 0) => {
       if (!mounted) return;
@@ -37,7 +60,14 @@ export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
         }
       };
       img.onerror = () => {
-        if (mounted && attempts < 12) {
+        if (!mounted) return;
+
+        // On the first failure, trigger fallback load so the user can start playing immediately
+        if (attempts === 0) {
+          tryLoadFallback();
+        }
+
+        if (attempts < 12) {
           timer = setTimeout(() => tryLoad(attempts + 1), 2000);
         }
       };
