@@ -55,7 +55,7 @@ async function main() {
 
   console.log(`Observability: Langfuse ${isLangfuseEnabled() ? "enabled" : "disabled"}`);
 
-  const { httpServer, app, close } = buildServer({
+  const { httpServer, close } = buildServer({
     llm,
     repo,
     serveStatic: process.env.NODE_ENV === "production",
@@ -74,20 +74,15 @@ async function main() {
       : undefined,
   });
 
-  // Serve per-game generated portraits (dynamic, not part of client build)
-  const express = (await import("express")).default;
-  const { PORTRAITS_DIR } = await import("./portrait-gen.js");
-  app.use("/portraits", express.static(PORTRAITS_DIR));
-
   const PORT = process.env.PORT || 3000;
-  const server = httpServer.listen(PORT, () => {
+  httpServer.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
   });
 
   const shutdown = async () => {
     await close();
     await flushLangfuse();
-    server.close(() => process.exit(0));
+    process.exit(0);
   };
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);

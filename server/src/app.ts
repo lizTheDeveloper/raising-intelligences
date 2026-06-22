@@ -10,6 +10,7 @@ import { ConversationEngine } from "./game/conversation-engine.js";
 import { EndgameEngine } from "./game/endgame-engine.js";
 import type { LLMClient } from "./llm/client.js";
 import { registerSocketHandlers } from "./socket/handlers.js";
+import { PORTRAITS_DIR } from "./portrait-gen.js";
 import type { GameRepository } from "./db/repository.js";
 import type { Session } from "./game/session-manager.js";
 import type { GameState } from "./types.js";
@@ -90,6 +91,11 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     healthHandler ?? ((_req, res) => res.json({ status: "ok", db: dbLabel }))
   );
 
+  // Per-game generated portraits (dynamic, not part of the client build). Must
+  // be registered before the SPA catch-all below, or Express 5 would let the
+  // catch-all answer /portraits/*.png with index.html.
+  app.use("/portraits", express.static(PORTRAITS_DIR));
+
   if (serveStatic) {
     const clientDist = path.join(process.cwd(), "client", "dist");
     app.use(express.static(clientDist));
@@ -124,9 +130,9 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
 
   async function close(): Promise<void> {
     if (evictionTimer) clearInterval(evictionTimer);
-    io.disconnectSockets(true);
+    // io.close() disconnects all clients and closes the underlying HTTP server,
+    // so there is no need to close httpServer separately.
     await new Promise<void>((resolve) => io.close(() => resolve()));
-    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
   }
 
   return {
