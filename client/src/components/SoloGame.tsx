@@ -24,25 +24,23 @@ export function SoloGame() {
     endDebrief,
     epilogue,
     reportCard,
+    error,
     generateEpilogue,
     generateReportCard,
   } = useGame();
 
   const [nameInput, setNameInput] = useState("");
-  const [relationshipInput, setRelationshipInput] = useState("romantic partners");
   const [loadingEvent, setLoadingEvent] = useState(false);
-
-  const RELATIONSHIP_OPTIONS = [
-    "romantic partners",
-    "friends",
-    "siblings",
-    "ex-partners",
-    "co-parents who were never together",
-  ];
 
   const handleStart = async () => {
     if (!nameInput.trim()) return;
-    await createGame(nameInput.trim(), relationshipInput);
+    // Create game then immediately load the first event — skip the empty begin screen.
+    const id = await createGame(nameInput.trim());
+    if (id) {
+      setLoadingEvent(true);
+      await nextEvent(id);
+      setLoadingEvent(false);
+    }
   };
 
   const handleNextEvent = async () => {
@@ -71,24 +69,21 @@ export function SoloGame() {
               autoFocus
               className="name-input"
             />
-            <p className="dim" style={{ marginTop: "24px" }}>
-              your relationship
-            </p>
-            <select
-              value={relationshipInput}
-              onChange={(e) => setRelationshipInput(e.target.value)}
-              className="relationship-select"
-            >
-              {RELATIONSHIP_OPTIONS.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
-            </select>
             <button type="submit" className="btn" disabled={!nameInput.trim()}>
               begin
             </button>
           </form>
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === "error") {
+    return (
+      <div className="app">
+        <div className="start-screen">
+          <p className="dim">something went wrong</p>
+          {error && <p className="error-message">{error}</p>}
         </div>
       </div>
     );
