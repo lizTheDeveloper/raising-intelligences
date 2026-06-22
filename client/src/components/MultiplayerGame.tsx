@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useMultiplayer } from "../hooks/useMultiplayer";
 import { Lobby } from "./Lobby";
 import { MessageList } from "./MessageList";
@@ -31,6 +31,17 @@ export function MultiplayerGame({ joinGameId }: Props) {
   const sidebarActive = state?.sidebarActive ?? null;
   const inMySidebar = sidebarActive !== null && sidebarActive === mySlot;
   const inOtherSidebar = sidebarActive !== null && sidebarActive !== mySlot;
+
+  // Reset local ready toggle when the server loads a new event preview so the
+  // player must explicitly confirm they have read the description.
+  const prevEventNumberRef = useRef(state?.currentEventNumber ?? 0);
+  useEffect(() => {
+    const cur = state?.currentEventNumber ?? 0;
+    if (cur !== prevEventNumberRef.current) {
+      setGateReady(false);
+      prevEventNumberRef.current = cur;
+    }
+  }, [state?.currentEventNumber]);
 
   // ---- Setup: create or join ----
   if (!mp.gameId) {
@@ -117,19 +128,28 @@ export function MultiplayerGame({ joinGameId }: Props) {
     );
   }
 
-  // ---- Between chapters: ready gate for the next event ----
+  // ---- Between chapters: two-step ready gate ----
+  // Step 1 (currentEvent null): both ready → server generates and previews the event
+  // Step 2 (currentEvent set): both ready → server starts family chat
   if (state.phase === "event_intro") {
     return (
       <div className="app fade-in">
         <div className="event-intro">
-          <p className="dim">the story continues…</p>
+          {state.currentEvent ? (
+            <>
+              <p className="age-marker">— age {state.currentEvent.age} —</p>
+              <p className="event-description">{state.currentEvent.description}</p>
+            </>
+          ) : (
+            <p className="dim">the story continues…</p>
+          )}
           <ReadyToggle
             ready={gateReady}
             onToggle={(v) => {
               setGateReady(v);
               mp.ready(v);
             }}
-            label="ready for the next chapter"
+            label={state.currentEvent ? "ready to begin" : "ready for the next chapter"}
             players={mp.players}
           />
         </div>

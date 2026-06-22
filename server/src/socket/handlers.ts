@@ -170,10 +170,19 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       if (!allReady(updated)) return;
 
       try {
-        if (state.phase === "event_intro") {
-          const next = await conversationEngine.startEvent(state);
+        if (state.phase === "event_intro" && state.currentEvent === null) {
+          // Step 1: generate the event and preview it; stay in event_intro
+          const next = await conversationEngine.loadEvent(state);
           games.set(next.id, next);
           if (next.currentEvent) await repo.saveEvent(next.id, next.currentEvent);
+          await repo.saveGame(next);
+          sessions.set(gameId, resetReady(updated));
+          broadcastState(gameId);
+          broadcastLobby(gameId);
+        } else if (state.phase === "event_intro" && state.currentEvent !== null) {
+          // Step 2: both players have read the preview; start the chat
+          const next = conversationEngine.beginChat(state);
+          games.set(next.id, next);
           await repo.saveGame(next);
           sessions.set(gameId, resetReady(updated));
           broadcastState(gameId);

@@ -30,6 +30,20 @@ export class ConversationEngine {
     return transition(state, { type: "START_EVENT", event });
   }
 
+  async loadEvent(state: GameState): Promise<GameState> {
+    const ctx = buildWorldManagerContext(state);
+    const event = await this.llm.completeJson<GameEvent>(
+      ctx.system,
+      ctx.userMessage,
+      "world_manager"
+    );
+    return transition(state, { type: "LOAD_EVENT", event });
+  }
+
+  beginChat(state: GameState): GameState {
+    return transition(state, { type: "BEGIN_FAMILY_CHAT" });
+  }
+
   async handleParentMessage(
     state: GameState,
     sender: Sender,
