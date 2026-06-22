@@ -1,0 +1,79 @@
+import { describe, it, expect } from "vitest";
+import { ConversationEngine } from "../src/game/conversation-engine.js";
+import { createGame } from "../src/game/state-machine.js";
+import { MockLLMClient } from "../src/llm/mock.js";
+import type { GameEvent } from "../src/types.js";
+
+const testEvent: GameEvent = {
+  eventNumber: 1,
+  age: 4,
+  description: "Your child is 4. They broke a vase.",
+  setting: "Living room",
+  trigger: "Accident",
+};
+
+describe("ConversationEngine", () => {
+  it("startEvent generates event and transitions to family_chat", async () => {
+    const mock = new MockLLMClient();
+    mock.events = [testEvent];
+    const engine = new ConversationEngine(mock);
+    const state = createGame("Luna");
+    const next = await engine.startEvent(state);
+    expect(next.phase).toBe("family_chat");
+    expect(next.currentEvent?.description).toContain("broke a vase");
+  });
+
+  it("handleParentMessage adds message and gets kid response", async () => {
+    const mock = new MockLLMClient();
+    mock.events = [testEvent];
+    mock.kidResponses = ["I'm sorry!"];
+    const engine = new ConversationEngine(mock);
+    let state = createGame("Luna");
+    state = await engine.startEvent(state);
+    const result = await engine.handleParentMessage(state, "parent1", "What happened?");
+    expect(result.state.messages).toHaveLength(2);
+    expect(result.state.messages[0].content).toBe("What happened?");
+    expect(result.state.messages[1].content).toBe("I'm sorry!");
+    expect(result.kidResponse).toBe("I'm sorry!");
+  });
+
+  it("endFamilyChat triggers psychologist and updates identity doc", async () => {
+    const mock = new MockLLMClient();
+    mock.events = [testEvent];
+    mock.kidResponses = ["I'm sorry!"];
+    mock.identityUpdates = ["Core beliefs: accidents are forgivable."];
+    const engine = new ConversationEngine(mock);
+    let state = createGame("Luna");
+    state = await engine.startEvent(state);
+    const result = await engine.handleParentMessage(state, "parent1", "It's okay.");
+    state = await engine.endFamilyChat(result.state);
+    expect(state.phase).toBe("debrief");
+    expect(state.identityDocument).toBe("Core beliefs: accidents are forgivable.");
+    expect(state.identitySnapshots).toHaveLength(1);
+  });
+
+  it("getMessageCapRemaining returns correct count", async () => {
+    const mock = new MockLLMClient();
+    mock.events = [testEvent];
+    mock.kidResponses = ["ok"];
+    const engine = new ConversationEngine(mock);
+    let state = createGame("Luna");
+    state = await engine.startEvent(state);
+    expect(engine.getMessageCapRemaining(state)).toBe(12);
+    const result = await engine.handleParentMessage(state, "parent1", "hi");
+    expect(engine.getMessageCapRemaining(result.state)).toBe(11);
+  });
+
+  it("sidebar messages use private context for kid responses", async () => {
+    const mock = new MockLLMClient();
+    mock.events = [testEvent];
+    mock.kidResponses = ["okay parent", "our secret"];
+    const engine = new ConversationEngine(mock);
+    let state = createGame("Luna");
+    state = await engine.startEvent(state);
+    state = engine.startSidebar(state, "parent1");
+    const result = await engine.handleParentMessage(state, "parent1", "Just between us");
+    expect(result.state.messages[0].chatType).toBe("private");
+    expect(result.state.messages[0].visibleTo).toEqual(["parent1", "kid"]);
+  });
+});

@@ -1,0 +1,227 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap');
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --bg: #0a0a0a;
+  --fg: #e8e8e8;
+  --fg-dim: #888;
+  --accent: #7a6f5d;
+  --kid: #c4b99a;
+  --font: 'IBM Plex Mono', monospace;
+}
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 16px;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.start-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 80dvh;
+  gap: 16px;
+}
+
+.start-screen h1 {
+  font-weight: 300;
+  font-size: 24px;
+  letter-spacing: 2px;
+}
+
+.dim {
+  color: var(--fg-dim);
+}
+
+.name-input {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--fg-dim);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 18px;
+  padding: 8px 0;
+  text-align: center;
+  outline: none;
+  width: 200px;
+}
+
+.relationship-select {
+  background: transparent;
+  border: 1px solid var(--fg-dim);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 13px;
+  padding: 8px 12px;
+  text-align: center;
+  outline: none;
+  width: 260px;
+  appearance: none;
+  cursor: pointer;
+}
+
+.relationship-select option {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.btn {
+  background: transparent;
+  border: 1px solid var(--fg-dim);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 13px;
+  padding: 8px 24px;
+  cursor: pointer;
+  letter-spacing: 1px;
+  margin-top: 16px;
+}
+
+.btn:hover {
+  border-color: var(--fg);
+}
+.btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.btn-secondary {
+  border-color: var(--fg-dim);
+  color: var(--fg-dim);
+  font-size: 11px;
+  margin-top: 24px;
+}
+
+.age-marker {
+  text-align: center;
+  color: var(--fg-dim);
+  font-size: 13px;
+  letter-spacing: 3px;
+  padding: 24px 0 16px;
+}
+
+.event-intro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 80dvh;
+  gap: 24px;
+  text-align: center;
+  padding: 0 24px;
+}
+
+.event-description {
+  font-size: 16px;
+  line-height: 1.8;
+  max-width: 400px;
+  font-style: italic;
+}
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 8px;
+}
+
+.message-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 0;
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.message-sender {
+  font-size: 11px;
+  color: var(--fg-dim);
+  letter-spacing: 1px;
+}
+
+.message-kid .message-sender {
+  color: var(--kid);
+}
+.message-kid .message-content {
+  color: var(--kid);
+  font-style: italic;
+}
+
+.message-content {
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.message-input {
+  display: flex;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid #222;
+}
+
+.message-input input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 15px;
+  outline: none;
+}
+
+.message-input input::placeholder {
+  color: #444;
+}
+
+.message-input button {
+  background: transparent;
+  border: 1px solid #333;
+  color: var(--fg-dim);
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 6px 16px;
+  cursor: pointer;
+}
+
+.message-input button:hover {
+  border-color: var(--fg);
+  color: var(--fg);
+}
+.message-input button:disabled {
+  opacity: 0.2;
+  cursor: default;
+}
+
+.debrief {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 80dvh;
+  gap: 16px;
+}
