@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useGame } from "../hooks/useGame";
+import { GuardianScreen } from "./GuardianScreen";
 import { EventIntro } from "./EventIntro";
 import { Chat } from "./Chat";
 import { Debrief } from "./Debrief";
@@ -32,6 +33,7 @@ export function SoloGame() {
   const [nameInput, setNameInput] = useState("");
   const [relationshipInput, setRelationshipInput] = useState("romantic partners");
   const [loadingEvent, setLoadingEvent] = useState(false);
+  const [showGuardian, setShowGuardian] = useState(false);
 
   const RELATIONSHIP_OPTIONS = [
     "romantic partners",
@@ -44,6 +46,11 @@ export function SoloGame() {
   const handleStart = async () => {
     if (!nameInput.trim()) return;
     await createGame(nameInput.trim(), relationshipInput);
+    // Show guardian screen immediately, generate first event in the background
+    setShowGuardian(true);
+    setLoadingEvent(true);
+    await nextEvent();
+    setLoadingEvent(false);
   };
 
   const handleNextEvent = async () => {
@@ -95,6 +102,19 @@ export function SoloGame() {
     );
   }
 
+  if (showGuardian && (phase === "start" || phase === "event_intro")) {
+    return (
+      <div className="app">
+        <GuardianScreen
+          childName={childName || nameInput}
+          gameId={gameId}
+          eventReady={phase === "event_intro" && !loadingEvent}
+          onReady={() => setShowGuardian(false)}
+        />
+      </div>
+    );
+  }
+
   if (phase === "event_intro") {
     return (
       <div className="app">
@@ -112,6 +132,9 @@ export function SoloGame() {
     return (
       <div className="app">
         <p className="age-marker">— age {currentEvent?.age} —</p>
+        {currentEvent?.description && (
+          <p className="event-context">{currentEvent.description}</p>
+        )}
         <Chat
           messages={messages}
           streamingMessage={streamingMessage}

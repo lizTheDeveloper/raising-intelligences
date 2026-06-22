@@ -5,6 +5,7 @@ interface Props {
   age: number;
   size?: number;
   gameId?: string | null;
+  onLoad?: () => void;
 }
 
 function ageSlug(age: number): string {
@@ -15,7 +16,7 @@ function ageSlug(age: number): string {
   return "age-20";
 }
 
-export function ChildPortrait({ age, size = 180, gameId }: Props) {
+export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
   const [src, setSrc] = useState<string | null>(null);
 
   useEffect(() => {
@@ -30,7 +31,10 @@ export function ChildPortrait({ age, size = 180, gameId }: Props) {
       if (!mounted) return;
       const img = new Image();
       img.onload = () => {
-        if (mounted) setSrc(url);
+        if (mounted) {
+          setSrc(url);
+          onLoad?.();
+        }
       };
       img.onerror = () => {
         if (mounted && attempts < 12) {
