@@ -30,20 +30,17 @@ export function SoloGame() {
   } = useGame();
 
   const [nameInput, setNameInput] = useState("");
-  const [relationshipInput, setRelationshipInput] = useState("romantic partners");
+  const [isCreating, setIsCreating] = useState(false);
   const [loadingEvent, setLoadingEvent] = useState(false);
 
-  const RELATIONSHIP_OPTIONS = [
-    "romantic partners",
-    "friends",
-    "siblings",
-    "ex-partners",
-    "co-parents who were never together",
-  ];
-
   const handleStart = async () => {
-    if (!nameInput.trim()) return;
-    await createGame(nameInput.trim(), relationshipInput);
+    if (!nameInput.trim() || isCreating) return;
+    setIsCreating(true);
+    try {
+      await createGame(nameInput.trim(), "single parent");
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   const handleNextEvent = async () => {
@@ -72,22 +69,8 @@ export function SoloGame() {
               autoFocus
               className="name-input"
             />
-            <p className="dim" style={{ marginTop: "24px" }}>
-              your relationship
-            </p>
-            <select
-              value={relationshipInput}
-              onChange={(e) => setRelationshipInput(e.target.value)}
-              className="relationship-select"
-            >
-              {RELATIONSHIP_OPTIONS.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
-            </select>
-            <button type="submit" className="btn" disabled={!nameInput.trim()}>
-              begin
+            <button type="submit" className="btn" disabled={!nameInput.trim() || isCreating}>
+              {isCreating ? "starting…" : "begin"}
             </button>
           </form>
         </div>

@@ -12,9 +12,9 @@ describe("model-config", () => {
     expect(selectModel("kid_sidebar")).toBe("deepseek/deepseek-v4-flash");
     expect(selectModel("kid_adult_chat")).toBe("qwen/qwen3.7-plus");
     expect(selectModel("world_manager")).toBe("qwen/qwen3.7-plus");
-    expect(selectModel("psychologist")).toBe("qwen/qwen3.7-max");
-    expect(selectModel("epilogue")).toBe("qwen/qwen3.7-max");
-    expect(selectModel("report_card")).toBe("qwen/qwen3.7-max");
+    expect(selectModel("psychologist")).toBe("qwen/qwen3.7-plus");
+    expect(selectModel("epilogue")).toBe("qwen/qwen3.7-plus");
+    expect(selectModel("report_card")).toBe("qwen/qwen3.7-plus");
   });
 
   it("upgrades the keepsake artifacts to Claude Opus in the premium tier", () => {

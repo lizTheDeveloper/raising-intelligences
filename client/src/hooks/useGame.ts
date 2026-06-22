@@ -35,11 +35,22 @@ export function useGame() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ childName: name, relationshipType }),
       });
+      if (!res.ok) throw new Error("Failed to create game");
       const data = await res.json();
-      setGameId(data.gameId);
+      const id: string = data.gameId;
+      setGameId(id);
       setChildName(name);
+
+      // Immediately fetch the first event so the player lands on event_intro
+      // with content already loaded, avoiding the blank double-begin screen.
+      const eventRes = await fetch(`${API}/game/${id}/next-event`, { method: "POST" });
+      if (eventRes.ok) {
+        const eventData = await eventRes.json();
+        setCurrentEvent(eventData.event);
+      }
+
       setPhase("event_intro");
-      return data.gameId;
+      return id;
     },
     []
   );
@@ -49,10 +60,12 @@ export function useGame() {
     const res = await fetch(`${API}/game/${gameId}/next-event`, {
       method: "POST",
     });
+    if (!res.ok) {
+      console.error("[nextEvent] server returned", res.status);
+      return;
+    }
     const data = await res.json();
     setCurrentEvent(data.event);
-    // Stay on event_intro so the player can read the description before chatting.
-    // The server has already transitioned to family_chat and is ready to accept messages.
     setPhase("event_intro");
     setMessages([]);
     setMessagesRemaining(12);
@@ -73,40 +86,50 @@ export function useGame() {
       setIsStreaming(true);
       setStreamingMessage("");
 
-      const res = await fetch(`${API}/game/${gameId}/message`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sender: "parent1", content }),
-      });
+      try {
+        const res = await fetch(`${API}/game/${gameId}/message`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sender: "parent1", content }),
+        });
 
-      const reader = res.body!.getReader();
-      const decoder = new TextDecoder();
-      let kidMessage = "";
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+        let kidMessage = "";
+        let buffer = "";
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        const text = decoder.decode(value);
-        const lines = text.split("\n");
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data = JSON.parse(line.slice(6));
-            if (data.type === "chunk") {
-              kidMessage += data.text;
-              setStreamingMessage(kidMessage);
-            } else if (data.type === "done") {
-              setMessages((prev) => [
-                ...prev,
-                { sender: "kid", content: data.kidResponse, chatType: "shared" },
-              ]);
-              setStreamingMessage("");
-              setMessagesRemaining(data.messagesRemaining);
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              try {
+                const parsed = JSON.parse(line.slice(6));
+                if (parsed.type === "chunk") {
+                  kidMessage += parsed.text;
+                  setStreamingMessage(kidMessage);
+                } else if (parsed.type === "done") {
+                  setMessages((prev) => [
+                    ...prev,
+                    { sender: "kid", content: parsed.kidResponse, chatType: "shared" },
+                  ]);
+                  setStreamingMessage("");
+                  setMessagesRemaining(parsed.messagesRemaining);
+                }
+              } catch {
+                // ignore malformed SSE lines
+              }
             }
           }
         }
+      } finally {
+        setIsStreaming(false);
       }
-      setIsStreaming(false);
     },
     [gameId, isStreaming]
   );
@@ -117,6 +140,11 @@ export function useGame() {
     const res = await fetch(`${API}/game/${gameId}/end-chat`, {
       method: "POST",
     });
+    if (!res.ok) {
+      console.error("[endChat] server returned", res.status);
+      setPhase("family_chat");
+      return;
+    }
     const data = await res.json();
     setPhase(data.phase);
   }, [gameId]);
