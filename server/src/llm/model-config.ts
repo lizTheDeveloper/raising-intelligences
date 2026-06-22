@@ -34,9 +34,9 @@ export const STANDARD_MODELS: ModelConfig = {
   kid_sidebar: "deepseek/deepseek-v4-flash",
   kid_adult_chat: "qwen/qwen3.7-plus",
   world_manager: "qwen/qwen3.7-plus",
-  psychologist: "qwen/qwen3.7-max",
-  epilogue: "qwen/qwen3.7-max",
-  report_card: "qwen/qwen3.7-max",
+  psychologist: "qwen/qwen3.7-plus",
+  epilogue: "qwen/qwen3.7-plus",
+  report_card: "qwen/qwen3.7-plus",
 };
 
 /** Premium tier: Qwen Max + Gemini 2.5 Flash + Claude Opus 4.8 for the keepsake artifacts. */

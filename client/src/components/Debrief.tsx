@@ -4,8 +4,11 @@ interface Props {
 
 export function Debrief({ onContinue }: Props) {
   return (
-    <div className="debrief">
-      <p className="dim">time passed. they are a little different now.</p>
+    <div className="debrief-enhanced">
+      <div className="debrief-text-block">
+        <p className="debrief-line-1">time passed</p>
+        <p className="debrief-line-2">they are a little different now</p>
+      </div>
       <button onClick={onContinue} className="btn">
         next event
       </button>

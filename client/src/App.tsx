@@ -16,6 +16,7 @@ export function App() {
   return (
     <div className="app">
       <div className="start-screen">
+        <div className="start-glow" aria-hidden="true" />
         <h1>raising intelligences</h1>
         <p className="dim">raise a child through conversation</p>
         <div className="mode-choice">

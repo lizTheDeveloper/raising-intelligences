@@ -16,11 +16,21 @@ export function Endgame({ epilogue, onContinue }: Props) {
       <p className="endgame-label">years later</p>
       <div className="epilogue-body">
         {paragraphs.map((para, i) => (
-          <p key={i}>{para}</p>
+          <p
+            key={i}
+            className="epilogue-para"
+            style={{ animationDelay: `${i * 420}ms` }}
+          >
+            {para}
+          </p>
         ))}
       </div>
       <div className="endgame-actions">
-        <button onClick={onContinue} className="btn">
+        <button
+          onClick={onContinue}
+          className="btn"
+          style={{ animationDelay: `${paragraphs.length * 420 + 400}ms` }}
+        >
           continue
         </button>
       </div>

@@ -1,3 +1,5 @@
+import { ChildPresence } from "./ChildPresence";
+
 interface Props {
   event: { age: number; description: string } | null;
   onReady: () => void;
@@ -8,6 +10,7 @@ export function EventIntro({ event, onReady, waiting }: Props) {
   if (waiting) {
     return (
       <div className="event-intro">
+        <ChildPresence age={event?.age ?? 3} size={90} />
         <p className="dim">generating next event...</p>
       </div>
     );
@@ -16,6 +19,7 @@ export function EventIntro({ event, onReady, waiting }: Props) {
   if (!event) {
     return (
       <div className="event-intro">
+        <ChildPresence age={0} size={90} />
         <button onClick={onReady} className="btn">
           begin
         </button>
@@ -25,6 +29,9 @@ export function EventIntro({ event, onReady, waiting }: Props) {
 
   return (
     <div className="event-intro">
+      <div className="event-intro-figure">
+        <ChildPresence age={event.age} size={100} />
+      </div>
       <p className="age-marker">— age {event.age} —</p>
       <p className="event-description">{event.description}</p>
       <button onClick={onReady} className="btn">

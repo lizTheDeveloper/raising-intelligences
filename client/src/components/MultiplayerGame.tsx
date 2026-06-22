@@ -5,6 +5,7 @@ import { MessageList } from "./MessageList";
 import { MessageInput } from "./MessageInput";
 import { Endgame } from "./Endgame";
 import { ReportCard } from "./ReportCard";
+import { ProcessingScreen } from "./ProcessingScreen";
 
 const RELATIONSHIP_OPTIONS = [
   "romantic partners",
@@ -48,6 +49,7 @@ export function MultiplayerGame({ joinGameId }: Props) {
     return (
       <div className="app">
         <div className="start-screen">
+          <div className="start-glow" aria-hidden="true" />
           <h1>raising intelligences</h1>
           {mp.error && <p className="error">{mp.error}</p>}
           {joinGameId ? (
@@ -210,9 +212,7 @@ export function MultiplayerGame({ joinGameId }: Props) {
   if (state.phase === "processing") {
     return (
       <div className="app">
-        <div className="event-intro">
-          <p className="dim pulse">time passes…</p>
-        </div>
+        <ProcessingScreen childName={state.childName} age={state.currentEvent?.age} />
       </div>
     );
   }
@@ -221,8 +221,11 @@ export function MultiplayerGame({ joinGameId }: Props) {
   if (state.phase === "debrief") {
     return (
       <div className="app fade-in">
-        <div className="debrief">
-          <p className="dim">a moment between you two. what just happened?</p>
+        <div className="debrief-enhanced">
+          <div className="debrief-text-block">
+            <p className="debrief-line-1">a moment between you two</p>
+            <p className="debrief-line-2">what just happened?</p>
+          </div>
           <ReadyToggle
             ready={gateReady}
             onToggle={(v) => {

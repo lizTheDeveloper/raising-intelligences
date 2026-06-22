@@ -5,6 +5,7 @@ import { Chat } from "./Chat";
 import { Debrief } from "./Debrief";
 import { Endgame } from "./Endgame";
 import { ReportCard } from "./ReportCard";
+import { ProcessingScreen } from "./ProcessingScreen";
 
 export function SoloGame() {
   const {
@@ -54,6 +55,7 @@ export function SoloGame() {
     return (
       <div className="app">
         <div className="start-screen">
+          <div className="start-glow" aria-hidden="true" />
           <h1>raising intelligences</h1>
           <p className="dim">name your child</p>
           <form
@@ -124,7 +126,7 @@ export function SoloGame() {
   if (phase === "processing") {
     return (
       <div className="app">
-        <p className="dim">time passes...</p>
+        <ProcessingScreen childName={childName} age={currentEvent?.age} />
       </div>
     );
   }

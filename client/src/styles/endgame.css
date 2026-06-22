@@ -24,7 +24,7 @@
   gap: 20px;
 }
 
-.epilogue-body p {
+.epilogue-body .epilogue-para {
   font-size: 16px;
   line-height: 1.9;
   font-style: italic;
@@ -35,6 +35,11 @@
   display: flex;
   justify-content: center;
   margin-top: 16px;
+}
+
+.endgame-actions .btn {
+  opacity: 0;
+  animation: fadeIn 900ms ease both;
 }
 
 /* Report card — the most designed screen. */

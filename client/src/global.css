@@ -12,7 +12,31 @@
   --fg-dim: #888;
   --accent: #7a6f5d;
   --kid: #c4b99a;
+  --warm: #e8b96a;
+  --warm-glow: rgba(232, 185, 106, 0.06);
   --font: 'IBM Plex Mono', monospace;
+}
+
+/* Ocean Grunge theme — add class="theme-ocean-grunge" to .app */
+.theme-ocean-grunge {
+  --bg: #090e18;
+  --fg: #bdd0d8;
+  --fg-dim: #4d6e7a;
+  --accent: #2b6272;
+  --kid: #7fb0be;
+  --warm: #3d7a6a;
+  --warm-glow: rgba(61, 122, 106, 0.07);
+}
+
+/* Cyberminimalism theme — add class="theme-cyber" to .app */
+.theme-cyber {
+  --bg: #080808;
+  --fg: #d8d8d8;
+  --fg-dim: #484848;
+  --accent: #606060;
+  --kid: #a8a8a8;
+  --warm: #888888;
+  --warm-glow: rgba(136, 136, 136, 0.05);
 }
 
 body {
@@ -22,6 +46,18 @@ body {
   font-size: 15px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Subtle film grain overlay — sits above everything, never intercepts clicks */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
+  opacity: 0.028;
+  pointer-events: none;
+  z-index: 9999;
 }
 
 .app {
@@ -331,7 +367,7 @@ body {
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
 
-.message-input {
+.message-input-wrap {
   position: sticky;
   bottom: 0;
   background: var(--bg);
@@ -342,3 +378,166 @@ body {
   .app { padding: 12px; }
   .message-content { font-size: 16px; }
 }
+
+/* ─── Child Presence (lo-fi silhouette) ──────────────────────── */
+
+.child-presence {
+  display: block;
+  animation: presenceBreathe 5.5s ease-in-out infinite;
+}
+
+@keyframes presenceBreathe {
+  0%, 100% { transform: scale(1);    opacity: 0.88; }
+  50%       { transform: scale(1.03); opacity: 1;    }
+}
+
+/* ─── Processing Screen ──────────────────────────────────────── */
+
+.processing-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 80dvh;
+  gap: 10px;
+}
+
+.processing-figure {
+  margin-bottom: 4px;
+}
+
+.processing-name {
+  font-size: 11px;
+  letter-spacing: 4px;
+  color: var(--kid);
+  opacity: 0.65;
+  text-transform: lowercase;
+}
+
+.processing-fragment-area {
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 6px;
+}
+
+.processing-fragment-text {
+  font-size: 11px;
+  color: var(--fg-dim);
+  letter-spacing: 2px;
+  animation: fragmentAppear 0.7s ease both;
+}
+
+@keyframes fragmentAppear {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 0.7; transform: none; }
+}
+
+/* ─── Message Countdown Dots ─────────────────────────────────── */
+
+.message-dots {
+  display: flex;
+  gap: 5px;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 8px 0 4px;
+}
+
+.message-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+  transition: background 0.35s ease, opacity 0.35s ease;
+}
+
+.dot-active { opacity: 0.45; }
+.dot-used   { opacity: 0.08; }
+
+.dot-urgent {
+  background: var(--warm);
+  opacity: 0.9;
+  animation: dotUrgent 1.3s ease-in-out infinite;
+}
+
+@keyframes dotUrgent {
+  0%, 100% { opacity: 0.55; }
+  50%       { opacity: 1;    }
+}
+
+/* ─── Debrief Enhancement ────────────────────────────────────── */
+
+.debrief-enhanced {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 80dvh;
+  gap: 32px;
+  text-align: center;
+}
+
+.debrief-text-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.debrief-line-1 {
+  font-size: 11px;
+  color: var(--fg-dim);
+  letter-spacing: 5px;
+  text-transform: lowercase;
+  opacity: 0;
+  animation: fadeIn 900ms ease both;
+  animation-delay: 400ms;
+}
+
+.debrief-line-2 {
+  font-size: 17px;
+  font-weight: 300;
+  color: var(--kid);
+  letter-spacing: 1px;
+  opacity: 0;
+  animation: fadeIn 900ms ease both;
+  animation-delay: 1500ms;
+}
+
+/* ─── Epilogue Staggered Reveal ──────────────────────────────── */
+
+.epilogue-para {
+  opacity: 0;
+  animation: fadeIn 900ms ease both;
+  font-size: 16px;
+  line-height: 1.9;
+  font-style: italic;
+  color: var(--fg);
+}
+
+/* ─── Event Intro with Presence ──────────────────────────────── */
+
+.event-intro-figure {
+  margin-bottom: 4px;
+}
+
+/* ─── Warm ambient glow on start screen ─────────────────────── */
+
+.start-glow {
+  position: absolute;
+  top: 30%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 300px;
+  height: 200px;
+  background: radial-gradient(ellipse at center, var(--warm-glow) 0%, transparent 70%);
+  pointer-events: none;
+  animation: glowPulse 6s ease-in-out infinite;
+}
+
+@keyframes glowPulse {
+  0%, 100% { opacity: 0.7; transform: translateX(-50%) scale(1); }
+  50%       { opacity: 1;   transform: translateX(-50%) scale(1.08); }
+}
+
+.start-screen { position: relative; }
