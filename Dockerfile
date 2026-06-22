@@ -37,6 +37,7 @@ COPY server/package.json ./server/
 RUN npm ci --omit=dev
 COPY --from=test /app/test.ok /app/test.ok
 COPY --from=build-server /app/server/dist ./server/dist
+COPY server/src/db/migrations ./server/dist/db/migrations
 COPY --from=build-client /app/client/dist ./client/dist
 ENV NODE_ENV=production
 EXPOSE 3000

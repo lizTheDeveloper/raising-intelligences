@@ -1,118 +1,139 @@
 /**
- * Generate lo-fi child portraits for several ages using OpenRouter + Gemini Image.
- * Saves PNGs to client/public/portraits/
- * Usage: node scripts/gen-portraits.mjs
+ * Generate lo-fi child portraits using OpenAI gpt-image-1.
+ * Generates the youngest age first, then uses it as a visual reference
+ * for subsequent ages so the same kid is recognizable growing up.
+ *
+ * Usage: OPENAI_API_KEY=sk-... node scripts/gen-portraits.mjs [gameId]
+ *
+ * gameId is optional — if provided, saves into portraits/{gameId}/
+ * Otherwise saves into client/public/portraits/ as static fallbacks.
  */
-import { writeFileSync, mkdirSync } from "fs";
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
-const OUT_DIR = join(__dir, "../client/public/portraits");
+const GAME_ID = process.argv[2];
+const OUT_DIR = GAME_ID
+  ? join(__dir, "../server/portraits", GAME_ID)
+  : join(__dir, "../client/public/portraits");
+
 mkdirSync(OUT_DIR, { recursive: true });
 
-const KEY = process.env.OPENROUTER_API_KEY;
-if (!KEY) { console.error("OPENROUTER_API_KEY not set"); process.exit(1); }
+const KEY = process.env.OPENAI_API_KEY;
+if (!KEY) { console.error("OPENAI_API_KEY not set"); process.exit(1); }
 
 const AGES = [
-  { age: 3,  label: "toddler",   slug: "age-03" },
-  { age: 7,  label: "child",     slug: "age-07" },
-  { age: 12, label: "preteen",   slug: "age-12" },
-  { age: 16, label: "teen",      slug: "age-16" },
+  { slug: "age-03", figure: "tiny round-headed toddler, maybe 3 years old," },
+  { slug: "age-07", figure: "7-year-old child," },
+  { slug: "age-12", figure: "12-year-old preteen," },
+  { slug: "age-16", figure: "16-year-old teenager with slightly slumped posture," },
+  { slug: "age-20", figure: "person in their mid-twenties," },
 ];
 
-function prompt(age, label) {
-  const sizeAdjectives = {
-    3:  "tiny, round-headed toddler",
-    7:  "small child",
-    12: "preteen",
-    16: "teenager with slightly slumped posture",
-  };
-  const figure = sizeAdjectives[age] ?? "child";
+// A sample descriptor — in the game this is derived from the gameId
+const HAIR = "dark brown wavy shoulder-length hair";
+const CLOTHING = "soft grey hoodie";
+
+function firstPrompt(figure) {
   return [
-    `Lo-fi anime illustration of a ${figure}, seen from behind,`,
+    `Lo-fi anime illustration of a ${figure} with ${HAIR},`,
+    `wearing a ${CLOTHING}, seen from behind,`,
     `sitting at a wooden desk facing a softly glowing screen.`,
     `Warm amber and golden backlight fills the room.`,
     `Dark cozy bedroom, bookshelf in background, houseplant on windowsill,`,
     `rain outside a night window with soft reflections.`,
     `Muted warm palette, soft film grain, slightly desaturated,`,
     `gentle nostalgic mood, lo-fi music aesthetic.`,
-    `Flat illustration style, clean lines, no text, no watermark.`,
-    `Square composition 1:1.`,
+    `Flat illustration style, clean lines, no text, no watermark. Square 1:1.`,
   ].join(" ");
 }
 
-async function generate(entry) {
-  const { age, label, slug } = entry;
-  console.log(`Generating age ${age} (${label})…`);
+function agingPrompt(figure) {
+  return [
+    `The same character from the reference image, now ${figure}`,
+    `Seen from behind at the same cozy desk, same ${HAIR}, same ${CLOTHING}.`,
+    `They have grown — body proportions have changed with age — but the setting is the same.`,
+    `Dark cozy bedroom, warm amber desk lamp glow, rain on window, bookshelf behind.`,
+    `Lo-fi anime illustration style, muted warm palette, soft film grain. Square 1:1. No text, no watermark.`,
+  ].join(" ");
+}
 
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+async function generateFirst(figure, outPath) {
+  console.log(`Generating first portrait: ${figure}…`);
+  const res = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
-    headers: {
-      "Authorization": `Bearer ${KEY}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "https://raisingintelligences.com",
-      "X-Title": "Raising Intelligences",
-    },
+    headers: { "Authorization": `Bearer ${KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "google/gemini-2.5-flash-image",
-      messages: [{ role: "user", content: prompt(age, label) }],
+      model: "gpt-image-1",
+      prompt: firstPrompt(figure),
+      n: 1,
+      size: "1024x1024",
+      output_format: "png",
     }),
   });
-
   const data = await res.json();
-
-  if (data.error) {
-    console.error(`  ✗ Error for age ${age}:`, data.error.message ?? data.error);
-    return null;
-  }
-
-  const images = data.choices?.[0]?.message?.images;
-  if (!images?.length) {
-    console.error(`  ✗ No images in response for age ${age}`);
-    console.error("  Response keys:", Object.keys(data.choices?.[0]?.message ?? {}));
-    return null;
-  }
-
-  const url = images[0].image_url.url;
-  const b64 = url.replace(/^data:image\/\w+;base64,/, "");
-  const outPath = join(OUT_DIR, `${slug}.png`);
-  writeFileSync(outPath, Buffer.from(b64, "base64"));
-  console.log(`  ✓ Saved ${slug}.png (${Math.round(b64.length * 3/4 / 1024)}KB)`);
+  if (data.error) throw new Error(data.error.message);
+  const b64 = data.data?.[0]?.b64_json;
+  if (!b64) throw new Error("No image in response");
+  const buf = Buffer.from(b64, "base64");
+  writeFileSync(outPath, buf);
+  console.log(`  ✓ Saved (${Math.round(buf.length / 1024)}KB)`);
   return outPath;
 }
 
-// Generate all ages (sequentially to be polite to the API)
-const results = [];
-for (const entry of AGES) {
-  const path = await generate(entry);
-  results.push({ ...entry, path });
-  // Small pause between requests
-  await new Promise(r => setTimeout(r, 1500));
+async function generateWithReference(figure, outPath, refPath) {
+  console.log(`Generating with reference: ${figure}…`);
+  const form = new FormData();
+  form.append("model", "gpt-image-1");
+  form.append("prompt", agingPrompt(figure));
+  form.append("n", "1");
+  form.append("size", "1024x1024");
+  const refBuf = readFileSync(refPath);
+  form.append("image", new Blob([refBuf], { type: "image/png" }), "reference.png");
+
+  const res = await fetch("https://api.openai.com/v1/images/edits", {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${KEY}` },
+    body: form,
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  const b64 = data.data?.[0]?.b64_json;
+  if (!b64) throw new Error("No image in response");
+  const buf = Buffer.from(b64, "base64");
+  writeFileSync(outPath, buf);
+  console.log(`  ✓ Saved (${Math.round(buf.length / 1024)}KB)`);
 }
 
-console.log("\nDone. Results:");
-results.forEach(r => console.log(`  age ${r.age}: ${r.path ?? "FAILED"}`));
+// --- main: generate serially, each age referencing the previous ---
+// age-03 → age-07 → age-12 → age-16 → age-20
+let prevPath = null;
 
-// Write a quick HTML viewer
-const viewerPath = join(OUT_DIR, "index.html");
-writeFileSync(viewerPath, `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<style>
-  body { background: #0a0a0a; font-family: 'IBM Plex Mono', monospace; color: #888; display: flex; gap: 24px; padding: 40px; flex-wrap: wrap; }
-  figure { display: flex; flex-direction: column; align-items: center; gap: 8px; }
-  img { width: 220px; height: 220px; object-fit: cover; display: block; }
-  figcaption { font-size: 11px; letter-spacing: 3px; }
-</style>
-</head>
-<body>
-${results.filter(r => r.path).map(r => `
-  <figure>
-    <img src="${r.slug}.png" alt="age ${r.age}">
-    <figcaption>— age ${r.age} —</figcaption>
-  </figure>`).join('')}
-</body>
-</html>`);
-console.log(`\nViewer: ${viewerPath}`);
+for (const { slug, figure } of AGES) {
+  const outPath = join(OUT_DIR, `${slug}.png`);
+
+  if (existsSync(outPath)) {
+    console.log(`  (${slug}.png already exists, skipping)`);
+    prevPath = outPath;
+    continue;
+  }
+
+  let attempt = 0;
+  while (!existsSync(outPath)) {
+    try {
+      if (!prevPath) {
+        await generateFirst(figure, outPath);
+      } else {
+        await generateWithReference(figure, outPath, prevPath);
+      }
+    } catch (e) {
+      attempt++;
+      console.error(`  ✗ ${slug} attempt ${attempt}: ${e.message}`);
+      await new Promise(r => setTimeout(r, 2000 * attempt));
+    }
+  }
+  prevPath = outPath;
+}
+
+console.log(`\nDone. Portraits in: ${OUT_DIR}`);
