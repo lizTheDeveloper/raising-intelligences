@@ -225,3 +225,120 @@ body {
   min-height: 80dvh;
   gap: 16px;
 }
+
+/* ---- Multiplayer + polish (M2/M3/M7) ---- */
+
+.mode-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.lobby {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 80dvh;
+  gap: 20px;
+  text-align: center;
+}
+
+.lobby h1 {
+  font-weight: 300;
+  font-size: 22px;
+  letter-spacing: 2px;
+}
+
+.lobby-players {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 260px;
+}
+
+.lobby-player {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid #1d1d1d;
+  padding: 6px 0;
+}
+
+.lobby-player-name { color: var(--fg); }
+.lobby-player-status { font-size: 12px; }
+
+.lobby-invite {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.ready-toggle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.ready-count { font-size: 12px; }
+
+.sidebar-banner {
+  text-align: center;
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: var(--accent);
+  padding: 8px 0;
+  text-transform: lowercase;
+}
+
+.chat-controls {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.event-count { color: #555; letter-spacing: 1px; }
+
+.error {
+  color: #b06a5a;
+  font-size: 13px;
+}
+
+/* Scene transitions */
+.fade-in {
+  animation: fadeIn 600ms ease both;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.pulse {
+  animation: pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.85; }
+}
+
+/* Mobile: anchor the input to the bottom with safe-area padding */
+.chat {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+.message-input {
+  position: sticky;
+  bottom: 0;
+  background: var(--bg);
+  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+}
+
+@media (max-width: 480px) {
+  .app { padding: 12px; }
+  .message-content { font-size: 16px; }
+}

@@ -1,5 +1,7 @@
 import express from "express";
 import cors from "cors";
+import { createServer } from "http";
+import { Server as SocketServer } from "socket.io";
 import { createGameRoutes } from "./routes/game.js";
 import { createEndgameRoutes } from "./routes/endgame.js";
 import { ConversationEngine } from "./game/conversation-engine.js";
@@ -11,6 +13,8 @@ import {
   InMemoryGameRepository,
   PgGameRepository,
 } from "./db/repository.js";
+import { registerSocketHandlers } from "./socket/handlers.js";
+import type { Session } from "./game/session-manager.js";
 import type { GameState } from "./types.js";
 
 async function main() {
@@ -49,8 +53,23 @@ async function main() {
     res.json({ status: "ok" });
   });
 
+  // Realtime multiplayer transport (M2/M3). The REST routes above remain for
+  // solo play and reconnect; socket.io drives two-player games over the same
+  // engines, games Map, and repository.
+  const sessions = new Map<string, Session>();
+  const httpServer = createServer(app);
+  const io = new SocketServer(httpServer, { cors: { origin: "*" } });
+  registerSocketHandlers({
+    io,
+    games,
+    sessions,
+    conversationEngine,
+    endgameEngine,
+    repo,
+  });
+
   const PORT = process.env.PORT || 3000;
-  const server = app.listen(PORT, () => {
+  const server = httpServer.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
   });
 

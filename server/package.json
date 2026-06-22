@@ -13,12 +13,14 @@
     "cors": "^2.8.5",
     "@anthropic-ai/sdk": "^0.52.0",
     "pg": "^8.13.0",
-    "langfuse": "^3.37.0"
+    "langfuse": "^3.37.0",
+    "socket.io": "^4.8.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/cors": "^2.8.17",
     "@types/pg": "^8.11.0",
+    "socket.io-client": "^4.8.0",
     "tsx": "^4.19.0",
     "vitest": "^3.2.0",
     "@types/node": "^22.0.0"
