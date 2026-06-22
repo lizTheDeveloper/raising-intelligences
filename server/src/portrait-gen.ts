@@ -94,6 +94,9 @@ async function generateOne(
 }
 
 export async function generatePortraitsForGame(gameId: string): Promise<void> {
+  // Opt-out used by the test harness (and any environment that should not spend
+  // on image generation) — skips the expensive portrait calls entirely.
+  if (process.env.DISABLE_PORTRAITS === "1") return;
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) return;
 

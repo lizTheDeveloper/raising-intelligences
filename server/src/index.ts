@@ -1,12 +1,3 @@
-import express from "express";
-import cors from "cors";
-import path from "path";
-import { createServer } from "http";
-import { Server as SocketServer } from "socket.io";
-import { createGameRoutes } from "./routes/game.js";
-import { createEndgameRoutes } from "./routes/endgame.js";
-import { ConversationEngine } from "./game/conversation-engine.js";
-import { EndgameEngine } from "./game/endgame-engine.js";
 import { OpenRouterLLMClient } from "./llm/openrouter.js";
 import type { LLMUsage } from "./llm/client.js";
 import type { ModelTier } from "./llm/model-config.js";
@@ -16,13 +7,9 @@ import {
   InMemoryGameRepository,
   PgGameRepository,
 } from "./db/repository.js";
-import { registerSocketHandlers } from "./socket/handlers.js";
-import type { Session } from "./game/session-manager.js";
-import type { GameState } from "./types.js";
+import { buildServer } from "./app.js";
 
 const REQUIRED_ENV_VARS = ["OPENROUTER_API_KEY"];
-const GAME_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
-const EVICTION_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
 function validateConfig(): void {
   const missing = REQUIRED_ENV_VARS.filter((k) => !process.env[k]);
@@ -35,12 +22,6 @@ function validateConfig(): void {
 async function main() {
   validateConfig();
 
-  const app = express();
-
-  const allowedOrigin = process.env.ALLOWED_ORIGIN ?? "http://localhost:5173";
-  app.use(cors({ origin: allowedOrigin }));
-  app.use(express.json());
-
   // OpenRouter (OpenAI-compatible) drives all LLM calls, selecting a model per
   // role and tier (see docs/monetization-strategy.md §3.1). Per-call token +
   // cost accounting is logged so per-game cost can be tracked (§3.2). The
@@ -51,12 +32,12 @@ async function main() {
       `[llm] role=${u.role} model=${u.model} in=${u.inputTokens} out=${u.outputTokens} cost=$${u.costUsd.toFixed(5)}`
     );
   };
-  const llm = new TracedLLMClient(new OpenRouterLLMClient(tier, onUsage));
-  const conversationEngine = new ConversationEngine(llm);
-  const endgameEngine = new EndgameEngine(llm);
-
-  // Authoritative in-memory store, shared by both route groups.
-  const games = new Map<string, GameState>();
+  // A fixed LLM_SEED forwards a deterministic seed to OpenRouter (reproducible
+  // output + prompt-cache hits); omit it in production for variety.
+  const seed = process.env.LLM_SEED ? Number(process.env.LLM_SEED) : undefined;
+  const llm = new TracedLLMClient(
+    new OpenRouterLLMClient(tier, onUsage, "kid_family_chat", seed)
+  );
 
   // Use Postgres when DATABASE_URL is configured; otherwise an in-memory
   // repository so the server runs with no external dependencies.
@@ -74,62 +55,29 @@ async function main() {
 
   console.log(`Observability: Langfuse ${isLangfuseEnabled() ? "enabled" : "disabled"}`);
 
-  app.use("/api", createGameRoutes(conversationEngine, games, repo));
-  app.use("/api", createEndgameRoutes(endgameEngine, games, repo));
+  const { httpServer, app, close } = buildServer({
+    llm,
+    repo,
+    serveStatic: process.env.NODE_ENV === "production",
+    dbLabel: usingPostgres ? "postgres" : "in-memory",
+    // When on Postgres, /health pings the DB to report real reachability.
+    healthHandler: usingPostgres
+      ? async (_req, res) => {
+          try {
+            const { pool } = await import("./db/pool.js");
+            await pool.query("SELECT 1");
+            res.json({ status: "ok", db: "postgres" });
+          } catch {
+            res.status(503).json({ status: "error", db: "unreachable" });
+          }
+        }
+      : undefined,
+  });
 
   // Serve per-game generated portraits (dynamic, not part of client build)
+  const express = (await import("express")).default;
   const { PORTRAITS_DIR } = await import("./portrait-gen.js");
   app.use("/portraits", express.static(PORTRAITS_DIR));
-
-  app.get("/health", async (_req, res) => {
-    if (!usingPostgres) {
-      res.json({ status: "ok", db: "in-memory" });
-      return;
-    }
-    try {
-      const { pool } = await import("./db/pool.js");
-      await pool.query("SELECT 1");
-      res.json({ status: "ok", db: "postgres" });
-    } catch {
-      res.status(503).json({ status: "error", db: "unreachable" });
-    }
-  });
-
-  if (process.env.NODE_ENV === "production") {
-    const clientDist = path.join(process.cwd(), "client", "dist");
-    app.use(express.static(clientDist));
-    app.get("/*path", (_req, res) => {
-      res.sendFile(path.join(clientDist, "index.html"));
-    });
-  }
-
-  // Realtime multiplayer transport (M2/M3). The REST routes above remain for
-  // solo play and reconnect; socket.io drives two-player games over the same
-  // engines, games Map, and repository.
-  const sessions = new Map<string, Session>();
-  const httpServer = createServer(app);
-  const io = new SocketServer(httpServer, { cors: { origin: allowedOrigin } });
-  registerSocketHandlers({
-    io,
-    games,
-    sessions,
-    conversationEngine,
-    endgameEngine,
-    repo,
-  });
-
-  // Evict ended or long-idle games from the in-memory Map to prevent unbounded
-  // heap growth. Persisted games can always be reconstructed from the DB on
-  // reconnect; in-memory-only games (no DATABASE_URL) are intentionally ephemeral.
-  const evictionTimer = setInterval(() => {
-    const now = Date.now();
-    for (const [id, state] of games) {
-      if (state.phase === "ended" || now - state.lastActivityAt > GAME_TTL_MS) {
-        games.delete(id);
-      }
-    }
-  }, EVICTION_INTERVAL_MS);
-  evictionTimer.unref();
 
   const PORT = process.env.PORT || 3000;
   const server = httpServer.listen(PORT, () => {
@@ -137,7 +85,7 @@ async function main() {
   });
 
   const shutdown = async () => {
-    clearInterval(evictionTimer);
+    await close();
     await flushLangfuse();
     server.close(() => process.exit(0));
   };
