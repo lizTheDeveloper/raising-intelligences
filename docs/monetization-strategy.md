@@ -8,7 +8,7 @@
 
 ### Correcting the Initial Estimate
 
-The original estimate of "30-50+ API calls per game" significantly undercounts the actual call volume. A bottom-up recount from the game mechanics yields **104-323 LLM calls per game** depending on player behavior. Here is the full breakdown:
+The original estimate of "30-50+ API calls per game" significantly undercounts the actual call volume. A bottom-up recount from the game mechanics yields **72-305 LLM calls per game** depending on player behavior — nearly an order of magnitude more than the initial estimate at the high end. The variance between light and heavy players is itself the pricing story. Here is the full breakdown:
 
 ### LLM Call Inventory Per Game
 
