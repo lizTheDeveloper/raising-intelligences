@@ -1,0 +1,2 @@
+- [User Developer Profile](user_developer_profile.md) — Indie game dev building Raising Intelligences, values emotional authenticity and actionable architecture guidance
+- [Monetization Analysis](project_monetization_analysis.md) — Freemium pay-per-game model recommended 2026-06-22, six architecture seams to build now
