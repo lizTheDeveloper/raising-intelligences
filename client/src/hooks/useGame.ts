@@ -51,10 +51,16 @@ export function useGame() {
     });
     const data = await res.json();
     setCurrentEvent(data.event);
-    setPhase(data.phase);
+    // Stay on event_intro so the player can read the description before chatting.
+    // The server has already transitioned to family_chat and is ready to accept messages.
+    setPhase("event_intro");
     setMessages([]);
     setMessagesRemaining(12);
   }, [gameId]);
+
+  const beginChat = useCallback(() => {
+    setPhase("family_chat");
+  }, []);
 
   const sendMessage = useCallback(
     async (content: string) => {
@@ -159,6 +165,7 @@ export function useGame() {
     reportCard,
     createGame,
     nextEvent,
+    beginChat,
     sendMessage,
     endChat,
     endDebrief,

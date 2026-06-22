@@ -144,6 +144,34 @@ describe("transition", () => {
     expect(state.sidebarActive).toBeNull();
   });
 
+  it("LOAD_EVENT sets currentEvent and increments eventNumber without changing phase", () => {
+    const state = createGame("Luna");
+    const next = transition(state, { type: "LOAD_EVENT", event: testEvent });
+    expect(next.phase).toBe("event_intro");
+    expect(next.currentEvent).toEqual(testEvent);
+    expect(next.currentEventNumber).toBe(1);
+    expect(next.events).toHaveLength(1);
+  });
+
+  it("LOAD_EVENT is not allowed when currentEvent is already set", () => {
+    const state = createGame("Luna");
+    const withEvent = transition(state, { type: "LOAD_EVENT", event: testEvent });
+    expect(canTransition(withEvent, { type: "LOAD_EVENT", event: testEvent })).toBe(false);
+  });
+
+  it("BEGIN_FAMILY_CHAT transitions from event_intro to family_chat when event is loaded", () => {
+    const state = createGame("Luna");
+    const loaded = transition(state, { type: "LOAD_EVENT", event: testEvent });
+    const next = transition(loaded, { type: "BEGIN_FAMILY_CHAT" });
+    expect(next.phase).toBe("family_chat");
+    expect(next.currentEvent).toEqual(testEvent);
+  });
+
+  it("BEGIN_FAMILY_CHAT is not allowed when currentEvent is null", () => {
+    const state = createGame("Luna");
+    expect(canTransition(state, { type: "BEGIN_FAMILY_CHAT" })).toBe(false);
+  });
+
   it("START_EPILOGUE can transition from event_intro or debrief", () => {
     let state = createGame("Luna");
     expect(canTransition(state, { type: "START_EPILOGUE", epilogue: "Test" })).toBe(true);

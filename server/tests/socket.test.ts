@@ -75,9 +75,19 @@ describe("socket multiplayer flow", () => {
     expect((await joined2).slot).toBe("parent2");
     expect((await lobbyAfterJoin).players).toHaveLength(2);
 
-    // Both ready up → first event starts, both clients receive family_chat state.
+    // Step 1: both ready → server generates the event preview, stays in event_intro.
+    const preview1 = waitFor<{ phase: string; currentEvent: { description: string } }>(p1, E.STATE);
+    const preview2 = waitFor<{ phase: string }>(p2, E.STATE);
+    p1.emit(E.READY, { ready: true });
+    p2.emit(E.READY, { ready: true });
+    const previewState = await preview1;
+    await preview2;
+    expect(previewState.phase).toBe("event_intro");
+    expect(previewState.currentEvent.description).toContain("broke a vase");
+
+    // Step 2: both ready again → server starts family chat.
     const state1 = waitFor<{ phase: string; currentEvent: { description: string } }>(p1, E.STATE);
-    const state2 = waitFor<{ phase: string }>(p2, E.STATE); // drain p2's ready-phase state too
+    const state2 = waitFor<{ phase: string }>(p2, E.STATE);
     p1.emit(E.READY, { ready: true });
     p2.emit(E.READY, { ready: true });
     const s1 = await state1;

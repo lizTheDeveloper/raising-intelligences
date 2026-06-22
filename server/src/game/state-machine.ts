@@ -4,6 +4,8 @@ import { randomUUID } from "crypto";
 const PARENT_MESSAGE_CAP = 12;
 
 export type GameAction =
+  | { type: "LOAD_EVENT"; event: GameEvent }
+  | { type: "BEGIN_FAMILY_CHAT" }
   | { type: "START_EVENT"; event: GameEvent }
   | { type: "PARENT_MESSAGE"; sender: Sender; content: string }
   | { type: "KID_MESSAGE"; content: string }
@@ -38,6 +40,10 @@ export function createGame(childName: string, relationshipType = "co-parents"): 
 
 export function canTransition(state: GameState, action: GameAction): boolean {
   switch (action.type) {
+    case "LOAD_EVENT":
+      return state.phase === "event_intro" && state.currentEvent === null;
+    case "BEGIN_FAMILY_CHAT":
+      return state.phase === "event_intro" && state.currentEvent !== null;
     case "START_EVENT":
       return state.phase === "event_intro";
     case "PARENT_MESSAGE":
@@ -84,6 +90,20 @@ export function transition(state: GameState, action: GameAction): GameState {
   }
 
   switch (action.type) {
+    case "LOAD_EVENT":
+      return {
+        ...state,
+        currentEvent: action.event,
+        currentEventNumber: state.currentEventNumber + 1,
+        events: [...state.events, action.event],
+      };
+
+    case "BEGIN_FAMILY_CHAT":
+      return {
+        ...state,
+        phase: "family_chat",
+      };
+
     case "START_EVENT":
       return {
         ...state,

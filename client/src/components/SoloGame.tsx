@@ -17,6 +17,7 @@ export function SoloGame() {
     isStreaming,
     createGame,
     nextEvent,
+    beginChat,
     sendMessage,
     endChat,
     endDebrief,
@@ -94,7 +95,11 @@ export function SoloGame() {
   if (phase === "event_intro") {
     return (
       <div className="app">
-        <EventIntro event={currentEvent} onReady={handleNextEvent} waiting={loadingEvent} />
+        <EventIntro
+          event={currentEvent}
+          onReady={currentEvent ? beginChat : handleNextEvent}
+          waiting={loadingEvent}
+        />
       </div>
     );
   }
