@@ -119,17 +119,21 @@ for (const { slug, figure } of AGES) {
     continue;
   }
 
-  try {
-    if (!prevPath) {
-      await generateFirst(figure, outPath);
-    } else {
-      await generateWithReference(figure, outPath, prevPath);
+  let attempt = 0;
+  while (!existsSync(outPath)) {
+    try {
+      if (!prevPath) {
+        await generateFirst(figure, outPath);
+      } else {
+        await generateWithReference(figure, outPath, prevPath);
+      }
+    } catch (e) {
+      attempt++;
+      console.error(`  ✗ ${slug} attempt ${attempt}: ${e.message}`);
+      await new Promise(r => setTimeout(r, 2000 * attempt));
     }
-    prevPath = outPath;
-  } catch (e) {
-    console.error(`  ✗ ${slug}: ${e.message}`);
-    // keep prevPath — next age still references last successful portrait
   }
+  prevPath = outPath;
 }
 
 console.log(`\nDone. Portraits in: ${OUT_DIR}`);

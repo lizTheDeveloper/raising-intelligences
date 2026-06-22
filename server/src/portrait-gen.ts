@@ -155,8 +155,9 @@ export async function generatePortraitsForGame(gameId: string): Promise<void> {
   const { hair, clothing } = childDescriptorFromGameId(gameId);
   const [first, ...rest] = AGE_BUCKETS;
 
-  // Generate serially: each age uses the previous as a visual reference
-  // age-03 → age-07 → age-12 → age-16 → age-20
+  // Generate serially: age-03 → age-07 → age-12 → age-16 → age-20
+  // Each age uses the previous portrait as a visual reference.
+  // Retry each step indefinitely until it succeeds.
   let prevPath: string | null = null;
 
   for (const { slug, figure } of AGE_BUCKETS) {
@@ -167,17 +168,22 @@ export async function generatePortraitsForGame(gameId: string): Promise<void> {
       continue;
     }
 
-    try {
-      if (!prevPath) {
-        await generateFirst(figure, hair, clothing, outPath, apiKey);
-      } else {
-        await generateWithReference(figure, hair, clothing, outPath, prevPath, apiKey);
+    let attempt = 0;
+    while (!existsSync(outPath)) {
+      try {
+        if (!prevPath) {
+          await generateFirst(figure, hair, clothing, outPath, apiKey);
+        } else {
+          await generateWithReference(figure, hair, clothing, outPath, prevPath, apiKey);
+        }
+        console.log(`[portraits] ${gameId}/${slug} ready`);
+      } catch (e) {
+        attempt++;
+        console.error(`[portraits] ${gameId}/${slug} attempt ${attempt} failed:`, (e as Error).message);
+        await new Promise((r) => setTimeout(r, 2000 * attempt));
       }
-      console.log(`[portraits] ${gameId}/${slug} ready`);
-      prevPath = outPath;
-    } catch (e) {
-      console.error(`[portraits] ${gameId}/${slug} failed:`, (e as Error).message);
-      // keep prevPath as-is — next age will still reference the last successful one
     }
+
+    prevPath = outPath;
   }
 }
