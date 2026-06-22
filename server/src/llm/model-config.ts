@@ -27,6 +27,7 @@ export type ModelTier = "standard" | "premium";
 
 export type ModelConfig = Record<LLMRole, string>;
 
+// Verify slugs against https://openrouter.ai/models before first deploy
 /** Standard tier: DeepSeek + Qwen. ~$0.15/typical game. */
 export const STANDARD_MODELS: ModelConfig = {
   kid_family_chat: "deepseek/deepseek-v4-flash",
@@ -38,15 +39,15 @@ export const STANDARD_MODELS: ModelConfig = {
   report_card: "qwen/qwen3.7-max",
 };
 
-/** Premium tier: Qwen Max + Gemini + Claude Opus for the keepsake artifacts. */
+/** Premium tier: Qwen Max + Gemini 2.5 Flash + Claude Opus 4.8 for the keepsake artifacts. */
 export const PREMIUM_MODELS: ModelConfig = {
   kid_family_chat: "qwen/qwen3.7-plus",
   kid_sidebar: "qwen/qwen3.7-plus",
   kid_adult_chat: "qwen/qwen3.7-max",
   world_manager: "qwen/qwen3.7-max",
-  psychologist: "google/gemini-3.5-flash",
-  epilogue: "anthropic/claude-opus-4.7",
-  report_card: "anthropic/claude-opus-4.7",
+  psychologist: "google/gemini-2.5-flash",
+  epilogue: "anthropic/claude-opus-4-8",
+  report_card: "anthropic/claude-opus-4-8",
 };
 
 export const MODELS_BY_TIER: Record<ModelTier, ModelConfig> = {
@@ -60,8 +61,8 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
   "deepseek/deepseek-v4-flash": { input: 0.09, output: 0.18 },
   "qwen/qwen3.7-plus": { input: 0.32, output: 1.28 },
   "qwen/qwen3.7-max": { input: 1.25, output: 3.75 },
-  "google/gemini-3.5-flash": { input: 1.5, output: 9.0 },
-  "anthropic/claude-opus-4.7": { input: 5.0, output: 25.0 },
+  "google/gemini-2.5-flash": { input: 1.5, output: 9.0 },
+  "anthropic/claude-opus-4-8": { input: 5.0, output: 25.0 },
 };
 
 /** The model that serves a given role at a given tier. Defaults to standard. */

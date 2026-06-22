@@ -18,9 +18,9 @@ describe("model-config", () => {
   });
 
   it("upgrades the keepsake artifacts to Claude Opus in the premium tier", () => {
-    expect(selectModel("psychologist", "premium")).toBe("google/gemini-3.5-flash");
-    expect(selectModel("epilogue", "premium")).toBe("anthropic/claude-opus-4.7");
-    expect(selectModel("report_card", "premium")).toBe("anthropic/claude-opus-4.7");
+    expect(selectModel("psychologist", "premium")).toBe("google/gemini-2.5-flash");
+    expect(selectModel("epilogue", "premium")).toBe("anthropic/claude-opus-4-8");
+    expect(selectModel("report_card", "premium")).toBe("anthropic/claude-opus-4-8");
   });
 
   it("standard tier defaults match when tier is omitted", () => {
