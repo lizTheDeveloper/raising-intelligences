@@ -6,15 +6,15 @@ type Mode = "choose" | "solo" | "multiplayer";
 type Theme = "" | "theme-ocean-grunge" | "theme-cyber";
 
 const THEMES: { id: Theme; label: string }[] = [
-  { id: "",                    label: "lo-fi" },
   { id: "theme-ocean-grunge",  label: "ocean" },
+  { id: "",                    label: "lo-fi" },
   { id: "theme-cyber",         label: "cyber" },
 ];
 
 export function App() {
   const joinGameId = new URLSearchParams(window.location.search).get("game") ?? undefined;
   const [mode, setMode] = useState<Mode>(joinGameId ? "multiplayer" : "choose");
-  const [theme, setTheme] = useState<Theme>("");
+  const [theme, setTheme] = useState<Theme>("theme-ocean-grunge");
 
   // Apply theme to body so it persists across all game screens
   useEffect(() => {

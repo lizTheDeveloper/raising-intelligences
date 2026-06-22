@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ChildPresence } from "./ChildPresence";
+import { ChildPortrait } from "./ChildPortrait";
 
 const FRAGMENTS = [
   "they made a friend",
@@ -30,7 +30,7 @@ export function ProcessingScreen({ childName, age = 6 }: Props) {
   return (
     <div className="processing-screen">
       <div className="processing-figure">
-        <ChildPresence age={age} size={110} />
+        <ChildPortrait age={age} size={140} />
       </div>
       <p className="processing-name">{childName}</p>
       <div className="processing-fragment-area">

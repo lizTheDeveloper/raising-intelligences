@@ -1,3 +1,4 @@
+import { ChildPortrait } from "./ChildPortrait";
 import { ChildPresence } from "./ChildPresence";
 
 interface Props {
@@ -30,7 +31,7 @@ export function EventIntro({ event, onReady, waiting }: Props) {
   return (
     <div className="event-intro">
       <div className="event-intro-figure">
-        <ChildPresence age={event.age} size={100} />
+        <ChildPortrait age={event.age} size={180} />
       </div>
       <p className="age-marker">— age {event.age} —</p>
       <p className="event-description">{event.description}</p>

@@ -1,0 +1,33 @@
+services:
+  ri:
+    build:
+      context: ../
+      dockerfile: Dockerfile
+    image: raising-intelligences:latest
+    container_name: raising-intelligences
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    env_file:
+      - .env
+    networks:
+      - coolify
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.ri.rule=Host(`multiversegames.ai`)
+      - traefik.http.routers.ri.entrypoints=https
+      - traefik.http.routers.ri.tls.certresolver=letsencrypt
+      - traefik.http.routers.ri-http.rule=Host(`multiversegames.ai`)
+      - traefik.http.routers.ri-http.entrypoints=http
+      - traefik.http.routers.ri-http.middlewares=ri-https-redirect
+      - traefik.http.middlewares.ri-https-redirect.redirectscheme.scheme=https
+      - traefik.http.middlewares.ri-https-redirect.redirectscheme.permanent=true
+      - traefik.http.services.ri.loadbalancer.server.port=3000
+
+networks:
+  coolify:
+    external: true

@@ -131,20 +131,35 @@ body::after {
   cursor: pointer;
   letter-spacing: 1px;
   margin-top: 16px;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
 }
 
 .btn:hover {
-  border-color: var(--fg);
+  border-color: var(--kid);
+  color: var(--kid);
+  background: rgba(255,255,255,0.02);
+}
+.btn:active {
+  background: rgba(255,255,255,0.05);
 }
 .btn:disabled {
   opacity: 0.3;
   cursor: default;
+}
+.btn:disabled:hover {
+  border-color: var(--fg-dim);
+  color: var(--fg);
+  background: transparent;
 }
 .btn-secondary {
   border-color: var(--fg-dim);
   color: var(--fg-dim);
   font-size: 11px;
   margin-top: 24px;
+}
+.btn-secondary:hover {
+  border-color: var(--fg-dim);
+  color: var(--fg);
 }
 
 .age-marker {
@@ -196,22 +211,27 @@ body::after {
 }
 
 .message-sender {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--fg-dim);
-  letter-spacing: 1px;
+  letter-spacing: 3px;
+  text-transform: lowercase;
+  margin-bottom: 2px;
 }
 
 .message-kid .message-sender {
   color: var(--kid);
+  letter-spacing: 2px;
 }
 .message-kid .message-content {
   color: var(--kid);
   font-style: italic;
+  font-size: 16px;
+  line-height: 1.75;
 }
 
 .message-content {
   font-size: 15px;
-  line-height: 1.6;
+  line-height: 1.7;
 }
 
 .message-input {
@@ -246,12 +266,19 @@ body::after {
 }
 
 .message-input button:hover {
-  border-color: var(--fg);
-  color: var(--fg);
+  border-color: var(--kid);
+  color: var(--kid);
+}
+.message-input button:active {
+  background: rgba(255,255,255,0.04);
 }
 .message-input button:disabled {
   opacity: 0.2;
   cursor: default;
+}
+.message-input button:disabled:hover {
+  border-color: #333;
+  color: var(--fg-dim);
 }
 
 .debrief {
@@ -522,6 +549,17 @@ body::after {
   line-height: 1.9;
   font-style: italic;
   color: var(--fg);
+}
+
+/* ─── Child Portrait (generated image) ──────────────────────── */
+
+.child-portrait {
+  overflow: hidden;
+  animation: presenceBreathe 5.5s ease-in-out infinite;
+  /* Muted vignette to blend with the dark UI */
+  mask-image: radial-gradient(ellipse 85% 85% at 50% 45%, black 60%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 85% 85% at 50% 45%, black 60%, transparent 100%);
+  filter: saturate(0.85) brightness(0.9);
 }
 
 /* ─── Event Intro with Presence ──────────────────────────────── */
