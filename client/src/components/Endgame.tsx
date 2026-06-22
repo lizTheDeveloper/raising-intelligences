@@ -18,7 +18,7 @@ export function Endgame({ epilogue, onContinue }: Props) {
         {paragraphs.map((para, i) => (
           <p
             key={i}
-            className="epilogue-para"
+            className={`epilogue-para${i === 0 ? " epilogue-para-lead" : ""}`}
             style={{ animationDelay: `${i * 420}ms` }}
           >
             {para}

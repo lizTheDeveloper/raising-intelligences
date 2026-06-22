@@ -14,7 +14,7 @@
   text-align: center;
   color: var(--fg-dim);
   font-size: 11px;
-  letter-spacing: 4px;
+  letter-spacing: 7px;
   text-transform: uppercase;
 }
 
@@ -29,6 +29,11 @@
   line-height: 1.9;
   font-style: italic;
   color: var(--fg);
+}
+
+.epilogue-body .epilogue-para-lead {
+  font-size: 22px;
+  line-height: 1.75;
 }
 
 .endgame-actions {
@@ -53,11 +58,12 @@
 
 .report-card h1 {
   font-weight: 300;
-  font-size: 28px;
-  letter-spacing: 2px;
+  font-size: 52px;
+  letter-spacing: 4px;
   text-align: center;
-  padding-bottom: 8px;
-  margin-bottom: 16px;
+  line-height: 1.1;
+  padding-bottom: 20px;
+  margin-bottom: 28px;
   border-bottom: 1px solid #222;
 }
 

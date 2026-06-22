@@ -8,84 +8,97 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap" rel="stylesheet">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
+
 :root {
-  --bg: #0a0a0a;
-  --fg: #e8e8e8;
-  --fg-dim: #888;
-  --accent: #7a6f5d;
-  --kid: #c4b99a;
-  --warm: #e8b96a;
-  --warm-glow: rgba(232, 185, 106, 0.12);
-  --font: 'IBM Plex Mono', monospace;
+  --bg: #0a0a0a; --fg: #e8e8e8; --fg-dim: #888;
+  --accent: #7a6f5d; --kid: #c4b99a; --warm: #e8b96a;
+  --warm-glow: rgba(232,185,106,0.12); --font: 'IBM Plex Mono', monospace;
 }
-body { font-family: var(--font); background: var(--bg); color: var(--fg); font-size: 15px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+body.theme-ocean-grunge {
+  --bg: #090e18; --fg: #bdd0d8; --fg-dim: #4d6e7a;
+  --accent: #2b6272; --kid: #7fb0be; --warm: #3d7a6a;
+  --warm-glow: rgba(61,122,106,0.1);
+}
+body.theme-cyber {
+  --bg: #080808; --fg: #d8d8d8; --fg-dim: #484848;
+  --accent: #606060; --kid: #a8a8a8; --warm: #888;
+  --warm-glow: rgba(136,136,136,0.05);
+}
+
+body { font-family: var(--font); background: var(--bg); color: var(--fg); font-size: 15px; line-height: 1.6; -webkit-font-smoothing: antialiased; transition: background 0.4s ease, color 0.4s ease; }
 
 body::after {
-  content: '';
-  position: fixed;
-  inset: 0;
+  content: ''; position: fixed; inset: 0;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
-  background-size: 180px 180px;
-  opacity: 0.028;
-  pointer-events: none;
-  z-index: 9999;
+  background-size: 180px 180px; opacity: 0.028; pointer-events: none; z-index: 9999;
 }
 
-.section { max-width: 600px; margin: 0 auto; padding: 32px 16px; border-bottom: 1px solid #1a1a1a; }
-.label { font-size: 10px; letter-spacing: 3px; color: #444; text-transform: uppercase; margin-bottom: 24px; }
+.section { max-width: 600px; margin: 0 auto; padding: 40px 16px; border-bottom: 1px solid #1a1a1a; }
+.label { font-size: 10px; letter-spacing: 3px; color: #444; text-transform: uppercase; margin-bottom: 28px; }
 
-/* --- Child Presence --- */
-.child-presence { display: block; animation: presenceBreathe 5.5s ease-in-out infinite; }
-@keyframes presenceBreathe {
-  0%, 100% { transform: scale(1); opacity: 0.88; }
-  50%       { transform: scale(1.03); opacity: 1; }
-}
+/* Theme switcher */
+.theme-switcher { position: fixed; top: 16px; right: 16px; display: flex; gap: 16px; z-index: 100; }
+.tsw-btn { background: transparent; border: none; color: #555; font-family: var(--font); font-size: 10px; letter-spacing: 2px; cursor: pointer; padding: 4px; }
+.tsw-btn:hover { color: var(--fg); }
+.tsw-btn.active { color: var(--kid); border-bottom: 1px solid var(--kid); }
 
-/* --- Event Intro --- */
-.event-intro { display: flex; flex-direction: column; align-items: center; gap: 20px; text-align: center; padding: 48px 24px; }
-.age-marker { text-align: center; color: var(--fg-dim); font-size: 13px; letter-spacing: 3px; }
-.event-description { font-size: 16px; line-height: 1.8; max-width: 400px; font-style: italic; }
-.btn { background: transparent; border: 1px solid var(--fg-dim); color: var(--fg); font-family: var(--font); font-size: 13px; padding: 8px 24px; cursor: pointer; letter-spacing: 1px; margin-top: 8px; }
-.btn:hover { border-color: var(--fg); }
+/* Components */
+.child-presence { display: block; animation: breathe 5.5s ease-in-out infinite; }
+@keyframes breathe { 0%,100%{transform:scale(1);opacity:.88} 50%{transform:scale(1.03);opacity:1} }
 
-/* --- Processing Screen --- */
-.processing-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 400px; gap: 10px; }
-.processing-name { font-size: 11px; letter-spacing: 4px; color: var(--kid); opacity: 0.65; text-transform: lowercase; }
-.processing-fragment-area { height: 18px; display: flex; align-items: center; justify-content: center; margin-top: 6px; }
-.processing-fragment-text { font-size: 11px; color: var(--fg-dim); letter-spacing: 2px; opacity: 0.7; }
-
-/* --- Debrief --- */
-.debrief-enhanced { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 400px; gap: 32px; text-align: center; }
-.debrief-text-block { display: flex; flex-direction: column; gap: 10px; }
-.debrief-line-1 { font-size: 11px; color: var(--fg-dim); letter-spacing: 5px; text-transform: lowercase; opacity: 0.7; }
-.debrief-line-2 { font-size: 17px; font-weight: 300; color: var(--kid); letter-spacing: 1px; }
-
-/* --- Chat / Message Dots --- */
-.message-dots { display: flex; gap: 5px; justify-content: flex-end; align-items: center; padding: 8px 0 4px; }
-.message-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--fg-dim); }
-.dot-active { opacity: 0.45; }
-.dot-used   { opacity: 0.08; }
-.dot-urgent { background: var(--warm); opacity: 0.9; }
-.message-input { display: flex; gap: 8px; padding: 8px 0; border-top: 1px solid #222; }
-.message-input input { flex: 1; background: transparent; border: none; color: var(--fg); font-family: var(--font); font-size: 15px; outline: none; color: var(--fg-dim); }
-
-/* --- Start Screen Glow --- */
-.start-screen { position: relative; display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 80px 16px; }
-.start-glow { position: absolute; top: 30%; left: 50%; transform: translateX(-50%); width: 300px; height: 200px; background: radial-gradient(ellipse at center, var(--warm-glow) 0%, transparent 70%); pointer-events: none; }
-h1 { font-weight: 300; font-size: 24px; letter-spacing: 2px; }
+.start-screen { position: relative; display: flex; flex-direction: column; align-items: center; gap: 20px; padding: 80px 0 60px; }
+.start-screen h1 { font-weight: 300; font-size: 42px; letter-spacing: 3px; line-height: 1.15; }
 .dim { color: var(--fg-dim); }
-.mode-choice { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+.start-glow { position: absolute; top: 30%; left: 50%; transform: translateX(-50%); width: 300px; height: 200px; background: radial-gradient(ellipse at center, var(--warm-glow) 0%, transparent 70%); pointer-events: none; animation: glowPulse 6s ease-in-out infinite; }
+@keyframes glowPulse { 0%,100%{opacity:.7;transform:translateX(-50%) scale(1)} 50%{opacity:1;transform:translateX(-50%) scale(1.08)} }
+.mode-choice { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.btn { background: transparent; border: 1px solid var(--fg-dim); color: var(--fg); font-family: var(--font); font-size: 13px; padding: 8px 24px; cursor: pointer; letter-spacing: 1px; }
 .btn-secondary { border-color: var(--fg-dim); color: var(--fg-dim); font-size: 11px; }
 
-/* --- Epilogue --- */
+.event-intro { display: flex; flex-direction: column; align-items: center; gap: 20px; text-align: center; padding: 60px 24px; }
+.age-marker { text-align: center; color: var(--fg-dim); font-size: 16px; letter-spacing: 5px; padding: 8px 0; }
+.event-description { font-size: 18px; line-height: 1.85; max-width: 400px; font-style: italic; }
+
+.processing-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 380px; gap: 10px; }
+.processing-name { font-size: 32px; letter-spacing: 6px; color: var(--kid); opacity: .75; font-weight: 300; text-transform: lowercase; }
+.processing-fragment-area { height: 18px; display: flex; align-items: center; justify-content: center; margin-top: 6px; }
+.processing-fragment-text { font-size: 11px; color: var(--fg-dim); letter-spacing: 2px; opacity: .7; }
+
+.debrief-enhanced { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 380px; gap: 32px; text-align: center; }
+.debrief-text-block { display: flex; flex-direction: column; gap: 12px; }
+.debrief-line-1 { font-size: 11px; color: var(--fg-dim); letter-spacing: 5px; text-transform: lowercase; }
+.debrief-line-2 { font-size: 40px; font-weight: 300; color: var(--kid); line-height: 1.2; max-width: 480px; }
+
+.message-dots { display: flex; gap: 5px; justify-content: flex-end; padding: 8px 0 4px; }
+.message-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--fg-dim); }
+.dot-active { opacity: .45; } .dot-used { opacity: .08; }
+.dot-urgent { background: var(--warm); opacity: .9; }
+.message-input { display: flex; gap: 8px; padding: 8px 0; border-top: 1px solid #222; }
+.message-input input { flex: 1; background: transparent; border: none; color: var(--fg-dim); font-family: var(--font); font-size: 15px; outline: none; }
+
+.endgame { padding: 32px 8px; }
+.endgame-label { text-align: center; color: var(--fg-dim); font-size: 11px; letter-spacing: 7px; text-transform: uppercase; margin-bottom: 28px; }
 .epilogue-body { display: flex; flex-direction: column; gap: 20px; }
-.epilogue-para { font-size: 16px; line-height: 1.9; font-style: italic; color: var(--fg); opacity: 0.9; }
-.endgame-label { text-align: center; color: var(--fg-dim); font-size: 11px; letter-spacing: 4px; text-transform: uppercase; margin-bottom: 8px; }
+.epilogue-para { font-size: 16px; line-height: 1.9; font-style: italic; color: var(--fg); }
+.epilogue-para-lead { font-size: 22px; line-height: 1.75; }
+
+.report-card { padding: 32px 4px 48px; display: flex; flex-direction: column; gap: 8px; }
+.report-card h1 { font-weight: 300; font-size: 52px; letter-spacing: 4px; text-align: center; line-height: 1.1; padding-bottom: 20px; margin-bottom: 28px; border-bottom: 1px solid #222; }
+.report-card h2 { font-weight: 500; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); margin-top: 28px; margin-bottom: 4px; }
+.report-card p { font-size: 15px; line-height: 1.7; }
+.rc-bullet { padding-left: 16px; position: relative; }
+.rc-bullet::before { content: "—"; position: absolute; left: 0; color: var(--fg-dim); }
 </style>
 </head>
 <body>
 
-<!-- START SCREEN -->
+<div class="theme-switcher">
+  <button class="tsw-btn active" onclick="setTheme('')">lo-fi</button>
+  <button class="tsw-btn" onclick="setTheme('theme-ocean-grunge')">ocean</button>
+  <button class="tsw-btn" onclick="setTheme('theme-cyber')">cyber</button>
+</div>
+
+<!-- 01 START SCREEN -->
 <div class="section">
   <p class="label">01 — start screen</p>
   <div class="start-screen">
@@ -99,52 +112,48 @@ h1 { font-weight: 300; font-size: 24px; letter-spacing: 2px; }
   </div>
 </div>
 
-<!-- EVENT INTRO -->
+<!-- 02 EVENT INTRO -->
 <div class="section">
-  <p class="label">02 — event intro (age 7)</p>
+  <p class="label">02 — event intro</p>
   <div class="event-intro">
     <svg width="100" height="100" viewBox="0 0 120 120" class="child-presence" aria-hidden="true">
-      <defs>
-        <radialGradient id="g7" cx="50%" cy="36%" r="55%">
-          <stop offset="0%"   stop-color="#e8b96a" stop-opacity="0.3" />
-          <stop offset="50%"  stop-color="#e8b96a" stop-opacity="0.09" />
-          <stop offset="100%" stop-color="#e8b96a" stop-opacity="0" />
-        </radialGradient>
-      </defs>
+      <defs><radialGradient id="g7" cx="50%" cy="36%" r="55%">
+        <stop offset="0%"   stop-color="#e8b96a" stop-opacity="0.3" />
+        <stop offset="50%"  stop-color="#e8b96a" stop-opacity="0.09" />
+        <stop offset="100%" stop-color="#e8b96a" stop-opacity="0" />
+      </radialGradient></defs>
       <ellipse cx="60" cy="42" rx="46" ry="36" fill="url(#g7)" />
       <ellipse cx="60" cy="67" rx="9.4" ry="10.7" fill="#0a0a0a" stroke="#c4b99a" stroke-width="0.8" opacity="0.7"/>
       <path d="M 37 90 Q 48 80 60 78 Q 72 80 83 90" fill="none" stroke="#c4b99a" stroke-width="1" opacity="0.3"/>
     </svg>
     <p class="age-marker">— age 7 —</p>
-    <p class="event-description">It's a Tuesday afternoon and your child comes home quiet. Something happened at school — you're not sure what, but something in them has shifted.</p>
+    <p class="event-description">It's a Tuesday afternoon. Your child comes home quiet. Something happened at school — you're not sure what, but something in them has shifted.</p>
     <button class="btn">enter</button>
   </div>
 </div>
 
-<!-- PROCESSING SCREEN -->
+<!-- 03 PROCESSING -->
 <div class="section">
-  <p class="label">03 — processing / time passes</p>
+  <p class="label">03 — time passes</p>
   <div class="processing-screen">
     <svg width="110" height="110" viewBox="0 0 120 120" class="child-presence" aria-hidden="true">
-      <defs>
-        <radialGradient id="gp" cx="50%" cy="36%" r="55%">
-          <stop offset="0%"   stop-color="#e8b96a" stop-opacity="0.32" />
-          <stop offset="50%"  stop-color="#e8b96a" stop-opacity="0.09" />
-          <stop offset="100%" stop-color="#e8b96a" stop-opacity="0" />
-        </radialGradient>
-      </defs>
+      <defs><radialGradient id="gp" cx="50%" cy="36%" r="55%">
+        <stop offset="0%"   stop-color="#e8b96a" stop-opacity="0.32" />
+        <stop offset="50%"  stop-color="#e8b96a" stop-opacity="0.09" />
+        <stop offset="100%" stop-color="#e8b96a" stop-opacity="0" />
+      </radialGradient></defs>
       <ellipse cx="60" cy="42" rx="46" ry="36" fill="url(#gp)" />
       <ellipse cx="60" cy="67" rx="9.4" ry="10.7" fill="#0a0a0a" stroke="#c4b99a" stroke-width="0.8" opacity="0.7"/>
       <path d="M 37 90 Q 48 80 60 78 Q 72 80 83 90" fill="none" stroke="#c4b99a" stroke-width="1" opacity="0.3"/>
     </svg>
     <p class="processing-name">maya</p>
     <div class="processing-fragment-area">
-      <span class="processing-fragment-text">they made a friend</span>
+      <span class="processing-fragment-text" id="fragment">they made a friend</span>
     </div>
   </div>
 </div>
 
-<!-- DEBRIEF -->
+<!-- 04 DEBRIEF -->
 <div class="section">
   <p class="label">04 — debrief (solo)</p>
   <div class="debrief-enhanced">
@@ -156,85 +165,112 @@ h1 { font-weight: 300; font-size: 24px; letter-spacing: 2px; }
   </div>
 </div>
 
-<!-- CHAT WITH DOTS -->
+<!-- 05 MULTIPLAYER DEBRIEF -->
 <div class="section">
-  <p class="label">05 — chat (8 messages used, 4 urgent remaining)</p>
-  <div style="padding: 16px 0;">
+  <p class="label">05 — debrief (multiplayer)</p>
+  <div class="debrief-enhanced">
+    <div class="debrief-text-block">
+      <p class="debrief-line-1">a moment between you two</p>
+      <p class="debrief-line-2">what just happened?</p>
+    </div>
+    <button class="btn">ready to continue</button>
+  </div>
+</div>
+
+<!-- 06 CHAT WITH DOTS -->
+<div class="section">
+  <p class="label">06 — chat (8 messages used, 4 urgent remaining)</p>
+  <p class="age-marker" style="padding-top:0">— age 9 —</p>
+  <div style="margin-top: 16px;">
     <div class="message-dots">
-      <!-- 12 dots, 8 used, 4 remaining (urgent) -->
-      <span class="message-dot dot-used"></span>
-      <span class="message-dot dot-used"></span>
-      <span class="message-dot dot-used"></span>
-      <span class="message-dot dot-used"></span>
-      <span class="message-dot dot-used"></span>
-      <span class="message-dot dot-used"></span>
-      <span class="message-dot dot-used"></span>
-      <span class="message-dot dot-used"></span>
-      <span class="message-dot dot-urgent"></span>
-      <span class="message-dot dot-urgent"></span>
-      <span class="message-dot dot-urgent"></span>
-      <span class="message-dot dot-urgent"></span>
+      <span class="message-dot dot-used"></span><span class="message-dot dot-used"></span>
+      <span class="message-dot dot-used"></span><span class="message-dot dot-used"></span>
+      <span class="message-dot dot-used"></span><span class="message-dot dot-used"></span>
+      <span class="message-dot dot-used"></span><span class="message-dot dot-used"></span>
+      <span class="message-dot dot-urgent"></span><span class="message-dot dot-urgent"></span>
+      <span class="message-dot dot-urgent"></span><span class="message-dot dot-urgent"></span>
     </div>
     <div class="message-input">
-      <input type="text" placeholder="type something..." />
+      <input type="text" placeholder="say something..." />
       <button style="background:transparent;border:1px solid #333;color:#888;font-family:var(--font);font-size:12px;padding:6px 16px;cursor:pointer;">send</button>
     </div>
   </div>
 </div>
 
-<!-- EPILOGUE -->
+<!-- 07 EPILOGUE -->
 <div class="section">
-  <p class="label">06 — epilogue (staggered)</p>
-  <div style="padding: 32px 0;">
+  <p class="label">07 — years later</p>
+  <div class="endgame">
     <p class="endgame-label">years later</p>
-    <div class="epilogue-body" style="margin-top: 28px;">
-      <p class="epilogue-para">Maya is twenty-three now. She lives in a small apartment with two roommates, one of whom she met in the first week of college and has been inseparable from since.</p>
-      <p class="epilogue-para">She calls on Sunday evenings, usually when she's walking somewhere—to the grocery store, to meet a friend. The calls are short but she always makes them.</p>
+    <div class="epilogue-body">
+      <p class="epilogue-para epilogue-para-lead">Maya is twenty-three now. She lives in a small apartment with two roommates, one of whom she met in the first week of college and has been inseparable from since.</p>
+      <p class="epilogue-para">She calls on Sunday evenings, usually when she's walking somewhere — to the grocery store, to meet a friend. The calls are short but she always makes them.</p>
       <p class="epilogue-para">She still gets quiet sometimes. You've learned not to push.</p>
     </div>
   </div>
 </div>
 
-<!-- YOUNG CHILD vs TEEN comparison -->
+<!-- 08 REPORT CARD -->
 <div class="section">
-  <p class="label">07 — child presence: age 3 vs age 16</p>
-  <div style="display: flex; justify-content: space-around; align-items: center; padding: 40px 0;">
-    <!-- Age 3 -->
-    <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
-      <svg width="100" height="100" viewBox="0 0 120 120" class="child-presence">
-        <defs>
-          <radialGradient id="g3" cx="50%" cy="36%" r="55%">
-            <stop offset="0%"   stop-color="#e8b96a" stop-opacity="0.38" />
-            <stop offset="50%"  stop-color="#e8b96a" stop-opacity="0.11" />
-            <stop offset="100%" stop-color="#e8b96a" stop-opacity="0" />
-          </radialGradient>
-        </defs>
-        <ellipse cx="60" cy="42" rx="46" ry="36" fill="url(#g3)" />
-        <!-- bigger head for young child -->
+  <p class="label">08 — report card</p>
+  <div class="report-card">
+    <h1>Maya</h1>
+    <h2>Core Identity</h2>
+    <p>Maya grew up shaped by the tension between independence and belonging. She learned early that the world doesn't always explain itself, and became someone who seeks understanding quietly, on her own terms.</p>
+    <h2>Defining Beliefs</h2>
+    <p class="rc-bullet">Care is shown in small consistent actions, not declarations</p>
+    <p class="rc-bullet">Silence can be a form of protection</p>
+    <p class="rc-bullet">The people worth keeping are the ones who wait</p>
+    <h2>Emotional Patterns</h2>
+    <p>She tends to withdraw before she reaches out. She does not always know why she is sad, but she accepts it. She is harder on herself than on anyone else.</p>
+  </div>
+</div>
+
+<!-- AGE COMPARISON -->
+<div class="section">
+  <p class="label">09 — child presence: age progression</p>
+  <div style="display: flex; justify-content: space-around; align-items: flex-end; padding: 40px 0;">
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 12px;">
+      <svg width="80" height="80" viewBox="0 0 120 120" class="child-presence">
+        <defs><radialGradient id="g3" cx="50%" cy="36%" r="55%"><stop offset="0%" stop-color="#e8b96a" stop-opacity="0.38"/><stop offset="100%" stop-color="#e8b96a" stop-opacity="0"/></radialGradient></defs>
+        <ellipse cx="60" cy="42" rx="46" ry="36" fill="url(#g3)"/>
         <ellipse cx="60" cy="70" rx="11" ry="13" fill="#0a0a0a" stroke="#c4b99a" stroke-width="0.8" opacity="0.7"/>
         <path d="M 38 91 Q 47 83 60 81 Q 73 83 82 91" fill="none" stroke="#c4b99a" stroke-width="1" opacity="0.3"/>
       </svg>
-      <p style="font-size: 11px; color: var(--fg-dim); letter-spacing: 2px;">age 3</p>
+      <p style="font-size: 11px; color: var(--fg-dim); letter-spacing: 3px;">age 3</p>
     </div>
-    <!-- Age 16 -->
-    <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 12px;">
+      <svg width="90" height="90" viewBox="0 0 120 120" class="child-presence">
+        <defs><radialGradient id="g9" cx="50%" cy="36%" r="55%"><stop offset="0%" stop-color="#e8b96a" stop-opacity="0.28"/><stop offset="100%" stop-color="#e8b96a" stop-opacity="0"/></radialGradient></defs>
+        <ellipse cx="60" cy="42" rx="46" ry="36" fill="url(#g9)"/>
+        <ellipse cx="60" cy="67" rx="9.4" ry="10.7" fill="#0a0a0a" stroke="#c4b99a" stroke-width="0.8" opacity="0.7"/>
+        <path d="M 40 90 Q 50 80 60 78 Q 70 80 80 90" fill="none" stroke="#c4b99a" stroke-width="1" opacity="0.3"/>
+      </svg>
+      <p style="font-size: 11px; color: var(--fg-dim); letter-spacing: 3px;">age 9</p>
+    </div>
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 12px;">
       <svg width="100" height="100" viewBox="0 0 120 120" class="child-presence">
-        <defs>
-          <radialGradient id="g16" cx="50%" cy="36%" r="55%">
-            <stop offset="0%"   stop-color="#e8b96a" stop-opacity="0.22" />
-            <stop offset="50%"  stop-color="#e8b96a" stop-opacity="0.06" />
-            <stop offset="100%" stop-color="#e8b96a" stop-opacity="0" />
-          </radialGradient>
-        </defs>
-        <ellipse cx="60" cy="42" rx="46" ry="36" fill="url(#g16)" />
-        <!-- narrower head, wider shoulders for teen -->
+        <defs><radialGradient id="g16" cx="50%" cy="36%" r="55%"><stop offset="0%" stop-color="#e8b96a" stop-opacity="0.2"/><stop offset="100%" stop-color="#e8b96a" stop-opacity="0"/></radialGradient></defs>
+        <ellipse cx="60" cy="42" rx="46" ry="36" fill="url(#g16)"/>
         <ellipse cx="60" cy="63" rx="9.2" ry="11.5" fill="#0a0a0a" stroke="#c4b99a" stroke-width="0.8" opacity="0.7"/>
         <path d="M 33 91 Q 46 76 60 74 Q 74 76 87 91" fill="none" stroke="#c4b99a" stroke-width="1" opacity="0.3"/>
       </svg>
-      <p style="font-size: 11px; color: var(--fg-dim); letter-spacing: 2px;">age 16</p>
+      <p style="font-size: 11px; color: var(--fg-dim); letter-spacing: 3px;">age 16</p>
     </div>
   </div>
 </div>
 
+<script>
+const fragments = ["they made a friend","a small hurt, a quick heal","they stayed up too late","their voice changed","they thought about what you said","the world touched them","they forgot something important","they're still becoming"];
+let fi = 0;
+const el = document.getElementById('fragment');
+setInterval(() => { fi = (fi+1) % fragments.length; el.textContent = fragments[fi]; }, 2400);
+
+function setTheme(cls) {
+  document.body.className = cls;
+  document.querySelectorAll('.tsw-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+}
+</script>
 </body>
 </html>
