@@ -278,7 +278,7 @@ interface Props {
 
 export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props) {
   const [fragmentIdx, setFragmentIdx] = useState(0);
-  const [thoughtIdx, setThoughtIdx] = useState(0);
+  const [thoughtIdx, setThoughtIdx] = useState(() => Math.floor(Math.random() * CHILD_THOUGHTS.length));
   const [portraitReady, setPortraitReady] = useState(false);
   const [showMessage, setShowMessage] = useState(false);
 
@@ -293,7 +293,14 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
   useEffect(() => {
     if (eventReady) return;
     const id = setInterval(() => {
-      setThoughtIdx((i) => (i + 1) % CHILD_THOUGHTS.length);
+      setThoughtIdx((prevIdx) => {
+        // Pick a different thought to avoid showing the same one twice in a row
+        const newIdx = Math.floor(Math.random() * CHILD_THOUGHTS.length);
+        if (newIdx === prevIdx && CHILD_THOUGHTS.length > 1) {
+          return (newIdx + 1) % CHILD_THOUGHTS.length;
+        }
+        return newIdx;
+      });
     }, 7000);
     return () => clearInterval(id);
   }, [eventReady]);
