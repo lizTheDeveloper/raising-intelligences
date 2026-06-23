@@ -202,11 +202,6 @@ export function MultiplayerGame({ joinGameId }: Props) {
             messagesRemaining={state.messagesRemaining}
           />
           <div className="chat-controls">
-            {state.phase === "family_chat" && !sidebarActive && mySlot && !state.sidebarUsed[mySlot] && (
-              <button className="btn btn-secondary" onClick={mp.startSidebar} disabled={mp.isStreaming}>
-                talk privately
-              </button>
-            )}
             {inMySidebar && (
               <button className="btn btn-secondary" onClick={mp.endSidebar} disabled={mp.isStreaming}>
                 rejoin family
@@ -237,8 +232,8 @@ export function MultiplayerGame({ joinGameId }: Props) {
       <div className="app fade-in">
         <div className="debrief-enhanced">
           <div className="debrief-text-block">
-            <p className="debrief-line-1">a moment between you two</p>
-            <p className="debrief-line-2">what just happened?</p>
+            <p className="debrief-line-1">later that night</p>
+            <p className="debrief-line-2">the kids are asleep. it's just you two.</p>
           </div>
           <ReadyToggle
             ready={gateReady}
@@ -246,12 +241,9 @@ export function MultiplayerGame({ joinGameId }: Props) {
               setGateReady(v);
               mp.ready(v);
             }}
-            label="ready to continue"
+            label="next chapter"
             players={mp.players}
           />
-          <button className="btn btn-secondary" onClick={mp.startEpilogue}>
-            end childhood → epilogue
-          </button>
         </div>
       </div>
     );
