@@ -1,0 +1,14 @@
+- generic [ref=e25]:
+  - heading "raising Ziggy" [level=1] [ref=e26]
+  - paragraph [ref=e27]: you are Parent A
+  - generic [ref=e28]:
+    - generic [ref=e29]:
+      - generic [ref=e30]: Parent A
+      - generic [ref=e31]: not ready
+    - generic [ref=e32]:
+      - generic [ref=e33]: waiting…
+      - generic [ref=e34]: —
+  - generic [ref=e35]:
+    - paragraph [ref=e36]: send this link to your co-parent
+    - button "copy invite link" [ref=e37] [cursor=pointer]
+  - button "waiting for player 2…" [disabled] [ref=e38]

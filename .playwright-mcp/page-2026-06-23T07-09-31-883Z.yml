@@ -1,0 +1,5 @@
+- generic [ref=e14]:
+  - paragraph [ref=e41]: "Failed to load next event: 500 — {\"error\":\"An internal error occurred\"}"
+  - generic [ref=e42]:
+    - img [ref=e43]
+    - button "begin" [ref=e47] [cursor=pointer]

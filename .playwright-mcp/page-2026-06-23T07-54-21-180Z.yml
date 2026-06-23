@@ -1,0 +1,27 @@
+- generic [ref=e1]:
+  - generic [ref=e15]:
+    - heading "raising intelligences" [level=1] [ref=e16]
+    - paragraph [ref=e17]: name your child
+    - generic [ref=e18]:
+      - textbox [ref=e19]
+      - button "begin" [disabled] [ref=e20]
+    - generic [ref=e21]:
+      - paragraph [ref=e22]: or continue raising...
+      - button "Fern" [ref=e23] [cursor=pointer]
+    - button "sign in to sync across devices" [ref=e25] [cursor=pointer]
+  - generic [ref=e27]:
+    - generic [ref=e28]:
+      - heading "Matrix Authentication" [level=3] [ref=e29]
+      - button "Close" [ref=e30] [cursor=pointer]: ×
+    - generic [ref=e31]:
+      - button "Sign In" [ref=e32] [cursor=pointer]
+      - button "Create Account" [ref=e33] [cursor=pointer]
+    - generic [ref=e34]:
+      - generic [ref=e35]:
+        - generic [ref=e36]: Username
+        - textbox "Username" [active] [ref=e37]:
+          - /placeholder: username
+      - generic [ref=e38]:
+        - generic [ref=e39]: Password
+        - textbox "Password" [ref=e40]
+      - button "Sign In" [ref=e41] [cursor=pointer]

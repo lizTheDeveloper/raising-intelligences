@@ -1,0 +1,15 @@
+- generic [ref=e15]:
+  - heading "raising intelligences" [level=1] [ref=e16]
+  - generic [ref=e17]:
+    - paragraph [ref=e18]: name your child
+    - textbox [ref=e19]: Ziggy
+    - paragraph [ref=e20]: your name
+    - textbox [ref=e21]: Parent A
+    - paragraph [ref=e22]: your relationship
+    - combobox [ref=e23] [cursor=pointer]:
+      - option "romantic partners" [selected]
+      - option "friends"
+      - option "siblings"
+      - option "ex-partners"
+      - option "co-parents who were never together"
+    - button "create game" [active] [ref=e24] [cursor=pointer]

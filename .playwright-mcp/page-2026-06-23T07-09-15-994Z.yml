@@ -1,0 +1,22 @@
+- generic [ref=e21]:
+  - heading "Ash" [level=2] [ref=e22]
+  - generic [ref=e23]:
+    - generic:
+      - img
+    - generic:
+      - img
+    - generic:
+      - img
+    - img [ref=e26]
+  - generic [ref=e27]:
+    - paragraph [ref=e28]: born on a quiet night.
+    - paragraph [ref=e29]: so small you were afraid to breathe.
+    - paragraph [ref=e30]: they reached for everything.
+    - paragraph [ref=e31]: they said something that almost sounded like your name.
+    - paragraph [ref=e32]: they took their first steps.
+    - paragraph [ref=e33]: they fell. they got back up.
+    - paragraph [ref=e34]: three years old.
+    - paragraph [ref=e35]: they need you.
+  - generic [ref=e38]:
+    - button "I'm ready" [ref=e39] [cursor=pointer]
+    - button "I'm not ready" [ref=e40] [cursor=pointer]
