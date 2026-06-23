@@ -82,7 +82,7 @@ export function GameList({ fetchGames, onSelectGame }: Props) {
         <input
           id="game-search"
           type="text"
-          placeholder="Child name…"
+          placeholder="Filter this page…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
