@@ -45,14 +45,14 @@ export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
           if (mounted) {
             setSrc(url);
             track("portrait_loaded", { ageBucket: slug, attempts: 0 });
-            onLoad?.();
           }
+          // Always notify parent even if this effect's cleanup already ran
+          // (age-bucket change can cause cleanup before img.onload fires).
+          onLoad?.();
         };
         img.onerror = () => {
-          if (mounted) {
-            track("portrait_failed", { ageBucket: slug });
-            onLoad?.(); // unblock GuardianScreen even if image load fails
-          }
+          track("portrait_failed", { ageBucket: slug });
+          onLoad?.(); // unblock parent even if image load fails
         };
         img.src = url;
       })

@@ -229,12 +229,14 @@ export function SoloGame() {
     return (
       <div className="app">
         {error && <p className="error-banner">{error}</p>}
-        <Debrief onContinue={handleDebrief} />
-        <div style={{ display: "flex", justifyContent: "center", padding: "16px 0 32px" }}>
-          <button onClick={generateEpilogue} className="btn btn-secondary" data-testid="btn-epilogue">
-            end childhood → epilogue
-          </button>
-        </div>
+        <Debrief
+          onContinue={handleDebrief}
+          extraButton={
+            <button onClick={generateEpilogue} className="btn btn-secondary" data-testid="btn-epilogue">
+              end childhood → epilogue
+            </button>
+          }
+        />
       </div>
     );
   }

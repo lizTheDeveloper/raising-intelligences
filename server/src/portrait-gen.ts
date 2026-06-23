@@ -160,6 +160,7 @@ async function generateWithRetry(
         await generateWithReference(figure, hair, clothing, outPath, prevPath, key);
       }
       logger.info("portrait_ready", { gameId, slug });
+      return;
     } catch (e) {
       attempt++;
       logger.error("portrait_attempt_failed", { gameId, slug, attempt, error: (e as Error).message });
@@ -170,6 +171,7 @@ async function generateWithRetry(
       await new Promise((r) => setTimeout(r, 2000 * attempt));
     }
   }
+  logger.warn("portrait_generation_abandoned", { gameId, slug, maxAttempts: MAX_PORTRAIT_ATTEMPTS });
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
