@@ -40,5 +40,5 @@ export interface LLMClient {
     onChunk?: (chunk: string) => void
   ): Promise<string>;
 
-  completeJson<T>(system: string, userMessage: string, role?: LLMRole): Promise<T>;
+  completeJson<T>(system: string, userMessage: string, role?: LLMRole, maxTokens?: number): Promise<T>;
 }

@@ -151,8 +151,8 @@ export class RoutingLLMClient implements LLMClient {
     throw new Error(`Unexpected response from ${providerKey}`);
   }
 
-  async completeJson<T>(system: string, userMessage: string, role?: LLMRole): Promise<T> {
-    const text = await this.completeResponse(system, userMessage, 500, role);
+  async completeJson<T>(system: string, userMessage: string, role?: LLMRole, maxTokens = 1500): Promise<T> {
+    const text = await this.completeResponse(system, userMessage, maxTokens, role);
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("No JSON found in response");
     return JSON.parse(jsonMatch[0]) as T;
