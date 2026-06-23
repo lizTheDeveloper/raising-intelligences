@@ -30,10 +30,10 @@ export interface BuildServerOptions {
   enableEviction?: boolean;
   /** Reported by /health to describe the persistence backend. */
   dbLabel?: string;
-  /** socket.io mount path. Traefik strips /raising-intelligences before
-   * forwarding to the backend (see ri-strip middleware in multiversegames-ai.yml),
-   * so both dev and prod use the default /socket.io. Tests and dev also use
-   * /socket.io. */
+  /** socket.io mount path. In production the client is served under
+   * /raising-intelligences/; the Traefik ri-socket-io router forwards
+   * /raising-intelligences/socket.io WITHOUT stripping so the backend
+   * sees the full path. Dev and tests use the default /socket.io. */
   socketPath?: string;
   /** Custom /health handler (e.g. one that pings Postgres). Defaults to a
    * static `{ status: "ok", db: dbLabel }`. */
@@ -73,7 +73,9 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     serveStatic = process.env.NODE_ENV === "production",
     enableEviction = true,
     dbLabel = "in-memory",
-    socketPath = "/socket.io",
+    socketPath = process.env.NODE_ENV === "production"
+      ? "/raising-intelligences/socket.io"
+      : "/socket.io",
     healthHandler,
   } = options;
 

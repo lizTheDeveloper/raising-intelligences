@@ -60,13 +60,21 @@ async function main() {
 
   logger.info("observability", { langfuse: isLangfuseEnabled() });
 
-  // Socket.io path: Traefik strips /raising-intelligences before forwarding to
-  // the backend, so the server listens on /socket.io (see multiversegames-ai.yml).
+  // In production the app is deployed under the /raising-intelligences subpath.
+  // Traefik has a dedicated router (ri-socket-io) that forwards
+  // /raising-intelligences/socket.io WITHOUT stripping so the backend sees
+  // the full path. Dev and tests use /socket.io.
+  const socketPath =
+    process.env.NODE_ENV === "production"
+      ? "/raising-intelligences/socket.io"
+      : "/socket.io";
+
   const { httpServer, close } = buildServer({
     llm,
     repo,
     serveStatic: process.env.NODE_ENV === "production",
     dbLabel: usingPostgres ? "postgres" : "in-memory",
+    socketPath,
     // When on Postgres, /health pings the DB to report real reachability.
     healthHandler: usingPostgres
       ? async (_req, res) => {
