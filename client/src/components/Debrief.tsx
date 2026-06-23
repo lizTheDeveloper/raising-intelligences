@@ -1,8 +1,11 @@
+import type { ReactNode } from "react";
+
 interface Props {
   onContinue: () => void;
+  extraButton?: ReactNode;
 }
 
-export function Debrief({ onContinue }: Props) {
+export function Debrief({ onContinue, extraButton }: Props) {
   return (
     <div className="debrief-enhanced">
       <div className="debrief-text-block">
@@ -12,6 +15,7 @@ export function Debrief({ onContinue }: Props) {
       <button onClick={onContinue} className="btn" data-testid="btn-next-event">
         next event
       </button>
+      {extraButton}
     </div>
   );
 }
