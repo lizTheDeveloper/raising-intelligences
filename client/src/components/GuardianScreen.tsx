@@ -32,7 +32,7 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
     return () => clearInterval(id);
   }, [portraitReady]);
 
-  const canBegin = portraitReady && eventReady;
+  const canBegin = eventReady;
 
   return (
     <div className="guardian-screen">
@@ -71,11 +71,10 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
         onClick={() => { track("guardian_accepted"); onReady(); }}
         disabled={!canBegin}
       >
-        {!portraitReady
-          ? "meeting them…"
-          : !eventReady
-          ? "entering their world…"
-          : "I'm ready"}
+        {eventReady
+          ? "I'm ready"
+          : "entering their world…"
+        }
       </button>
     </div>
   );
