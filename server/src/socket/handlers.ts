@@ -244,12 +244,25 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           broadcastLobby(gameId);
           generateNextPortrait(gameId).catch(() => {});
         } else if (state.phase === "debrief") {
-          const next = conversationEngine.endDebrief(state);
-          games.set(next.id, next);
-          await repo.saveGame(next);
-          sessions.set(gameId, resetReady(updated));
-          broadcastState(gameId);
-          broadcastLobby(gameId);
+          if (state.currentEventNumber >= state.totalEvents) {
+            const emitChunk = (chunk: string) => {
+              io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
+            };
+            const result = await endgameEngine.generateEpilogue(state, emitChunk);
+            games.set(result.state.id, result.state);
+            await repo.saveGame(result.state);
+            sessions.set(gameId, resetReady(updated));
+            broadcastState(gameId);
+            broadcastLobby(gameId);
+            io.to(gameId).emit(E.EPILOGUE, { epilogue: result.epilogue });
+          } else {
+            const next = conversationEngine.endDebrief(state);
+            games.set(next.id, next);
+            await repo.saveGame(next);
+            sessions.set(gameId, resetReady(updated));
+            broadcastState(gameId);
+            broadcastLobby(gameId);
+          }
         }
       } catch (err) {
         sessions.set(gameId, resetReady(updated));
