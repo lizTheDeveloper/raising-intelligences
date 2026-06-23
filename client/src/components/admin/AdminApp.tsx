@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useAdminApi } from "../../hooks/useAdminApi";
 import { Overview } from "./Overview";
 import { GameList } from "./GameList";
+import { GameDetailView } from "./GameDetail";
 import "../../admin.css";
 
 type Page = "overview" | "games" | "game-detail";
@@ -22,8 +23,6 @@ export function AdminApp() {
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
 
   const { fetchOverview, fetchGames, fetchGameDetail } = useAdminApi();
-  // fetchGameDetail will be used in Task 6
-  void fetchGameDetail;
 
   function navigateToGame(gameId: string) {
     setSelectedGameId(gameId);
@@ -116,10 +115,12 @@ export function AdminApp() {
             onSelectGame={navigateToGame}
           />
         )}
-        {page === "game-detail" && (
-          <div className="loading">
-            Game detail for {selectedGameId} — coming in Task 6
-          </div>
+        {page === "game-detail" && selectedGameId && (
+          <GameDetailView
+            gameId={selectedGameId}
+            fetchGameDetail={(id) => fetchGameDetail(token, id)}
+            onBack={() => setPage("games")}
+          />
         )}
       </main>
     </div>
