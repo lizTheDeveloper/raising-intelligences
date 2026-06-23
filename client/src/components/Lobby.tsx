@@ -16,7 +16,8 @@ interface Props {
  */
 export function Lobby({ gameId, slot, players, childName, onReady }: Props) {
   const [ready, setReady] = useState(false);
-  const link = `${window.location.origin}/?game=${gameId}`;
+  const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const link = `${window.location.origin}${base}/?game=${gameId}`;
   const me = players.find((p) => p.slot === slot);
   const both = players.length === 2;
 
