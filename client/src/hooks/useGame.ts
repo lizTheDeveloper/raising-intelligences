@@ -16,6 +16,46 @@ interface Message {
 
 const API = import.meta.env.BASE_URL + "api";
 
+/**
+ * Consume an SSE response that streams `chunk` events then a `done` event.
+ * Returns the final `done` payload once the stream closes.
+ */
+async function consumeSSE<T>(
+  res: Response,
+  onChunk: (text: string) => void
+): Promise<T> {
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let lineBuffer = "";
+  let donePayload: T | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    lineBuffer += decoder.decode(value, { stream: true });
+    const lines = lineBuffer.split("\n");
+    lineBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      try {
+        const data = JSON.parse(line.slice(6));
+        if (data.type === "chunk") {
+          onChunk(data.text);
+        } else if (data.type === "done") {
+          donePayload = data as T;
+        } else if (data.type === "error") {
+          throw new Error(data.error ?? "Stream error");
+        }
+      } catch {
+        // Partial or malformed SSE line — skip
+      }
+    }
+  }
+
+  if (!donePayload) throw new Error("Stream ended without done event");
+  return donePayload;
+}
+
 export function useGame() {
   const [gameId, setGameId] = useState<string | null>(null);
   const [phase, setPhase] = useState<string>("start");
@@ -24,6 +64,7 @@ export function useGame() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [messagesRemaining, setMessagesRemaining] = useState(12);
   const [streamingMessage, setStreamingMessage] = useState("");
+  const [streamingDocText, setStreamingDocText] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [epilogue, setEpilogue] = useState("");
   const [reportCard, setReportCard] = useState("");
@@ -73,7 +114,10 @@ export function useGame() {
 
   const beginChat = useCallback(() => {
     setPhase("family_chat");
-  }, []);
+    if (gameId) {
+      fetch(`${API}/game/${gameId}/portraits/next`, { method: "POST" }).catch(() => {});
+    }
+  }, [gameId]);
 
   // Fix for #20: buffer partial SSE lines across network reads and guard
   // JSON.parse with try/catch so a mid-packet TCP split can never lock the UI.
@@ -148,18 +192,29 @@ export function useGame() {
   const endChat = useCallback(async () => {
     if (!gameId) return;
     setPhase("processing");
+    setStreamingDocText("");
     setError(null);
-    const res = await fetch(`${API}/game/${gameId}/end-chat`, {
-      method: "POST",
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      setError(`Failed to end chat: ${res.status}${body ? ` — ${body}` : ""}`);
+    try {
+      const res = await fetch(`${API}/game/${gameId}/end-chat`, { method: "POST" });
+      if (!res.ok || !res.body) {
+        const body = await res.text().catch(() => "");
+        setError(`Failed to end chat: ${res.status}${body ? ` — ${body}` : ""}`);
+        setPhase("family_chat");
+        setStreamingDocText("");
+        return;
+      }
+      let docText = "";
+      const data = await consumeSSE<{ phase: string }>(res, (text) => {
+        docText += text;
+        setStreamingDocText(docText);
+      });
+      setStreamingDocText("");
+      setPhase(data.phase);
+    } catch (err) {
+      setError(`Failed to end chat: ${err instanceof Error ? err.message : String(err)}`);
       setPhase("family_chat");
-      return;
+      setStreamingDocText("");
     }
-    const data = await res.json();
-    setPhase(data.phase);
   }, [gameId]);
 
   const endDebrief = useCallback(async () => {
@@ -175,37 +230,63 @@ export function useGame() {
   const generateEpilogue = useCallback(async () => {
     if (!gameId) return;
     setPhase("processing");
+    setStreamingDocText("");
     setError(null);
-    const res = await fetch(`${API}/game/${gameId}/epilogue`, { method: "POST" });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      setError(`Failed to generate epilogue: ${res.status}${body ? ` — ${body}` : ""}`);
+    try {
+      const res = await fetch(`${API}/game/${gameId}/epilogue`, { method: "POST" });
+      if (!res.ok || !res.body) {
+        const body = await res.text().catch(() => "");
+        setError(`Failed to generate epilogue: ${res.status}${body ? ` — ${body}` : ""}`);
+        setPhase("debrief");
+        setStreamingDocText("");
+        return;
+      }
+      let docText = "";
+      const data = await consumeSSE<{ phase: string; epilogue: string }>(res, (text) => {
+        docText += text;
+        setStreamingDocText(docText);
+      });
+      setEpilogue(data.epilogue);
+      setStreamingDocText("");
+      setPhase(data.phase);
+    } catch (err) {
+      setError(`Failed to generate epilogue: ${err instanceof Error ? err.message : String(err)}`);
       setPhase("debrief");
-      return;
+      setStreamingDocText("");
     }
-    const data = await res.json();
-    setEpilogue(data.epilogue);
-    setPhase(data.phase);
   }, [gameId]);
 
   const generateReportCard = useCallback(async () => {
     if (!gameId) return;
     setPhase("processing");
+    setStreamingDocText("");
     setError(null);
-    const res = await fetch(`${API}/game/${gameId}/report-card`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ epilogue }),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      setError(`Failed to generate report card: ${res.status}${body ? ` — ${body}` : ""}`);
+    try {
+      const res = await fetch(`${API}/game/${gameId}/report-card`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ epilogue }),
+      });
+      if (!res.ok || !res.body) {
+        const body = await res.text().catch(() => "");
+        setError(`Failed to generate report card: ${res.status}${body ? ` — ${body}` : ""}`);
+        setPhase("epilogue");
+        setStreamingDocText("");
+        return;
+      }
+      let docText = "";
+      const data = await consumeSSE<{ phase: string; reportCard: string }>(res, (text) => {
+        docText += text;
+        setStreamingDocText(docText);
+      });
+      setReportCard(data.reportCard);
+      setStreamingDocText("");
+      setPhase(data.phase);
+    } catch (err) {
+      setError(`Failed to generate report card: ${err instanceof Error ? err.message : String(err)}`);
       setPhase("epilogue");
-      return;
+      setStreamingDocText("");
     }
-    const data = await res.json();
-    setReportCard(data.reportCard);
-    setPhase(data.phase);
   }, [gameId, epilogue]);
 
   return {
@@ -216,6 +297,7 @@ export function useGame() {
     messages,
     messagesRemaining,
     streamingMessage,
+    streamingDocText,
     isStreaming,
     epilogue,
     reportCard,

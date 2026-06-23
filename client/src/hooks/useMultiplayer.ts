@@ -18,6 +18,8 @@ const E = {
   STATE: "state",
   KID_CHUNK: "kid_chunk",
   MESSAGE_DONE: "message_done",
+  DOC_CHUNK: "doc_chunk",
+  DOC_DONE: "doc_done",
   EPILOGUE: "epilogue",
   REPORT_CARD_READY: "report_card_ready",
   ERROR: "error",
@@ -64,6 +66,7 @@ export function useMultiplayer() {
   const [players, setPlayers] = useState<PublicPlayer[]>([]);
   const [state, setState] = useState<ViewerState | null>(null);
   const [streamingMessage, setStreamingMessage] = useState("");
+  const [streamingDocText, setStreamingDocText] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [epilogue, setEpilogue] = useState("");
   const [reportCard, setReportCard] = useState("");
@@ -94,8 +97,20 @@ export function useMultiplayer() {
       setStreamingMessage("");
       setIsStreaming(false);
     });
-    socket.on(E.EPILOGUE, (d: { epilogue: string }) => setEpilogue(d.epilogue));
-    socket.on(E.REPORT_CARD_READY, (d: { reportCard: string }) => setReportCard(d.reportCard));
+    socket.on(E.DOC_CHUNK, (d: { text: string }) => {
+      setStreamingDocText((prev) => prev + d.text);
+    });
+    socket.on(E.DOC_DONE, () => {
+      setStreamingDocText("");
+    });
+    socket.on(E.EPILOGUE, (d: { epilogue: string }) => {
+      setStreamingDocText("");
+      setEpilogue(d.epilogue);
+    });
+    socket.on(E.REPORT_CARD_READY, (d: { reportCard: string }) => {
+      setStreamingDocText("");
+      setReportCard(d.reportCard);
+    });
     socket.on(E.ERROR, (d: { error: string }) => setError(d.error));
     socketRef.current = socket;
     return socket;
@@ -135,16 +150,22 @@ export function useMultiplayer() {
 
   const startSidebar = useCallback(() => socketRef.current?.emit(E.START_SIDEBAR), []);
   const endSidebar = useCallback(() => socketRef.current?.emit(E.END_SIDEBAR), []);
-  const endChat = useCallback(() => socketRef.current?.emit(E.END_CHAT), []);
-  const startEpilogue = useCallback(() => socketRef.current?.emit(E.START_EPILOGUE), []);
+  const endChat = useCallback(() => {
+    setStreamingDocText("");
+    socketRef.current?.emit(E.END_CHAT);
+  }, []);
+  const startEpilogue = useCallback(() => {
+    setStreamingDocText("");
+    socketRef.current?.emit(E.START_EPILOGUE);
+  }, []);
   const startAdultChat = useCallback(
     (scenario: string) => socketRef.current?.emit(E.ADULT_CHAT, { scenario }),
     []
   );
-  const generateReportCard = useCallback(
-    () => socketRef.current?.emit(E.REPORT_CARD, { epilogue }),
-    [epilogue]
-  );
+  const generateReportCard = useCallback(() => {
+    setStreamingDocText("");
+    socketRef.current?.emit(E.REPORT_CARD, { epilogue });
+  }, [epilogue]);
 
   return {
     connected,
@@ -154,6 +175,7 @@ export function useMultiplayer() {
     state,
     inLobby,
     streamingMessage,
+    streamingDocText,
     isStreaming,
     epilogue,
     reportCard,

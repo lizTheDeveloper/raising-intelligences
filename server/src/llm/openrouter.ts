@@ -70,7 +70,7 @@ export class OpenRouterLLMClient implements LLMClient {
       stream_options: { include_usage: true },
       ...(this.seed !== undefined ? { seed: this.seed } : {}),
       messages: [{ role: "system", content: system }, ...promptMessages],
-    }, { signal: AbortSignal.timeout(90_000) });
+    }, { signal: AbortSignal.timeout(60_000) });
 
     let fullResponse = "";
     let usage: OpenAIUsage | undefined;
@@ -91,20 +91,47 @@ export class OpenRouterLLMClient implements LLMClient {
     system: string,
     userMessage: string,
     maxTokens = 1500,
-    role?: LLMRole
+    role?: LLMRole,
+    onChunk?: (chunk: string) => void
   ): Promise<string> {
     const resolvedRole = role ?? this.defaultRole;
     const model = selectModel(resolvedRole, this.tier);
+    const msgs = [
+      { role: "system" as const, content: system },
+      { role: "user" as const, content: userMessage },
+    ];
+
+    if (onChunk) {
+      const stream = await this.client.chat.completions.create({
+        model,
+        max_tokens: maxTokens,
+        stream: true,
+        stream_options: { include_usage: true },
+        ...(this.seed !== undefined ? { seed: this.seed } : {}),
+        messages: msgs,
+      }, { signal: AbortSignal.timeout(120_000) });
+
+      let fullResponse = "";
+      let usage: OpenAIUsage | undefined;
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta?.content;
+        if (delta) {
+          fullResponse += delta;
+          onChunk(delta);
+        }
+        if (chunk.usage) usage = chunk.usage as OpenAIUsage;
+      }
+
+      this.report(resolvedRole, model, usage);
+      return fullResponse;
+    }
 
     const response = await this.client.chat.completions.create({
       model,
       max_tokens: maxTokens,
       ...(this.seed !== undefined ? { seed: this.seed } : {}),
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: userMessage },
-      ],
-    }, { signal: AbortSignal.timeout(180_000) });
+      messages: msgs,
+    }, { signal: AbortSignal.timeout(90_000) });
 
     this.report(resolvedRole, model, response.usage as OpenAIUsage | undefined);
 

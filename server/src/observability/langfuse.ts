@@ -144,12 +144,13 @@ export class TracedLLMClient implements LLMClient {
     system: string,
     userMessage: string,
     maxTokens?: number,
-    role?: LLMRole
+    role?: LLMRole,
+    onChunk?: (chunk: string) => void
   ): Promise<string> {
     const metadata = this.mergeRole(role);
     const client = getLangfuseClient();
     if (!client) {
-      return this.inner.completeResponse(system, userMessage, maxTokens, role);
+      return this.inner.completeResponse(system, userMessage, maxTokens, role, onChunk);
     }
 
     const trace = client.trace({
@@ -164,7 +165,7 @@ export class TracedLLMClient implements LLMClient {
     });
 
     try {
-      const result = await this.inner.completeResponse(system, userMessage, maxTokens, role);
+      const result = await this.inner.completeResponse(system, userMessage, maxTokens, role, onChunk);
       generation.end({ output: result });
       return result;
     } catch (err) {

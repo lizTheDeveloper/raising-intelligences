@@ -4,7 +4,7 @@ import { ConversationEngine } from "../game/conversation-engine.js";
 import { createGame } from "../game/state-machine.js";
 import type { GameState, Sender } from "../types.js";
 import type { GameRepository } from "../db/repository.js";
-import { generatePortraitsForGame } from "../portrait-gen.js";
+import { generateFirstPortrait, generateNextPortrait } from "../portrait-gen.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -44,7 +44,7 @@ export function createGameRoutes(
     games.set(state.id, state);
     await repo.saveGame(state);
     res.json({ gameId: state.id });
-    generatePortraitsForGame(state.id).catch(() => {});
+    generateFirstPortrait(state.id).catch(() => {});
   });
 
   router.get("/game/:id/state", async (req: Request, res: Response) => {
@@ -131,16 +131,27 @@ export function createGameRoutes(
       res.status(404).json({ error: "Game not found" });
       return;
     }
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
     try {
-      const next = await engine.endFamilyChat(state);
+      const next = await engine.endFamilyChat(state, (chunk) => {
+        res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
+      });
       games.set(next.id, next);
       const latestSnapshot = next.identitySnapshots[next.identitySnapshots.length - 1];
       if (latestSnapshot) await repo.saveSnapshot(next.id, latestSnapshot);
       await repo.saveGame(next);
-      res.json({ phase: next.phase });
+      res.write(
+        `data: ${JSON.stringify({ type: "done", phase: next.phase })}\n\n`
+      );
+      res.end();
     } catch (err) {
       console.error("[game] end-chat error:", err);
-      res.status(500).json({ error: "An internal error occurred" });
+      res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
+      res.end();
     }
   });
 
@@ -154,6 +165,18 @@ export function createGameRoutes(
     games.set(next.id, next);
     await repo.saveGame(next);
     res.json({ phase: next.phase });
+  });
+
+  // Kick off generation of the next portrait in the chain — called by the client
+  // as soon as a conversation begins so the portrait is ready for the next event.
+  router.post("/game/:id/portraits/next", async (req: Request, res: Response) => {
+    const state = await resolveGame(req.params.id as string);
+    if (!state) {
+      res.status(404).json({ error: "Game not found" });
+      return;
+    }
+    res.json({ ok: true });
+    generateNextPortrait(state.id).catch(() => {});
   });
 
   return router;

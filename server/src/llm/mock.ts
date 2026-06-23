@@ -32,12 +32,16 @@ export class MockLLMClient implements LLMClient {
     _system: string,
     _userMessage: string,
     _maxTokens?: number,
-    role?: LLMRole
+    role?: LLMRole,
+    onChunk?: (chunk: string) => void
   ): Promise<string> {
     this.roleCalls.push(role);
     const response =
       this.identityUpdates[this.identityCallCount % this.identityUpdates.length];
     this.identityCallCount++;
+    if (onChunk) {
+      for (const char of response) onChunk(char);
+    }
     return response;
   }
 

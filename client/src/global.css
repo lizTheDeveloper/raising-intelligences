@@ -589,6 +589,27 @@ body::after {
   animation: fragmentAppear 0.7s ease both;
 }
 
+.processing-stream-text {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg);
+  max-height: 40vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  text-align: left;
+  width: 100%;
+  max-width: 480px;
+  padding: 0 16px;
+  animation: fragmentAppear 0.4s ease both;
+}
+
+/* When a stream is active, let the fragment area grow to fit the text. */
+.processing-fragment-area:has(.processing-stream-text) {
+  height: auto;
+  min-height: 18px;
+  align-items: flex-start;
+}
+
 @keyframes fragmentAppear {
   from { opacity: 0; transform: translateY(3px); }
   to   { opacity: 0.7; transform: none; }

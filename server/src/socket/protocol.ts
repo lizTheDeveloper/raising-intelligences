@@ -74,6 +74,10 @@ export const SOCKET_EVENTS = {
   STATE: "state",
   KID_CHUNK: "kid_chunk",
   MESSAGE_DONE: "message_done",
+  /** Generic doc chunk — streamed Psychologist / Epilogue / Report Card text. */
+  DOC_CHUNK: "doc_chunk",
+  /** Final event after a doc stream completes (psychologist done). */
+  DOC_DONE: "doc_done",
   EPILOGUE: "epilogue",
   REPORT_CARD_READY: "report_card_ready",
   ERROR: "error",

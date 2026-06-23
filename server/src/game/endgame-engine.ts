@@ -21,14 +21,16 @@ export class EndgameEngine {
    * threaded through the action so callers can persist or display it.
    */
   async generateEpilogue(
-    state: GameState
+    state: GameState,
+    onChunk?: (chunk: string) => void
   ): Promise<{ state: GameState; epilogue: string }> {
     const ctx = buildEpilogueContext(state);
     const epilogue = await this.llm.completeResponse(
       ctx.system,
       ctx.userMessage,
       undefined,
-      "epilogue"
+      "epilogue",
+      onChunk
     );
     const next = transition(state, { type: "START_EPILOGUE", epilogue });
     return { state: next, epilogue };
@@ -59,14 +61,16 @@ export class EndgameEngine {
    */
   async generateReportCard(
     state: GameState,
-    epilogue: string
+    epilogue: string,
+    onChunk?: (chunk: string) => void
   ): Promise<{ state: GameState; reportCard: string }> {
     const ctx = buildReportCardContext(state, epilogue);
     const reportCard = await this.llm.completeResponse(
       ctx.system,
       ctx.userMessage,
       undefined,
-      "report_card"
+      "report_card",
+      onChunk
     );
     const next = transition(state, { type: "SHOW_REPORT_CARD", reportCard });
     return { state: next, reportCard };

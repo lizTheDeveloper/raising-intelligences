@@ -142,51 +142,95 @@ async function generateWithReference(
   writeFileSync(outPath, Buffer.from(b64, "base64"));
 }
 
-export async function generatePortraitsForGame(gameId: string): Promise<void> {
-  // Opt-out used by the test harness (and any environment that should not spend
-  // on image generation) — skips the expensive portrait calls entirely.
-  if (process.env.DISABLE_PORTRAITS === "1") return;
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    console.warn("[portraits] OPENAI_API_KEY not set — skipping portrait generation");
-    return;
+function apiKey(): string | null {
+  if (process.env.DISABLE_PORTRAITS === "1") return null;
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) console.warn("[portraits] OPENAI_API_KEY not set — skipping portrait generation");
+  return key ?? null;
+}
+
+async function generateWithRetry(
+  gameId: string,
+  slug: string,
+  figure: string,
+  hair: string,
+  clothing: string,
+  outPath: string,
+  prevPath: string | null,
+  key: string,
+): Promise<void> {
+  let attempt = 0;
+  while (!existsSync(outPath)) {
+    try {
+      if (!prevPath) {
+        await generateFirst(figure, hair, clothing, outPath, key);
+      } else {
+        await generateWithReference(figure, hair, clothing, outPath, prevPath, key);
+      }
+      console.log(`[portraits] ${gameId}/${slug} ready`);
+    } catch (e) {
+      attempt++;
+      console.error(`[portraits] ${gameId}/${slug} attempt ${attempt} failed:`, (e as Error).message);
+      await new Promise((r) => setTimeout(r, 2000 * attempt));
+    }
   }
+}
+
+// Called at game creation — generates only the first portrait (age-03) so the
+// guardian screen has something to show as quickly as possible.
+export async function generateFirstPortrait(gameId: string): Promise<void> {
+  const key = apiKey();
+  if (!key) return;
 
   const dir = path.join(PORTRAITS_DIR, gameId);
   mkdirSync(dir, { recursive: true });
 
   const { hair, clothing } = childDescriptorFromGameId(gameId);
-  const [first, ...rest] = AGE_BUCKETS;
+  const { slug, figure } = AGE_BUCKETS[0];
+  const outPath = path.join(dir, `${slug}.png`);
 
-  // Generate serially: age-03 → age-07 → age-12 → age-16 → age-20
-  // Each age uses the previous portrait as a visual reference.
-  // Retry each step indefinitely until it succeeds.
+  if (existsSync(outPath)) return;
+  await generateWithRetry(gameId, slug, figure, hair, clothing, outPath, null, key);
+}
+
+// Lock prevents two concurrent callers from generating the same portrait.
+const inProgress = new Set<string>();
+
+// Called when a conversation begins — generates the next missing portrait in the
+// chain so it's ready by the time the player reaches the following event.
+export async function generateNextPortrait(gameId: string): Promise<void> {
+  const key = apiKey();
+  if (!key) return;
+
+  const dir = path.join(PORTRAITS_DIR, gameId);
+  mkdirSync(dir, { recursive: true });
+
+  const { hair, clothing } = childDescriptorFromGameId(gameId);
+
+  // Find the first missing portrait and the last completed one (used as reference).
   let prevPath: string | null = null;
+  let next: (typeof AGE_BUCKETS)[0] | null = null;
 
-  for (const { slug, figure } of AGE_BUCKETS) {
-    const outPath = path.join(dir, `${slug}.png`);
-
-    if (existsSync(outPath)) {
-      prevPath = outPath;
-      continue;
+  for (const bucket of AGE_BUCKETS) {
+    const p = path.join(dir, `${bucket.slug}.png`);
+    if (existsSync(p)) {
+      prevPath = p;
+    } else {
+      next = bucket;
+      break;
     }
+  }
 
-    let attempt = 0;
-    while (!existsSync(outPath)) {
-      try {
-        if (!prevPath) {
-          await generateFirst(figure, hair, clothing, outPath, apiKey);
-        } else {
-          await generateWithReference(figure, hair, clothing, outPath, prevPath, apiKey);
-        }
-        console.log(`[portraits] ${gameId}/${slug} ready`);
-      } catch (e) {
-        attempt++;
-        console.error(`[portraits] ${gameId}/${slug} attempt ${attempt} failed:`, (e as Error).message);
-        await new Promise((r) => setTimeout(r, 2000 * attempt));
-      }
-    }
+  if (!next) return; // all portraits already done
 
-    prevPath = outPath;
+  const lockKey = `${gameId}:${next.slug}`;
+  if (inProgress.has(lockKey)) return; // already in flight
+  inProgress.add(lockKey);
+
+  const outPath = path.join(dir, `${next.slug}.png`);
+  try {
+    await generateWithRetry(gameId, next.slug, next.figure, hair, clothing, outPath, prevPath, key);
+  } finally {
+    inProgress.delete(lockKey);
   }
 }

@@ -17,6 +17,7 @@ export function SoloGame() {
     messages,
     messagesRemaining,
     streamingMessage,
+    streamingDocText,
     isStreaming,
     createGame,
     nextEvent,
@@ -132,7 +133,7 @@ export function SoloGame() {
   if (phase === "processing") {
     return (
       <div className="app">
-        <ProcessingScreen childName={childName} age={currentEvent?.age} gameId={gameId} />
+        <ProcessingScreen childName={childName} age={currentEvent?.age} gameId={gameId} streamingText={streamingDocText} />
       </div>
     );
   }

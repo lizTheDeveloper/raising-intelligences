@@ -218,21 +218,24 @@ const FRAGMENTS_BY_AGE: { maxAge: number; lines: string[] }[] = [
   },
 ];
 
-function fragmentsForAge(age: number): string[] {
-  return (
+function sampleFragments(age: number, count = 4): string[] {
+  const pool =
     FRAGMENTS_BY_AGE.find((b) => age <= b.maxAge)?.lines ??
-    FRAGMENTS_BY_AGE[FRAGMENTS_BY_AGE.length - 1].lines
-  );
+    FRAGMENTS_BY_AGE[FRAGMENTS_BY_AGE.length - 1].lines;
+  const shuffled = [...pool].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, count);
 }
 
 interface Props {
   childName: string;
   age?: number;
   gameId?: string | null;
+  /** Live-streamed text from the LLM — shown over the fragment while generating. */
+  streamingText?: string;
 }
 
-export function ProcessingScreen({ childName, age = 6, gameId }: Props) {
-  const fragments = fragmentsForAge(age);
+export function ProcessingScreen({ childName, age = 6, gameId, streamingText }: Props) {
+  const [fragments] = useState(() => sampleFragments(age, 3 + Math.floor(Math.random() * 3)));
   const [fragmentIdx, setFragmentIdx] = useState(0);
 
   useEffect(() => {
@@ -241,7 +244,9 @@ export function ProcessingScreen({ childName, age = 6, gameId }: Props) {
       setFragmentIdx((i) => (i + 1) % fragments.length);
     }, 2400);
     return () => clearInterval(id);
-  }, [age, fragments.length]);
+  }, [fragments.length]);
+
+  const showStream = !!streamingText && streamingText.length > 0;
 
   return (
     <div className="processing-screen">
@@ -250,9 +255,13 @@ export function ProcessingScreen({ childName, age = 6, gameId }: Props) {
       </div>
       <p className="processing-name">{childName}</p>
       <div className="processing-fragment-area">
-        <span key={fragmentIdx} className="processing-fragment-text">
-          {fragments[fragmentIdx]}
-        </span>
+        {showStream ? (
+          <div className="processing-stream-text">{streamingText}</div>
+        ) : (
+          <span key={fragmentIdx} className="processing-fragment-text">
+            {fragments[fragmentIdx]}
+          </span>
+        )}
       </div>
     </div>
   );

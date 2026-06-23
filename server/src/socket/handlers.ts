@@ -4,7 +4,7 @@ import type { ConversationEngine } from "../game/conversation-engine.js";
 import type { EndgameEngine } from "../game/endgame-engine.js";
 import type { GameRepository } from "../db/repository.js";
 import { createGame, PARENT_MESSAGE_CAP } from "../game/state-machine.js";
-import { generatePortraitsForGame } from "../portrait-gen.js";
+import { generateFirstPortrait, generateNextPortrait } from "../portrait-gen.js";
 import {
   type Session,
   createSession,
@@ -121,7 +121,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
       socket.emit(E.JOINED, { gameId: state.id, slot: added.player.slot });
       broadcastLobby(state.id);
-      generatePortraitsForGame(state.id).catch(() => {});
+      generateFirstPortrait(state.id).catch(() => {});
     });
 
     socket.on(E.JOIN_GAME, async (payload: JoinGamePayload) => {
@@ -187,6 +187,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           sessions.set(gameId, resetReady(updated));
           broadcastState(gameId);
           broadcastLobby(gameId);
+          generateNextPortrait(gameId).catch(() => {});
         } else if (state.phase === "debrief") {
           const next = conversationEngine.endDebrief(state);
           games.set(next.id, next);
@@ -277,12 +278,16 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       const session = gameId ? sessions.get(gameId) : undefined;
       if (!gameId || !state || !session) return fail("Not in a game");
       try {
-        const next = await conversationEngine.endFamilyChat(state);
+        const emitChunk = (chunk: string) => {
+          io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
+        };
+        const next = await conversationEngine.endFamilyChat(state, emitChunk);
         games.set(next.id, next);
         const snap = next.identitySnapshots[next.identitySnapshots.length - 1];
         if (snap) await repo.saveSnapshot(next.id, snap);
         await repo.saveGame(next);
         sessions.set(gameId, resetReady(session));
+        io.to(gameId).emit(E.DOC_DONE, { documentType: "identity" });
         broadcastState(gameId);
         broadcastLobby(gameId);
       } catch (err) {
@@ -295,7 +300,10 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       const state = currentState();
       if (!gameId || !state) return fail("Not in a game");
       try {
-        const result = await endgameEngine.generateEpilogue(state);
+        const emitChunk = (chunk: string) => {
+          io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
+        };
+        const result = await endgameEngine.generateEpilogue(state, emitChunk);
         games.set(result.state.id, result.state);
         await repo.saveGame(result.state);
         broadcastState(gameId);
@@ -325,7 +333,10 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       const state = currentState();
       if (!gameId || !state) return fail("Not in a game");
       try {
-        const result = await endgameEngine.generateReportCard(state, payload?.epilogue ?? "");
+        const emitChunk = (chunk: string) => {
+          io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
+        };
+        const result = await endgameEngine.generateReportCard(state, payload?.epilogue ?? "", emitChunk);
         games.set(result.state.id, result.state);
         await repo.saveEndgame(result.state.id, payload?.epilogue ?? "", result.reportCard);
         await repo.saveGame(result.state);

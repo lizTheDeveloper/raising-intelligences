@@ -212,7 +212,7 @@ export function MultiplayerGame({ joinGameId }: Props) {
   if (state.phase === "processing") {
     return (
       <div className="app">
-        <ProcessingScreen childName={state.childName} age={state.currentEvent?.age} gameId={mp.gameId} />
+        <ProcessingScreen childName={state.childName} age={state.currentEvent?.age} gameId={mp.gameId} streamingText={mp.streamingDocText} />
       </div>
     );
   }

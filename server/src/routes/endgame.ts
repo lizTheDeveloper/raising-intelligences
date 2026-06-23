@@ -22,14 +22,25 @@ export function createEndgameRoutes(
       res.status(404).json({ error: "Game not found" });
       return;
     }
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
     try {
-      const result = await engine.generateEpilogue(state);
+      const result = await engine.generateEpilogue(state, (chunk) => {
+        res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
+      });
       games.set(result.state.id, result.state);
       await repo.saveGame(result.state);
-      res.json({ phase: result.state.phase, epilogue: result.epilogue });
+      res.write(
+        `data: ${JSON.stringify({ type: "done", phase: result.state.phase, epilogue: result.epilogue })}\n\n`
+      );
+      res.end();
     } catch (err) {
       console.error("[endgame] epilogue error:", err);
-      res.status(500).json({ error: "An internal error occurred" });
+      res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
+      res.end();
     }
   });
 
@@ -61,16 +72,27 @@ export function createEndgameRoutes(
       res.status(404).json({ error: "Game not found" });
       return;
     }
-    const { epilogue } = req.body as { epilogue: string };
+    const { epilogue } = req.body as { epilogue?: string };
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
     try {
-      const result = await engine.generateReportCard(state, epilogue ?? "");
+      const result = await engine.generateReportCard(state, epilogue ?? "", (chunk) => {
+        res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
+      });
       games.set(result.state.id, result.state);
       await repo.saveEndgame(result.state.id, epilogue ?? "", result.reportCard);
       await repo.saveGame(result.state);
-      res.json({ phase: result.state.phase, reportCard: result.reportCard });
+      res.write(
+        `data: ${JSON.stringify({ type: "done", phase: result.state.phase, reportCard: result.reportCard })}\n\n`
+      );
+      res.end();
     } catch (err) {
       console.error("[endgame] report-card error:", err);
-      res.status(500).json({ error: "An internal error occurred" });
+      res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
+      res.end();
     }
   });
 

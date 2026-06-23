@@ -70,14 +70,15 @@ export class ConversationEngine {
     return transition(state, { type: "END_SIDEBAR" });
   }
 
-  async endFamilyChat(state: GameState): Promise<GameState> {
+  async endFamilyChat(state: GameState, onChunk?: (chunk: string) => void): Promise<GameState> {
     let next = transition(state, { type: "END_FAMILY_CHAT" });
     const ctx = buildPsychologistContext(next);
     const updatedDoc = await this.llm.completeResponse(
       ctx.system,
       ctx.userMessage,
       undefined,
-      "psychologist"
+      "psychologist",
+      onChunk
     );
     next = transition(next, { type: "IDENTITY_UPDATED", document: updatedDoc });
     return next;
