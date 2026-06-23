@@ -77,14 +77,16 @@ async function generateFirst(
   outPath: string,
   apiKey: string,
 ): Promise<Buffer> {
-  const res = await fetch("https://api.openai.com/v1/images/generations", {
+  const res = await fetch("https://openrouter.ai/api/v1/images/generations", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
+      "HTTP-Referer": "https://raisingintelligences.com",
+      "X-Title": "Raising Intelligences",
     },
     body: JSON.stringify({
-      model: "gpt-image-2",
+      model: "openai/gpt-image-2",
       prompt: firstPortraitPrompt(figure, hair, clothing),
       n: 1,
       size: "1024x1024",
@@ -99,7 +101,7 @@ async function generateFirst(
 
   if (data.error) throw new Error(data.error.message);
   const b64 = data.data?.[0]?.b64_json;
-  if (!b64) throw new Error("No image returned from gpt-image-2");
+  if (!b64) throw new Error("No image returned from OpenRouter");
 
   const buf = Buffer.from(b64, "base64");
   writeFileSync(outPath, buf);
@@ -114,21 +116,23 @@ async function generateWithReference(
   referenceImagePath: string,
   apiKey: string,
 ): Promise<void> {
-  // Use FormData so we can attach the reference image
-  const form = new FormData();
-  form.append("model", "gpt-image-2");
-  form.append("prompt", agingPrompt(figure, hair, clothing));
-  form.append("n", "1");
-  form.append("size", "1024x1024");
-
-  const refBuf = readFileSync(referenceImagePath);
-  const blob = new Blob([refBuf], { type: "image/png" });
-  form.append("image", blob, "reference.png");
-
-  const res = await fetch("https://api.openai.com/v1/images/edits", {
+  // Note: OpenRouter's gpt-image-2 doesn't support image-to-image, so we
+  // generate a fresh image using the aging prompt instead of the reference
+  const res = await fetch("https://openrouter.ai/api/v1/images/generations", {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}` },
-    body: form,
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://raisingintelligences.com",
+      "X-Title": "Raising Intelligences",
+    },
+    body: JSON.stringify({
+      model: "openai/gpt-image-2",
+      prompt: agingPrompt(figure, hair, clothing),
+      n: 1,
+      size: "1024x1024",
+      output_format: "png",
+    }),
   });
 
   const data = (await res.json()) as {
@@ -138,15 +142,15 @@ async function generateWithReference(
 
   if (data.error) throw new Error(data.error.message);
   const b64 = data.data?.[0]?.b64_json;
-  if (!b64) throw new Error("No image returned from gpt-image-2 edits");
+  if (!b64) throw new Error("No image returned from OpenRouter");
 
   writeFileSync(outPath, Buffer.from(b64, "base64"));
 }
 
 function apiKey(): string | null {
   if (process.env.DISABLE_PORTRAITS === "1") return null;
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) logger.warn("portrait_skipped", { reason: "OPENAI_API_KEY not set" });
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) logger.warn("portrait_skipped", { reason: "OPENROUTER_API_KEY not set" });
   return key ?? null;
 }
 
