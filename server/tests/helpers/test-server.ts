@@ -43,9 +43,23 @@ export async function createTestServer(cassetteName: string): Promise<TestServer
   process.env.DISABLE_PORTRAITS = "1";
 
   const mode = cassetteMode();
-  // The real OpenRouter client is only constructed for record/auto runs; in
-  // replay mode it is never called, so a missing API key is fine.
-  const real = new OpenRouterLLMClient("standard", undefined, "kid_family_chat", TEST_SEED);
+  // Only construct the real client for record/auto runs where it may be called.
+  // In replay mode every call hits the cassette, so a missing API key is fine —
+  // but the OpenAI constructor throws eagerly if no key is set, so we defer.
+  const real =
+    mode !== "replay"
+      ? new OpenRouterLLMClient("standard", undefined, "kid_family_chat", TEST_SEED)
+      : ({
+          streamResponse: async () => {
+            throw new Error("Real LLM called in replay mode — re-record with LLM_CACHE_MODE=record");
+          },
+          completeResponse: async () => {
+            throw new Error("Real LLM called in replay mode — re-record with LLM_CACHE_MODE=record");
+          },
+          completeJson: async () => {
+            throw new Error("Real LLM called in replay mode — re-record with LLM_CACHE_MODE=record");
+          },
+        } as import("../../src/llm/client.js").LLMClient);
   const cassette = new CassetteLLMClient(real, {
     file: path.join(CASSETTE_DIR, `${cassetteName}.json`),
     mode,
