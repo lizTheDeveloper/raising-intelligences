@@ -435,14 +435,15 @@ interface Props {
 }
 
 export function ProcessingScreen({ childName, age = 6, gameId, streamingText }: Props) {
-  const [fragments] = useState(() => sampleFragments(age, 4 + Math.floor(Math.random() * 4)));
+  const [fragments] = useState(() => sampleFragments(age, 8));
   const [fragmentIdx, setFragmentIdx] = useState(0);
 
   useEffect(() => {
     setFragmentIdx(0);
     const id = setInterval(() => {
-      setFragmentIdx((i) => (i + 1) % fragments.length);
-    }, 8000);
+      // Advance once per slot; stop at the last — never repeat
+      setFragmentIdx((i) => (i < fragments.length - 1 ? i + 1 : i));
+    }, 10000);
     return () => clearInterval(id);
   }, [fragments.length]);
 
