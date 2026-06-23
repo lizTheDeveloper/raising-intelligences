@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useGame } from "../hooks/useGame";
+import { useState, useEffect } from "react";
+import { useGame, getSavedKids } from "../hooks/useGame";
 import { GuardianScreen } from "./GuardianScreen";
 import { EventIntro } from "./EventIntro";
 import { Chat } from "./Chat";
@@ -19,6 +19,7 @@ export function SoloGame() {
     streamingMessage,
     streamingDocText,
     isStreaming,
+    loadGame,
     createGame,
     nextEvent,
     beginChat,
@@ -35,6 +36,14 @@ export function SoloGame() {
   const [nameInput, setNameInput] = useState("");
   const [loadingEvent, setLoadingEvent] = useState(false);
   const [showGuardian, setShowGuardian] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const existingId = params.get("game");
+    if (existingId && !gameId) {
+      loadGame(existingId);
+    }
+  }, []);
 
   const handleStart = async () => {
     if (!nameInput.trim()) return;
@@ -64,6 +73,13 @@ export function SoloGame() {
   };
 
   if (phase === "start") {
+    const savedKids = getSavedKids();
+    const handleResume = (kid: { gameId: string; childName: string }) => {
+      const url = new URL(window.location.href);
+      url.searchParams.set("game", kid.gameId);
+      url.searchParams.set("mode", "solo");
+      window.location.href = url.toString();
+    };
     return (
       <div className="app">
         <div className="start-screen">
@@ -87,6 +103,20 @@ export function SoloGame() {
               begin
             </button>
           </form>
+          {savedKids.length > 0 && (
+            <div className="saved-kids">
+              <p className="dim">or continue raising...</p>
+              {savedKids.map((kid) => (
+                <button
+                  key={kid.gameId}
+                  className="btn btn-secondary saved-kid-btn"
+                  onClick={() => handleResume(kid)}
+                >
+                  {kid.childName}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     );

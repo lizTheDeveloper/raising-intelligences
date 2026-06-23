@@ -1,6 +1,28 @@
 import { useState, useCallback } from "react";
 import { track } from "../analytics";
 
+export interface SavedKid {
+  gameId: string;
+  childName: string;
+  createdAt: number;
+}
+
+const STORAGE_KEY = "raising-intelligences-kids";
+
+export function getSavedKids(): SavedKid[] {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveKid(gameId: string, childName: string) {
+  const kids = getSavedKids().filter((k) => k.gameId !== gameId);
+  kids.unshift({ gameId, childName, createdAt: Date.now() });
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(kids));
+}
+
 interface GameEvent {
   eventNumber: number;
   age: number;
@@ -76,6 +98,22 @@ export function useGame() {
     setError(msg);
   }, []);
 
+  const loadGame = useCallback(
+    async (id: string) => {
+      const res = await fetch(`${API}/game/${id}/state`);
+      if (!res.ok) return false;
+      const data = await res.json();
+      setGameId(data.id);
+      setChildName(data.childName);
+      setPhase(data.phase);
+      setCurrentEvent(data.currentEvent ?? null);
+      setMessages(data.messages ?? []);
+      setMessagesRemaining(12 - (data.parentMessageCount ?? 0));
+      return true;
+    },
+    []
+  );
+
   const createGame = useCallback(
     async (name: string, relationshipType = "solo parent") => {
       const res = await fetch(`${API}/game`, {
@@ -92,7 +130,12 @@ export function useGame() {
       setGameId(data.gameId);
       setChildName(name);
       setPhase("event_intro");
+      saveKid(data.gameId, name);
       track("game_started", { relationshipType });
+      const url = new URL(window.location.href);
+      url.searchParams.set("game", data.gameId);
+      url.searchParams.set("mode", relationshipType === "solo parent" ? "solo" : "multi");
+      window.history.replaceState({}, "", url.toString());
       return data.gameId;
     },
     []
@@ -315,6 +358,7 @@ export function useGame() {
     epilogue,
     reportCard,
     error,
+    loadGame,
     createGame,
     nextEvent,
     beginChat,

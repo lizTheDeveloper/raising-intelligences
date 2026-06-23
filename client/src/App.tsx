@@ -64,8 +64,10 @@ const THEMES: { id: Theme; label: string }[] = [
 ];
 
 export function App() {
-  const joinGameId = new URLSearchParams(window.location.search).get("game") ?? undefined;
-  const [mode, setMode] = useState<Mode>(joinGameId ? "multiplayer" : "choose");
+  const params = new URLSearchParams(window.location.search);
+  const joinGameId = params.get("game") ?? undefined;
+  const isSoloResume = joinGameId && params.get("mode") === "solo";
+  const [mode, setMode] = useState<Mode>(isSoloResume ? "solo" : joinGameId ? "multiplayer" : "choose");
   const [theme, setTheme] = useState<Theme>("theme-ocean-grunge");
 
   // Apply theme to body so it persists across all game screens
