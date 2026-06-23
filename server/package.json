@@ -6,7 +6,8 @@
     "dev": "tsx watch --ignore '../client/public/portraits/**' --ignore 'test-results/**' --ignore '.playwright-mcp/**' src/index.ts",
     "build": "tsc -b",
     "migrate": "tsx src/db/migrate.ts",
-    "test": "vitest run"
+    "test": "vitest run --exclude 'tests/e2e-*.test.ts' --exclude 'tests/multiplayer-integration.test.ts'",
+    "test:e2e": "vitest run tests/e2e-*.test.ts tests/multiplayer-integration.test.ts"
   },
   "dependencies": {
     "express": "^5.1.0",
