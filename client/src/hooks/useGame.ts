@@ -214,24 +214,30 @@ export function useGame() {
 
           for (const line of lines) {
             if (!line.startsWith("data: ")) continue;
+            let data: Record<string, unknown>;
             try {
-              const data = JSON.parse(line.slice(6));
-              if (data.type === "chunk") {
-                kidMessage += data.text;
-                setStreamingMessage(kidMessage);
-              } else if (data.type === "done") {
-                setMessages((prev) => [
-                  ...prev,
-                  { sender: "kid", content: data.kidResponse, chatType: "shared" },
-                ]);
-                setStreamingMessage("");
-                setMessagesRemaining(data.messagesRemaining);
-              }
+              data = JSON.parse(line.slice(6));
             } catch {
               // Partial or malformed SSE line — skip and continue
+              continue;
+            }
+            if (data.type === "chunk") {
+              kidMessage += data.text as string;
+              setStreamingMessage(kidMessage);
+            } else if (data.type === "done") {
+              setMessages((prev) => [
+                ...prev,
+                { sender: "kid", content: data.kidResponse as string, chatType: "shared" },
+              ]);
+              setStreamingMessage("");
+              setMessagesRemaining(data.messagesRemaining as number);
+            } else if (data.type === "error") {
+              throw new Error((data.error as string) ?? "Stream error");
             }
           }
         }
+      } catch (err) {
+        setTrackedError(`Message failed: ${err instanceof Error ? err.message : String(err)}`, "send_message");
       } finally {
         // Always clear streaming state, even if an error occurred mid-stream
         setIsStreaming(false);

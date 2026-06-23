@@ -333,14 +333,11 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
   }, [showFinalText, eventReady]);
 
   const handleNotReady = () => {
+    track("guardian_not_ready");
     setShowMessage(true);
-    setTimeout(() => {
-      track("guardian_not_ready");
-      onReady();
-    }, 1500);
   };
 
-  const canBegin = eventReady && showFinalText && !showMessage;
+  const canBegin = eventReady && showFinalText;
 
   return (
     <div className="guardian-screen">
@@ -360,6 +357,7 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
               src={`${base}portraits/intro/age-${stage.age}-${variant}.jpg`}
               alt=""
               aria-hidden="true"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }}
             />
           </div>
         ))}
@@ -412,9 +410,11 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
           >
             I'm ready
           </button>
-          <button className="btn dim" data-testid="btn-guardian-not-ready" onClick={handleNotReady}>
-            I'm not ready
-          </button>
+          {!showMessage && (
+            <button className="btn dim" data-testid="btn-guardian-not-ready" onClick={handleNotReady}>
+              I'm not ready
+            </button>
+          )}
         </div>
       )}
 
