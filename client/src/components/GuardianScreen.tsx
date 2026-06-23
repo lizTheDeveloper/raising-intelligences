@@ -13,6 +13,17 @@ const FRAGMENTS = [
   "they're already becoming someone.",
 ];
 
+const CHILD_THOUGHTS = [
+  "why is the sky so big?",
+  "can i have juice?",
+  "where did the moon go?",
+  "i'm not tired.",
+  "what's that sound?",
+  "i made a friend today.",
+  "i don't like carrots but i like cake.",
+  "why do you have to leave?",
+];
+
 interface Props {
   childName: string;
   gameId: string | null;
@@ -22,6 +33,7 @@ interface Props {
 
 export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props) {
   const [fragmentIdx, setFragmentIdx] = useState(0);
+  const [thoughtIdx, setThoughtIdx] = useState(0);
   const [portraitReady, setPortraitReady] = useState(false);
   const [showMessage, setShowMessage] = useState(false);
 
@@ -32,6 +44,14 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
     }, 2600);
     return () => clearInterval(id);
   }, [portraitReady]);
+
+  useEffect(() => {
+    if (eventReady) return;
+    const id = setInterval(() => {
+      setThoughtIdx((i) => (i + 1) % CHILD_THOUGHTS.length);
+    }, 2000);
+    return () => clearInterval(id);
+  }, [eventReady]);
 
   const handleNotReady = () => {
     setShowMessage(true);
@@ -63,39 +83,36 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
         )}
       </div>
 
-      {portraitReady && (
-        <div className="guardian-revealed-text">
-          <p>three years old.</p>
-          <p>they need you.</p>
-        </div>
-      )}
-
       {portraitReady && !eventReady && (
-        <div className="guardian-event-loading">
-          <span className="event-spinner" aria-hidden="true" />
-        </div>
+        <>
+          <div className="guardian-revealed-text">
+            <p>three years old.</p>
+            <p>they need you.</p>
+          </div>
+          <div className="guardian-thoughts">
+            <span key={thoughtIdx} className="guardian-thought">
+              {CHILD_THOUGHTS[thoughtIdx]}
+            </span>
+          </div>
+        </>
       )}
 
-      <div className="guardian-buttons">
-        <button
-          className="btn"
-          onClick={() => { track("guardian_accepted"); onReady(); }}
-          disabled={!canBegin}
-        >
-          {eventReady
-            ? "I'm ready"
-            : "entering their world…"
-          }
-        </button>
-
-        <button
-          className="btn dim"
-          onClick={handleNotReady}
-          disabled={!canBegin}
-        >
-          I'm not ready
-        </button>
-      </div>
+      {eventReady && (
+        <div className="guardian-buttons">
+          <button
+            className="btn"
+            onClick={() => { track("guardian_accepted"); onReady(); }}
+          >
+            I'm ready
+          </button>
+          <button
+            className="btn dim"
+            onClick={handleNotReady}
+          >
+            I'm not ready
+          </button>
+        </div>
+      )}
 
       {showMessage && (
         <p className="guardian-not-ready-message">most people aren't</p>

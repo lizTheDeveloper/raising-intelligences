@@ -265,6 +265,29 @@ body::after {
   padding: 12px 0 4px;
 }
 
+.guardian-thoughts {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0 4px;
+  min-height: 24px;
+}
+
+.guardian-thought {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 14px;
+  color: var(--fg-dim);
+  letter-spacing: 0.5px;
+  animation: guardian-thought-fade 2s ease-in-out;
+}
+
+@keyframes guardian-thought-fade {
+  0% { opacity: 0; }
+  15% { opacity: 0.7; }
+  85% { opacity: 0.7; }
+  100% { opacity: 0; }
+}
+
 .guardian-buttons {
   display: flex;
   flex-direction: column;
