@@ -419,11 +419,10 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
       )}
 
       {showMessage && (
-        <div style={{ textAlign: "center" }}>
+        <div className="guardian-not-ready-block">
           <p className="guardian-not-ready-message">most people aren't</p>
-          <p className="guardian-not-ready-message" style={{ animationDelay: "0.5s", marginTop: "6px" }}>
-            take your time. we're getting your story ready.
-          </p>
+          <p className="guardian-not-ready-subtext">Take your time. We're getting your story ready.</p>
+>>>>>>> b793660 (Fix 5 bugs: CSS sender casing, debrief layout, abort noise, guardian UX, portrait retry cap)
         </div>
       )}
     </div>
