@@ -20,6 +20,8 @@ export interface Message {
   chatType: ChatType;
   visibleTo: Sender[];
   timestamp: number;
+  /** Which game event this message belongs to (set at creation time). */
+  eventNumber: number;
 }
 
 export interface GameEvent {

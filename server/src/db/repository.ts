@@ -51,21 +51,26 @@ function reconstructState(input: {
   events: GameEvent[];
   messages: Message[];
   identitySnapshots: IdentitySnapshot[];
+  sidebarUsed: { parent1: boolean; parent2: boolean };
 }): GameState {
   const currentEvent =
     input.events.find((e) => e.eventNumber === input.currentEventNumber) ??
     null;
 
-  // Count parent messages belonging to the current event's chat. The persisted
-  // store does not tag messages by event, so we approximate using the count of
-  // parent messages for the active event when in a chat phase; otherwise 0.
+  // Count parent messages belonging ONLY to the current event so reconnecting
+  // players don't have all prior events' messages counted against their cap.
+  // Messages created since migration 002 carry an eventNumber tag; older rows
+  // default to 0 and won't match any real currentEventNumber > 0.
   const inChat =
     input.phase === "family_chat" ||
     input.phase === "sidebar" ||
     input.phase === "adult_chat";
   const parentMessageCount = inChat
     ? input.messages.filter(
-        (m) => m.sender !== "kid" && m.chatType !== "debrief"
+        (m) =>
+          m.sender !== "kid" &&
+          m.chatType !== "debrief" &&
+          m.eventNumber === input.currentEventNumber
       ).length
     : 0;
 
@@ -82,7 +87,7 @@ function reconstructState(input: {
     events: input.events,
     messages: input.messages,
     parentMessageCount,
-    sidebarUsed: { parent1: false, parent2: false },
+    sidebarUsed: input.sidebarUsed,
     sidebarActive: null,
     lastActivityAt: Date.now(),
   };
@@ -95,16 +100,19 @@ export class PgGameRepository implements GameRepository {
     await this.db.query(
       `INSERT INTO games
          (id, child_name, relationship_type, phase, current_event_number,
-          total_events, identity_document, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+          total_events, identity_document,
+          sidebar_used_parent1, sidebar_used_parent2, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
        ON CONFLICT (id) DO UPDATE SET
-         child_name           = EXCLUDED.child_name,
-         relationship_type    = EXCLUDED.relationship_type,
-         phase                = EXCLUDED.phase,
-         current_event_number = EXCLUDED.current_event_number,
-         total_events         = EXCLUDED.total_events,
-         identity_document    = EXCLUDED.identity_document,
-         updated_at           = now()`,
+         child_name            = EXCLUDED.child_name,
+         relationship_type     = EXCLUDED.relationship_type,
+         phase                 = EXCLUDED.phase,
+         current_event_number  = EXCLUDED.current_event_number,
+         total_events          = EXCLUDED.total_events,
+         identity_document     = EXCLUDED.identity_document,
+         sidebar_used_parent1  = EXCLUDED.sidebar_used_parent1,
+         sidebar_used_parent2  = EXCLUDED.sidebar_used_parent2,
+         updated_at            = now()`,
       [
         state.id,
         state.childName,
@@ -113,6 +121,8 @@ export class PgGameRepository implements GameRepository {
         state.currentEventNumber,
         state.totalEvents,
         state.identityDocument,
+        state.sidebarUsed.parent1,
+        state.sidebarUsed.parent2,
       ]
     );
   }
@@ -120,8 +130,8 @@ export class PgGameRepository implements GameRepository {
   async saveMessage(gameId: string, message: Message): Promise<void> {
     await this.db.query(
       `INSERT INTO messages
-         (game_id, sender, content, chat_type, visible_to, timestamp)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6)`,
+         (game_id, sender, content, chat_type, visible_to, timestamp, event_number)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)`,
       [
         gameId,
         message.sender,
@@ -129,6 +139,7 @@ export class PgGameRepository implements GameRepository {
         message.chatType,
         JSON.stringify(message.visibleTo),
         message.timestamp,
+        message.eventNumber,
       ]
     );
   }
@@ -191,9 +202,13 @@ export class PgGameRepository implements GameRepository {
       current_event_number: number;
       total_events: number;
       identity_document: string;
+      sidebar_used_parent1: boolean;
+      sidebar_used_parent2: boolean;
     }>(
       `SELECT id, child_name, relationship_type, phase,
-              current_event_number, total_events, identity_document
+              current_event_number, total_events, identity_document,
+              COALESCE(sidebar_used_parent1, false) AS sidebar_used_parent1,
+              COALESCE(sidebar_used_parent2, false) AS sidebar_used_parent2
        FROM games WHERE id = $1`,
       [gameId]
     );
@@ -219,8 +234,10 @@ export class PgGameRepository implements GameRepository {
       chat_type: Message["chatType"];
       visible_to: Sender[];
       timestamp: string;
+      event_number: number;
     }>(
-      `SELECT sender, content, chat_type, visible_to, timestamp
+      `SELECT sender, content, chat_type, visible_to, timestamp,
+              COALESCE(event_number, 0) AS event_number
        FROM messages WHERE game_id = $1 ORDER BY timestamp ASC, created_at ASC`,
       [gameId]
     );
@@ -248,6 +265,7 @@ export class PgGameRepository implements GameRepository {
       chatType: r.chat_type,
       visibleTo: r.visible_to,
       timestamp: Number(r.timestamp),
+      eventNumber: r.event_number,
     }));
 
     const identitySnapshots: IdentitySnapshot[] = snapshotsRes.rows.map(
@@ -265,6 +283,10 @@ export class PgGameRepository implements GameRepository {
       events,
       messages,
       identitySnapshots,
+      sidebarUsed: {
+        parent1: game.sidebar_used_parent1,
+        parent2: game.sidebar_used_parent2,
+      },
     });
   }
 }
@@ -286,6 +308,8 @@ export class InMemoryGameRepository implements GameRepository {
       currentEventNumber: number;
       totalEvents: number;
       identityDocument: string;
+      sidebarUsedParent1: boolean;
+      sidebarUsedParent2: boolean;
     }
   >();
   private messages = new Map<string, Message[]>();
@@ -302,6 +326,8 @@ export class InMemoryGameRepository implements GameRepository {
       currentEventNumber: state.currentEventNumber,
       totalEvents: state.totalEvents,
       identityDocument: state.identityDocument,
+      sidebarUsedParent1: state.sidebarUsed.parent1,
+      sidebarUsedParent2: state.sidebarUsed.parent2,
     });
   }
 
@@ -360,6 +386,10 @@ export class InMemoryGameRepository implements GameRepository {
       events: events.map((e) => ({ ...e })),
       messages: messages.map((m) => ({ ...m, visibleTo: [...m.visibleTo] })),
       identitySnapshots: identitySnapshots.map((s) => ({ ...s })),
+      sidebarUsed: {
+        parent1: game.sidebarUsedParent1,
+        parent2: game.sidebarUsedParent2,
+      },
     });
   }
 

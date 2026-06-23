@@ -127,6 +127,7 @@ function applyTransition(state: GameState, action: GameAction): GameState {
         chatType,
         visibleTo,
         timestamp: Date.now(),
+        eventNumber: state.currentEventNumber,
       };
       return {
         ...state,
@@ -148,6 +149,7 @@ function applyTransition(state: GameState, action: GameAction): GameState {
         chatType: kidChatType,
         visibleTo: kidVisibleTo,
         timestamp: Date.now(),
+        eventNumber: state.currentEventNumber,
       };
       return {
         ...state,
