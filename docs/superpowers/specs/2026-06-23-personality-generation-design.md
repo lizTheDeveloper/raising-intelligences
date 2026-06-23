@@ -131,12 +131,24 @@ interface ParentPersonality {
 2. Portrait loads
 3. "I'm ready" / "I'm not ready" buttons
 
-**New flow:**
-1. Intro stages (ages 0-2 with lines and images) — unchanged
-2. OCEAN quiz — 5 questions, one at a time, each fades in after the previous is answered
-3. Confessional prompts — 2 free-text fields, presented together after the quiz
-4. Submit → server generates personality seed (while portrait loads in parallel)
-5. Portrait revealed + "I'm ready" / "I'm not ready" buttons
+**New flow — intro lines and quiz questions interspersed:**
+
+The intro narrative lines and OCEAN questions are woven together. Each answered question triggers the next batch of intro lines, creating a rhythm of emotional scene-setting followed by self-reflection. The portrait generates in the background throughout.
+
+1. **Intro beat 1** (age 0): "born on a quiet night." / "so small you were afraid to breathe."
+2. **OCEAN Question 1** (Openness) — fades in after beat 1
+3. **Intro beat 2** (age 1): "they reached for everything." / "they said something that almost sounded like your name."
+4. **OCEAN Question 2** (Conscientiousness)
+5. **Intro beat 3** (age 2): "they took their first steps." / "they fell. they got back up."
+6. **OCEAN Question 3** (Extraversion)
+7. **Transition line**: "three years old."
+8. **OCEAN Question 4** (Agreeableness)
+9. **OCEAN Question 5** (Neuroticism)
+10. **Portrait reveal** — kid appears, staring at you
+11. **Confessional prompts** — 2 free-text fields, presented with the kid watching. Submit triggers personality seed generation.
+12. **"I'm ready" / "I'm not ready" buttons** — appear once seed is generated
+
+The quiz serves double duty: it captures personality data AND fills the wait time while portrait images generate. By the time the player finishes all 5 questions and the confessionals, the portrait is likely ready.
 
 In multiplayer, each parent completes this independently. The personality seed is generated once both parents have submitted. If parent 1 finishes first, they see a waiting state ("waiting for your co-parent...") until both are done and the seed is ready.
 
