@@ -91,7 +91,7 @@ export function MultiplayerGame({ joinGameId }: Props) {
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
               />
-              <p className="dim" style={{ marginTop: 24 }}>your relationship</p>
+              <p className="dim" style={{ marginTop: 24 }}>your child-rearing partner</p>
               <select
                 className="relationship-select"
                 value={relationship}
