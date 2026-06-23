@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { ChildPortrait } from "./ChildPortrait";
+import { track } from "../analytics";
 
 const FRAGMENTS = [
   "they took their first steps.",
@@ -61,7 +62,7 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
 
       <button
         className="btn"
-        onClick={onReady}
+        onClick={() => { track("guardian_accepted"); onReady(); }}
         disabled={!canBegin}
       >
         {!portraitReady

@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { track } from "../analytics";
 
 interface GameEvent {
   eventNumber: number;
@@ -86,6 +87,7 @@ export function useGame() {
       setGameId(data.gameId);
       setChildName(name);
       setPhase("event_intro");
+      track("game_started", { relationshipType });
       return data.gameId;
     },
     []
@@ -117,6 +119,7 @@ export function useGame() {
     if (gameId) {
       fetch(`${API}/game/${gameId}/portraits/next`, { method: "POST" }).catch(() => {});
     }
+    track("conversation_started");
   }, [gameId]);
 
   // Fix for #20: buffer partial SSE lines across network reads and guard
@@ -249,6 +252,7 @@ export function useGame() {
       setEpilogue(data.epilogue);
       setStreamingDocText("");
       setPhase(data.phase);
+      track("epilogue_reached");
     } catch (err) {
       setError(`Failed to generate epilogue: ${err instanceof Error ? err.message : String(err)}`);
       setPhase("debrief");
@@ -282,6 +286,7 @@ export function useGame() {
       setReportCard(data.reportCard);
       setStreamingDocText("");
       setPhase(data.phase);
+      track("game_completed");
     } catch (err) {
       setError(`Failed to generate report card: ${err instanceof Error ? err.message : String(err)}`);
       setPhase("epilogue");

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { SoloGame } from "./components/SoloGame";
 import { MultiplayerGame } from "./components/MultiplayerGame";
+import { track } from "./analytics";
 
 type Mode = "choose" | "solo" | "multiplayer";
 type Theme = "" | "theme-ocean-grunge" | "theme-cyber";
@@ -31,10 +32,10 @@ export function App() {
         <h1>raising intelligences</h1>
         <p className="dim">raise a child through conversation</p>
         <div className="mode-choice">
-          <button className="btn" onClick={() => setMode("multiplayer")}>
+          <button className="btn" onClick={() => { track("mode_selected", { mode: "multiplayer" }); setMode("multiplayer"); }}>
             play with a partner
           </button>
-          <button className="btn btn-secondary" onClick={() => setMode("solo")}>
+          <button className="btn btn-secondary" onClick={() => { track("mode_selected", { mode: "solo" }); setMode("solo"); }}>
             play solo
           </button>
         </div>
@@ -43,7 +44,7 @@ export function App() {
             <button
               key={t.id}
               className={`theme-btn${theme === t.id ? " theme-btn-active" : ""}`}
-              onClick={() => setTheme(t.id)}
+              onClick={() => { track("theme_selected", { theme: t.label }); setTheme(t.id); }}
             >
               {t.label}
             </button>
