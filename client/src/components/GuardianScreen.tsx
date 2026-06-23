@@ -265,9 +265,7 @@ function pickVariant(): number {
 }
 
 export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props) {
-  const [visibleLines, setVisibleLines] = useState<string[]>([]);
-  const [currentStage, setCurrentStage] = useState(-1);
-  const [introComplete, setIntroComplete] = useState(false);
+  const [lineCount, setLineCount] = useState(0);
   const [portraitReady, setPortraitReady] = useState(false);
   const [showFinalText, setShowFinalText] = useState(false);
   const [thoughtIdx, setThoughtIdx] = useState(() =>
@@ -278,47 +276,45 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
   const variant = useMemo(pickVariant, []);
   const base = import.meta.env.BASE_URL;
 
+  const allIntroLines = useMemo(
+    () => INTRO_STAGES.flatMap((s) => s.lines),
+    []
+  );
+  const totalIntroLines = allIntroLines.length;
+  const introComplete = lineCount >= totalIntroLines;
+
+  // Compute current stage from lineCount
+  const currentStage = useMemo(() => {
+    let count = 0;
+    for (let i = 0; i < INTRO_STAGES.length; i++) {
+      count += INTRO_STAGES[i].lines.length;
+      if (lineCount < count) return i;
+    }
+    return INTRO_STAGES.length - 1;
+  }, [lineCount]);
+
+  // Compute whether this lineCount is the first line of a new stage
+  const isFirstLineOfStage = useMemo(() => {
+    let count = 0;
+    for (const stage of INTRO_STAGES) {
+      if (lineCount === count) return true;
+      count += stage.lines.length;
+    }
+    return false;
+  }, [lineCount]);
+
+  // Advance line counter on a timer
   useEffect(() => {
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    let lineIndex = 0;
-    let stageIndex = 0;
+    if (lineCount >= totalIntroLines) return;
+    const delay = lineCount === 0 ? 1200 : isFirstLineOfStage ? 2400 : 1600;
+    const timer = setTimeout(() => setLineCount((c) => c + 1), delay);
+    return () => clearTimeout(timer);
+  }, [lineCount, totalIntroLines, isFirstLineOfStage]);
 
-    const showNextLine = () => {
-      if (stageIndex >= INTRO_STAGES.length) {
-        setIntroComplete(true);
-        return;
-      }
-
-      const stage = INTRO_STAGES[stageIndex];
-
-      if (lineIndex === 0) {
-        setCurrentStage(stageIndex);
-      }
-
-      setVisibleLines((prev) => [...prev, stage.lines[lineIndex]]);
-      lineIndex++;
-
-      if (lineIndex >= stage.lines.length) {
-        stageIndex++;
-        lineIndex = 0;
-        timers.push(setTimeout(showNextLine, 2400));
-      } else {
-        timers.push(setTimeout(showNextLine, 1600));
-      }
-    };
-
-    timers.push(setTimeout(showNextLine, 1200));
-
-    return () => timers.forEach(clearTimeout);
-  }, []);
-
+  // Show final text once intro is done and portrait is ready
   useEffect(() => {
     if (!introComplete || !portraitReady) return;
-
-    const t = setTimeout(() => {
-      setVisibleLines((prev) => [...prev, "three years old.", "they need you."]);
-      setShowFinalText(true);
-    }, 800);
+    const t = setTimeout(() => setShowFinalText(true), 800);
     return () => clearTimeout(t);
   }, [introComplete, portraitReady]);
 
@@ -383,11 +379,17 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
       </div>
 
       <div className="guardian-loading-lines">
-        {visibleLines.map((line, i) => (
+        {allIntroLines.slice(0, lineCount).map((line, i) => (
           <p key={i} className="guardian-line">
             {line}
           </p>
         ))}
+        {showFinalText && (
+          <>
+            <p className="guardian-line">three years old.</p>
+            <p className="guardian-line">they need you.</p>
+          </>
+        )}
       </div>
 
       {showFinalText && !eventReady && (
