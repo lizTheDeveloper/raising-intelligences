@@ -82,6 +82,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   } = options;
 
   const app = express();
+  app.set("trust proxy", 1);
   app.use(cors({ origin: allowedOrigin }));
   app.use(express.json());
 
