@@ -105,6 +105,7 @@ export function buildKidContext(state: GameState): {
   const system = fillTemplate(KID_SYSTEM_PROMPT, {
     childName: state.childName,
     age: String(state.currentEvent?.age ?? 4),
+    temperament: state.temperament,
     identitySection,
     eventDescription: state.currentEvent?.description ?? "",
   });
@@ -181,6 +182,7 @@ export function buildWorldManagerContext(state: GameState): {
 
   const system = fillTemplate(WORLD_MANAGER_SYSTEM_PROMPT, {
     childName: state.childName,
+    childTemperament: state.temperament,
     previousEvents,
     familyStructure: familyStructureText(state.relationshipType),
   });

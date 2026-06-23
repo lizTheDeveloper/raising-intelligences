@@ -37,6 +37,7 @@ export interface GameState {
   phase: GamePhase;
   childName: string;
   relationshipType: string;
+  temperament: string;
   currentEvent: GameEvent | null;
   currentEventNumber: number;
   totalEvents: number;
