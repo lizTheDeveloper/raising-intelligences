@@ -114,6 +114,22 @@ body::after {
   padding: 6px 20px;
   min-width: 120px;
 }
+.auth-section {
+  margin-top: 24px;
+}
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  font-family: var(--font);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 4px;
+}
+.btn-link:hover {
+  color: var(--fg);
+}
 
 .relationship-select {
   background: transparent;

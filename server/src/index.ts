@@ -1,4 +1,4 @@
-import { OpenRouterLLMClient } from "./llm/openrouter.js";
+import { RoutingLLMClient } from "./llm/routing-client.js";
 import type { LLMUsage } from "./llm/client.js";
 import type { ModelTier } from "./llm/model-config.js";
 import { TracedLLMClient, flushLangfuse, isLangfuseEnabled } from "./observability/langfuse.js";
@@ -27,7 +27,14 @@ async function main() {
   // role and tier (see docs/monetization-strategy.md §3.1). Per-call token +
   // cost accounting is logged so per-game cost can be tracked (§3.2). The
   // Langfuse tracer wraps it transparently — a pass-through when no keys are set.
-  const tier: ModelTier = process.env.MODEL_TIER === "premium" ? "premium" : "standard";
+  // Default to cerebras if CEREBRAS_API_KEY is set, else standard.
+  // Explicit MODEL_TIER always wins.
+  const defaultTier = process.env.CEREBRAS_API_KEY ? "cerebras" : "standard";
+  const rawTier = process.env.MODEL_TIER ?? defaultTier;
+  const tier: ModelTier =
+    rawTier === "premium" ? "premium" :
+    rawTier === "cerebras" ? "cerebras" :
+    "standard";
   const onUsage = (u: LLMUsage) => {
     logger.info("llm_usage", {
       role: u.role,
@@ -37,11 +44,9 @@ async function main() {
       costUsd: Number(u.costUsd.toFixed(5)),
     });
   };
-  // A fixed LLM_SEED forwards a deterministic seed to OpenRouter (reproducible
-  // output + prompt-cache hits); omit it in production for variety.
   const seed = process.env.LLM_SEED ? Number(process.env.LLM_SEED) : undefined;
   const llm = new TracedLLMClient(
-    new OpenRouterLLMClient(tier, onUsage, "kid_family_chat", seed)
+    new RoutingLLMClient(tier, onUsage, "kid_family_chat", seed)
   );
 
   // Use Postgres when DATABASE_URL is configured; otherwise an in-memory

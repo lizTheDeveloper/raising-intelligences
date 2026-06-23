@@ -6,6 +6,7 @@ import { createServer, type Server as HttpServer } from "http";
 import { Server as SocketServer } from "socket.io";
 import { createGameRoutes } from "./routes/game.js";
 import { createEndgameRoutes } from "./routes/endgame.js";
+import { createUserRoutes } from "./routes/user.js";
 import { ConversationEngine } from "./game/conversation-engine.js";
 import { EndgameEngine } from "./game/endgame-engine.js";
 import type { LLMClient } from "./llm/client.js";
@@ -93,6 +94,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
 
   app.use("/api", createGameRoutes(conversationEngine, games, repo));
   app.use("/api", createEndgameRoutes(endgameEngine, games, repo));
+  app.use("/api", createUserRoutes());
 
   app.get(
     "/health",

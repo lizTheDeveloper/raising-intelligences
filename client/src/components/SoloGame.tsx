@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
-import { useGame, getSavedKids } from "../hooks/useGame";
+import { useState, useEffect, useCallback } from "react";
+import { useGame, getSavedKids, syncKidsToServer, fetchServerKids, mergeKids } from "../hooks/useGame";
+import type { SavedKid } from "../hooks/useGame";
 import { GuardianScreen } from "./GuardianScreen";
 import { EventIntro } from "./EventIntro";
 import { Chat } from "./Chat";
@@ -36,6 +37,10 @@ export function SoloGame() {
   const [nameInput, setNameInput] = useState("");
   const [loadingEvent, setLoadingEvent] = useState(false);
   const [showGuardian, setShowGuardian] = useState(false);
+  const [matrixUser, setMatrixUser] = useState<string | null>(
+    () => window.matrixAuth?.getUserId() ?? null
+  );
+  const [cloudKids, setCloudKids] = useState<SavedKid[]>([]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -45,11 +50,36 @@ export function SoloGame() {
     }
   }, []);
 
+  const syncOnLogin = useCallback(async (userId: string) => {
+    setMatrixUser(userId);
+    await syncKidsToServer(userId);
+    const remote = await fetchServerKids(userId);
+    const local = getSavedKids();
+    setCloudKids(mergeKids(local, remote));
+  }, []);
+
+  useEffect(() => {
+    const onReady = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.loggedIn && detail?.userId) syncOnLogin(detail.userId);
+    };
+    const onLogin = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.userId) syncOnLogin(detail.userId);
+    };
+    window.addEventListener("matrixAuthReady", onReady);
+    window.addEventListener("matrixAuthLogin", onLogin);
+    return () => {
+      window.removeEventListener("matrixAuthReady", onReady);
+      window.removeEventListener("matrixAuthLogin", onLogin);
+    };
+  }, [syncOnLogin]);
+
   const handleStart = async () => {
     if (!nameInput.trim()) return;
     const id = await createGame(nameInput.trim());
     if (!id) return;
-    // Show guardian screen immediately, generate first event in the background
+    if (matrixUser) syncKidsToServer(matrixUser);
     setShowGuardian(true);
     setLoadingEvent(true);
     await nextEvent(id);
@@ -73,12 +103,18 @@ export function SoloGame() {
   };
 
   if (phase === "start") {
-    const savedKids = getSavedKids();
+    const savedKids = cloudKids.length > 0 ? cloudKids : getSavedKids();
     const handleResume = (kid: { gameId: string; childName: string }) => {
       const url = new URL(window.location.href);
       url.searchParams.set("game", kid.gameId);
       url.searchParams.set("mode", "solo");
       window.location.href = url.toString();
+    };
+    const handleLogin = () => window.matrixAuth?.showLoginModal();
+    const handleLogout = async () => {
+      await window.matrixAuth?.logout();
+      setMatrixUser(null);
+      setCloudKids([]);
     };
     return (
       <div className="app">
@@ -117,6 +153,17 @@ export function SoloGame() {
               ))}
             </div>
           )}
+          <div className="auth-section">
+            {matrixUser ? (
+              <button className="btn-link" onClick={handleLogout}>
+                {matrixUser.split(":")[0].slice(1)} — sign out
+              </button>
+            ) : (
+              <button className="btn-link" onClick={handleLogin}>
+                sign in to sync across devices
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );

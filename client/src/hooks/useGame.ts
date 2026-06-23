@@ -39,6 +39,34 @@ interface Message {
 
 const API = import.meta.env.BASE_URL + "api";
 
+export async function syncKidsToServer(userId: string): Promise<void> {
+  const kids = getSavedKids();
+  if (!kids.length) return;
+  await fetch(`${API}/user/${encodeURIComponent(userId)}/kids`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(kids.map((k) => ({ gameId: k.gameId, childName: k.childName }))),
+  }).catch(() => {});
+}
+
+export async function fetchServerKids(userId: string): Promise<SavedKid[]> {
+  try {
+    const res = await fetch(`${API}/user/${encodeURIComponent(userId)}/kids`);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+export function mergeKids(local: SavedKid[], remote: SavedKid[]): SavedKid[] {
+  const map = new Map<string, SavedKid>();
+  for (const k of [...remote, ...local]) map.set(k.gameId, k);
+  const merged = [...map.values()].sort((a, b) => b.createdAt - a.createdAt);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+  return merged;
+}
+
 /**
  * Consume an SSE response that streams `chunk` events then a `done` event.
  * Returns the final `done` payload once the stream closes.
