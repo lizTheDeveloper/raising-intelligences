@@ -265,8 +265,36 @@ body::after {
   padding: 12px 0 4px;
 }
 
-.guardian-screen .btn {
+.guardian-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   margin-top: 8px;
+  align-items: center;
+}
+
+.guardian-buttons .btn {
+  margin-top: 0;
+}
+
+.btn.dim {
+  border-color: rgba(255,255,255,0.12);
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+.btn.dim:hover {
+  border-color: var(--fg-dim);
+  color: var(--fg);
+}
+
+.guardian-not-ready-message {
+  font-size: 12px;
+  color: var(--fg-dim);
+  font-style: italic;
+  letter-spacing: 0.5px;
+  margin-top: 4px;
+  opacity: 0;
+  animation: fadeIn 0.8s ease forwards;
 }
 
 .event-intro {

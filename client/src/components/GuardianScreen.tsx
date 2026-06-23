@@ -23,6 +23,7 @@ interface Props {
 export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props) {
   const [fragmentIdx, setFragmentIdx] = useState(0);
   const [portraitReady, setPortraitReady] = useState(false);
+  const [showMessage, setShowMessage] = useState(false);
 
   useEffect(() => {
     if (portraitReady) return;
@@ -32,7 +33,16 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
     return () => clearInterval(id);
   }, [portraitReady]);
 
-  const canBegin = eventReady;
+  const handleNotReady = () => {
+    setShowMessage(true);
+    // Brief delay to show the message before transitioning
+    setTimeout(() => {
+      track("guardian_not_ready");
+      onReady();
+    }, 1500);
+  };
+
+  const canBegin = eventReady && !showMessage;
 
   return (
     <div className="guardian-screen">
@@ -66,16 +76,30 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
         </div>
       )}
 
-      <button
-        className="btn"
-        onClick={() => { track("guardian_accepted"); onReady(); }}
-        disabled={!canBegin}
-      >
-        {eventReady
-          ? "I'm ready"
-          : "entering their world…"
-        }
-      </button>
+      <div className="guardian-buttons">
+        <button
+          className="btn"
+          onClick={() => { track("guardian_accepted"); onReady(); }}
+          disabled={!canBegin}
+        >
+          {eventReady
+            ? "I'm ready"
+            : "entering their world…"
+          }
+        </button>
+
+        <button
+          className="btn dim"
+          onClick={handleNotReady}
+          disabled={!canBegin}
+        >
+          I'm not ready
+        </button>
+      </div>
+
+      {showMessage && (
+        <p className="guardian-not-ready-message">most people aren't</p>
+      )}
     </div>
   );
 }
