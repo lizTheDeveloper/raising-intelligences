@@ -6,6 +6,8 @@
  * The same generic child is depicted across all images — consistent hair,
  * build, and clothing — seen from behind, growing from newborn to toddler.
  *
+ * Uses gpt-5-image-mini via OpenRouter chat completions API.
+ *
  * Usage:
  *   OPENROUTER_API_KEY=... node scripts/generate-intro-images.mjs
  *
@@ -19,9 +21,9 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = join(__dir, "../client/public/portraits/intro");
 mkdirSync(OUT_DIR, { recursive: true });
 
-const API_KEY = process.env.OPENAI_API_KEY;
+const API_KEY = process.env.OPENROUTER_API_KEY;
 if (!API_KEY) {
-  console.error("OPENAI_API_KEY required");
+  console.error("OPENROUTER_API_KEY required");
   process.exit(1);
 }
 
@@ -79,25 +81,25 @@ async function generate(prompt) {
   const fullPrompt = `${prompt} ${STYLE}`;
   console.log(`    Prompt: ${fullPrompt.slice(0, 80)}...`);
 
-  const res = await fetch("https://api.openai.com/v1/images/generations", {
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${API_KEY}`,
       "Content-Type": "application/json",
+      "HTTP-Referer": "https://raisingintelligences.com",
+      "X-Title": "Raising Intelligences",
     },
     body: JSON.stringify({
-      model: "gpt-image-2",
-      prompt: fullPrompt,
-      n: 1,
-      size: "1024x1024",
-      output_format: "png",
+      model: "openai/gpt-5-image-mini",
+      messages: [{ role: "user", content: `Generate an image: ${fullPrompt}` }],
     }),
   });
 
   const data = await res.json();
   if (data.error) throw new Error(data.error.message);
-  const b64 = data.data?.[0]?.b64_json;
-  if (!b64) throw new Error("No image returned");
+  const img = data.choices?.[0]?.message?.images?.[0];
+  if (!img?.image_url?.url) throw new Error("No image in response");
+  const b64 = img.image_url.url.replace(/^data:image\/\w+;base64,/, "");
   return Buffer.from(b64, "base64");
 }
 

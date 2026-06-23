@@ -70,14 +70,17 @@ function agingPrompt(figure: string, hair: string, clothing: string): string {
   ].join(" ");
 }
 
-async function generateFirst(
-  figure: string,
-  hair: string,
-  clothing: string,
-  outPath: string,
-  apiKey: string,
-): Promise<Buffer> {
-  const res = await fetch("https://openrouter.ai/api/v1/images/generations", {
+interface ImageResponse {
+  error?: { message: string };
+  choices?: Array<{
+    message?: {
+      images?: Array<{ image_url?: { url?: string } }>;
+    };
+  }>;
+}
+
+async function generateImage(prompt: string, apiKey: string): Promise<Buffer> {
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -86,24 +89,27 @@ async function generateFirst(
       "X-Title": "Raising Intelligences",
     },
     body: JSON.stringify({
-      model: "openai/gpt-image-2",
-      prompt: firstPortraitPrompt(figure, hair, clothing),
-      n: 1,
-      size: "1024x1024",
-      output_format: "png",
+      model: "openai/gpt-5-image-mini",
+      messages: [{ role: "user", content: `Generate an image: ${prompt}` }],
     }),
   });
 
-  const data = (await res.json()) as {
-    error?: { message: string };
-    data?: Array<{ b64_json?: string; url?: string }>;
-  };
-
+  const data = (await res.json()) as ImageResponse;
   if (data.error) throw new Error(data.error.message);
-  const b64 = data.data?.[0]?.b64_json;
-  if (!b64) throw new Error("No image returned from OpenRouter");
+  const imgUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
+  if (!imgUrl) throw new Error("No image returned from OpenRouter");
+  const b64 = imgUrl.replace(/^data:image\/\w+;base64,/, "");
+  return Buffer.from(b64, "base64");
+}
 
-  const buf = Buffer.from(b64, "base64");
+async function generateFirst(
+  figure: string,
+  hair: string,
+  clothing: string,
+  outPath: string,
+  apiKey: string,
+): Promise<Buffer> {
+  const buf = await generateImage(firstPortraitPrompt(figure, hair, clothing), apiKey);
   writeFileSync(outPath, buf);
   return buf;
 }
@@ -116,35 +122,8 @@ async function generateWithReference(
   referenceImagePath: string,
   apiKey: string,
 ): Promise<void> {
-  // Note: OpenRouter's gpt-image-2 doesn't support image-to-image, so we
-  // generate a fresh image using the aging prompt instead of the reference
-  const res = await fetch("https://openrouter.ai/api/v1/images/generations", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "https://raisingintelligences.com",
-      "X-Title": "Raising Intelligences",
-    },
-    body: JSON.stringify({
-      model: "openai/gpt-image-2",
-      prompt: agingPrompt(figure, hair, clothing),
-      n: 1,
-      size: "1024x1024",
-      output_format: "png",
-    }),
-  });
-
-  const data = (await res.json()) as {
-    error?: { message: string };
-    data?: Array<{ b64_json?: string; url?: string }>;
-  };
-
-  if (data.error) throw new Error(data.error.message);
-  const b64 = data.data?.[0]?.b64_json;
-  if (!b64) throw new Error("No image returned from OpenRouter");
-
-  writeFileSync(outPath, Buffer.from(b64, "base64"));
+  const buf = await generateImage(agingPrompt(figure, hair, clothing), apiKey);
+  writeFileSync(outPath, buf);
 }
 
 function apiKey(): string | null {
