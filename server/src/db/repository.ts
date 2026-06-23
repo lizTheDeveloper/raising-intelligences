@@ -3,6 +3,7 @@ import type {
   GamePhase,
   GameState,
   Message,
+  ParentPersonality,
   Sender,
 } from "../types.js";
 import { pool } from "./pool.js";
@@ -53,7 +54,8 @@ function reconstructState(input: {
   phase: GamePhase;
   childName: string;
   relationshipType: string;
-  temperament?: string;
+  personalitySeed?: string;
+  parentPersonalities?: { parent1?: ParentPersonality; parent2?: ParentPersonality };
   currentEventNumber: number;
   totalEvents: number;
   identityDocument: string;
@@ -85,7 +87,8 @@ function reconstructState(input: {
     phase: input.phase,
     childName: input.childName,
     relationshipType: input.relationshipType,
-    temperament: input.temperament ?? "",
+    personalitySeed: input.personalitySeed ?? "",
+    parentPersonalities: input.parentPersonalities ?? {},
     currentEvent,
     currentEventNumber: input.currentEventNumber,
     totalEvents: input.totalEvents,
@@ -107,9 +110,9 @@ export class PgGameRepository implements GameRepository {
     await this.db.query(
       `INSERT INTO games
          (id, child_name, relationship_type, phase, current_event_number,
-          total_events, identity_document,
+          total_events, identity_document, personality_seed, parent_personalities,
           sidebar_used_parent1, sidebar_used_parent2, sidebar_active, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, now())
        ON CONFLICT (id) DO UPDATE SET
          child_name            = EXCLUDED.child_name,
          relationship_type     = EXCLUDED.relationship_type,
@@ -117,6 +120,8 @@ export class PgGameRepository implements GameRepository {
          current_event_number  = EXCLUDED.current_event_number,
          total_events          = EXCLUDED.total_events,
          identity_document     = EXCLUDED.identity_document,
+         personality_seed      = EXCLUDED.personality_seed,
+         parent_personalities  = EXCLUDED.parent_personalities,
          sidebar_used_parent1  = EXCLUDED.sidebar_used_parent1,
          sidebar_used_parent2  = EXCLUDED.sidebar_used_parent2,
          sidebar_active        = EXCLUDED.sidebar_active,
@@ -129,6 +134,8 @@ export class PgGameRepository implements GameRepository {
         state.currentEventNumber,
         state.totalEvents,
         state.identityDocument,
+        state.personalitySeed,
+        JSON.stringify(state.parentPersonalities),
         state.sidebarUsed.parent1,
         state.sidebarUsed.parent2,
         state.sidebarActive ?? null,
@@ -238,12 +245,16 @@ export class PgGameRepository implements GameRepository {
       current_event_number: number;
       total_events: number;
       identity_document: string;
+      personality_seed: string;
+      parent_personalities: { parent1?: ParentPersonality; parent2?: ParentPersonality } | null;
       sidebar_used_parent1: boolean;
       sidebar_used_parent2: boolean;
       sidebar_active: string | null;
     }>(
       `SELECT id, child_name, relationship_type, phase,
               current_event_number, total_events, identity_document,
+              COALESCE(personality_seed, '') AS personality_seed,
+              parent_personalities,
               COALESCE(sidebar_used_parent1, false) AS sidebar_used_parent1,
               COALESCE(sidebar_used_parent2, false) AS sidebar_used_parent2,
               sidebar_active
@@ -315,6 +326,8 @@ export class PgGameRepository implements GameRepository {
       phase: game.phase,
       childName: game.child_name,
       relationshipType: game.relationship_type,
+      personalitySeed: game.personality_seed,
+      parentPersonalities: game.parent_personalities ?? {},
       currentEventNumber: game.current_event_number,
       totalEvents: game.total_events ?? DEFAULT_TOTAL_EVENTS,
       identityDocument: game.identity_document,
@@ -341,7 +354,8 @@ export class InMemoryGameRepository implements GameRepository {
       id: string;
       childName: string;
       relationshipType: string;
-      temperament: string;
+      personalitySeed: string;
+      parentPersonalities: { parent1?: ParentPersonality; parent2?: ParentPersonality };
       phase: GamePhase;
       currentEventNumber: number;
       totalEvents: number;
@@ -362,7 +376,8 @@ export class InMemoryGameRepository implements GameRepository {
       id: state.id,
       childName: state.childName,
       relationshipType: state.relationshipType,
-      temperament: state.temperament,
+      personalitySeed: state.personalitySeed,
+      parentPersonalities: state.parentPersonalities,
       phase: state.phase,
       currentEventNumber: state.currentEventNumber,
       totalEvents: state.totalEvents,
@@ -432,7 +447,8 @@ export class InMemoryGameRepository implements GameRepository {
       phase: game.phase,
       childName: game.childName,
       relationshipType: game.relationshipType,
-      temperament: game.temperament,
+      personalitySeed: game.personalitySeed,
+      parentPersonalities: game.parentPersonalities,
       currentEventNumber: game.currentEventNumber,
       totalEvents: game.totalEvents,
       identityDocument: game.identityDocument,

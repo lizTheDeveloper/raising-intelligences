@@ -1,0 +1,2 @@
+ALTER TABLE games ADD COLUMN IF NOT EXISTS personality_seed TEXT NOT NULL DEFAULT '';
+ALTER TABLE games ADD COLUMN IF NOT EXISTS parent_personalities JSONB NOT NULL DEFAULT '{}'::jsonb;
