@@ -1,0 +1,304 @@
+/* Admin UI — dark theme */
+
+.admin-app {
+  min-height: 100vh;
+  background: #111;
+  color: #e0e0e0;
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1.5rem;
+  background: #1a1a1a;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.admin-header h1 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #e0e0e0;
+  flex: 1;
+}
+
+.admin-header button {
+  background: transparent;
+  border: 1px solid #444;
+  color: #aaa;
+  padding: 0.3rem 0.8rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.admin-header button:hover {
+  border-color: #888;
+  color: #e0e0e0;
+}
+
+.admin-nav {
+  display: flex;
+  gap: 0;
+  padding: 0 1.5rem;
+  background: #161616;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.admin-nav button {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #888;
+  padding: 0.75rem 1.25rem;
+  cursor: pointer;
+  font-size: 13px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.admin-nav button:hover {
+  color: #e0e0e0;
+}
+
+.admin-nav button.active {
+  color: #e0e0e0;
+  border-bottom-color: #4a9eff;
+}
+
+.admin-login {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  gap: 1rem;
+}
+
+.admin-login h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.25rem;
+  color: #e0e0e0;
+}
+
+.admin-login input[type="password"] {
+  padding: 0.5rem 0.75rem;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 14px;
+  width: 240px;
+}
+
+.admin-login input[type="password"]:focus {
+  outline: none;
+  border-color: #4a9eff;
+}
+
+.admin-login button {
+  padding: 0.5rem 1.5rem;
+  background: #1e3a5f;
+  border: 1px solid #2a5a9f;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.admin-login button:hover {
+  background: #254a7a;
+}
+
+.admin-login .error {
+  color: #ff6b6b;
+  font-size: 13px;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 1rem;
+  padding: 1.5rem;
+}
+
+.stat-card {
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  padding: 1.25rem;
+}
+
+.stat-card .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #666;
+  margin-bottom: 0.5rem;
+}
+
+.stat-card .value {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #e0e0e0;
+  line-height: 1;
+}
+
+.stat-card .sub {
+  font-size: 12px;
+  color: #666;
+  margin-top: 0.4rem;
+}
+
+.stat-card.deferred .value {
+  color: #444;
+}
+
+.stat-card.deferred .sub {
+  color: #444;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.admin-table th {
+  text-align: left;
+  padding: 0.5rem 1rem;
+  background: #161616;
+  border-bottom: 1px solid #2a2a2a;
+  color: #888;
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.admin-table td {
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid #1e1e1e;
+  color: #ccc;
+}
+
+.admin-table tr:hover td {
+  background: #161616;
+}
+
+.admin-filters {
+  display: flex;
+  gap: 0.5rem;
+  padding: 1rem 1.5rem 0;
+  align-items: center;
+}
+
+.admin-filters label {
+  color: #888;
+  font-size: 12px;
+}
+
+.admin-filters select {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #e0e0e0;
+  padding: 0.3rem 0.6rem;
+  font-size: 13px;
+}
+
+.pagination {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  color: #666;
+  font-size: 13px;
+}
+
+.pagination button {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #aaa;
+  padding: 0.3rem 0.8rem;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.pagination button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.pagination button:not(:disabled):hover {
+  border-color: #555;
+  color: #e0e0e0;
+}
+
+.detail-section {
+  padding: 1.5rem;
+}
+
+.detail-section h3 {
+  margin: 0 0 1rem;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #666;
+}
+
+.status-bar {
+  display: flex;
+  gap: 1.5rem;
+  padding: 0.75rem 1.5rem;
+  background: #161616;
+  border-bottom: 1px solid #2a2a2a;
+  font-size: 12px;
+  color: #666;
+}
+
+.status-bar span {
+  display: flex;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.status-bar .val {
+  color: #ccc;
+}
+
+.identity-diff {
+  font-family: monospace;
+  font-size: 12px;
+  background: #0d0d0d;
+  border: 1px solid #222;
+  border-radius: 4px;
+  padding: 1rem;
+  white-space: pre-wrap;
+  color: #aaa;
+}
+
+.back-btn {
+  background: transparent;
+  border: none;
+  color: #4a9eff;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.back-btn:hover {
+  text-decoration: underline;
+}
+
+.loading {
+  padding: 2rem 1.5rem;
+  color: #555;
+  font-size: 13px;
+}

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { SoloGame } from "./components/SoloGame";
 import { MultiplayerGame } from "./components/MultiplayerGame";
+import { AdminApp } from "./components/admin/AdminApp";
 import { clearResume } from "./hooks/useMultiplayer";
 import { track } from "./analytics";
 
@@ -145,6 +146,11 @@ const THEMES: { id: Theme; label: string }[] = [
 ];
 
 export function App() {
+  const isAdmin =
+    window.location.pathname.endsWith("/admin") ||
+    window.location.pathname.includes("/admin/");
+  if (isAdmin) return <AdminApp />;
+
   const params = new URLSearchParams(window.location.search);
   const joinGameId = params.get("game") ?? undefined;
   const isSoloResume = joinGameId && params.get("mode") === "solo";
