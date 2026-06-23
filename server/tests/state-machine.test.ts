@@ -20,6 +20,16 @@ describe("createGame", () => {
     expect(state.messages).toEqual([]);
     expect(state.parentMessageCount).toBe(0);
   });
+
+  it("creates a game with empty personalitySeed and no parentPersonalities", () => {
+    const state = createGame("Luna");
+    expect(state.childName).toBe("Luna");
+    expect(state.phase).toBe("event_intro");
+    expect(state.personalitySeed).toBe("");
+    expect(state.parentPersonalities).toEqual({});
+    // temperament field should no longer exist
+    expect("temperament" in state).toBe(false);
+  });
 });
 
 describe("transition", () => {

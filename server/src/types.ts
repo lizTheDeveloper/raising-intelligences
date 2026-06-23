@@ -32,12 +32,22 @@ export interface GameEvent {
   trigger: string;
 }
 
+export interface ParentPersonality {
+  ocean: [number, number, number, number, number]; // [O, C, E, A, N], each 1-4
+  confessional1: string;
+  confessional2: string;
+}
+
 export interface GameState {
   id: string;
   phase: GamePhase;
   childName: string;
   relationshipType: string;
-  temperament: string;
+  personalitySeed: string;
+  parentPersonalities: {
+    parent1?: ParentPersonality;
+    parent2?: ParentPersonality;
+  };
   currentEvent: GameEvent | null;
   currentEventNumber: number;
   totalEvents: number;

@@ -3,21 +3,6 @@ import { randomUUID } from "crypto";
 
 export const PARENT_MESSAGE_CAP = 12;
 
-const TEMPERAMENTS = [
-  "Stubborn and defiant. You test limits constantly and don't accept 'no' easily. You're learning what buttons to push and when to escalate.",
-  "Sensitive and anxious. You pick up on emotional tension quickly and can become overwhelmed. You need reassurance but also test whether people will actually be there for you.",
-  "Charming but manipulative. You're learning how to get what you want through persuasion, guilt, or playing people against each other. You're not malicious — you're just figuring out how the world works.",
-  "Defiant and confrontational. You challenge authority and enjoy pushing back. You're testing whether the rules are real and whether the adults mean what they say.",
-  "Withdrawn and observant. You watch more than you talk, but when you do speak, it cuts deep. You're learning people's patterns and storing that information for later.",
-  "Impulsive and easily frustrated. You want things now and don't have the patience to wait. When you don't get your way, you escalate quickly.",
-  "People-pleasing but resentful. You try to be good, but you're keeping score. You're learning that being 'good' doesn't always get you what you want, and you're starting to experiment with other strategies.",
-  "Strong-willed and independent. You have your own agenda and don't care much about what others think. You're not trying to be difficult — you just don't see why you should do what you're told.",
-];
-
-function getRandomTemperament(): string {
-  return TEMPERAMENTS[Math.floor(Math.random() * TEMPERAMENTS.length)];
-}
-
 export type GameAction =
   | { type: "LOAD_EVENT"; event: GameEvent }
   | { type: "BEGIN_FAMILY_CHAT" }
@@ -40,7 +25,8 @@ export function createGame(childName: string, relationshipType = "co-parents"): 
     phase: "event_intro",
     childName,
     relationshipType,
-    temperament: getRandomTemperament(),
+    personalitySeed: "",
+    parentPersonalities: {},
     currentEvent: null,
     currentEventNumber: 0,
     totalEvents: 10,
