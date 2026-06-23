@@ -19,11 +19,11 @@ function ageSlug(age: number): string {
 
 export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
   const [src, setSrc] = useState<string | null>(null);
+  const slug = ageSlug(age);
 
   useEffect(() => {
     if (!gameId) return;
 
-    const slug = ageSlug(age);
     const base = import.meta.env.BASE_URL;
     let mounted = true;
     const controller = new AbortController();
@@ -68,7 +68,7 @@ export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
       mounted = false;
       controller.abort();
     };
-  }, [gameId, age]);
+  }, [gameId, slug]);
 
   if (!src) {
     return <ChildPresence age={age} size={size} />;

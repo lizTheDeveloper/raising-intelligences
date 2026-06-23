@@ -1,9 +1,16 @@
 import { Router } from "express";
-import type { Request, Response } from "express";
+import type { Request, Response, RequestHandler } from "express";
 import { EndgameEngine } from "../game/endgame-engine.js";
 import type { GameRepository } from "../db/repository.js";
 import type { GameState } from "../types.js";
 import { logger } from "../logger.js";
+
+interface EndgameRouteOptions {
+  llmRateLimit?: RequestHandler;
+  /** Shared lock map — pass the same instance used by game routes and socket
+   * handlers so all operations on the same game are serialized. */
+  gameLocks?: Map<string, Promise<void>>;
+}
 
 /**
  * Endgame HTTP routes. The factory takes the shared in-memory games Map so it
@@ -13,20 +20,22 @@ import { logger } from "../logger.js";
 export function createEndgameRoutes(
   engine: EndgameEngine,
   games: Map<string, GameState>,
-  repo: GameRepository
+  repo: GameRepository,
+  options: EndgameRouteOptions = {}
 ): Router {
+  const { llmRateLimit, gameLocks = new Map<string, Promise<void>>() } = options;
   const router = Router();
-
-  const gameLocks = new Map<string, Promise<void>>();
 
   function withGameLock<T>(gameId: string, fn: () => Promise<T>): Promise<T> {
     const prev = gameLocks.get(gameId) ?? Promise.resolve();
     const next = prev.catch(() => {}).then(fn);
-    gameLocks.set(gameId, next.then(() => {}, () => {}));
+    const settled = next.then(() => {}, () => {});
+    settled.then(() => { if (gameLocks.get(gameId) === settled) gameLocks.delete(gameId); });
+    gameLocks.set(gameId, settled);
     return next;
   }
 
-  router.post("/game/:id/epilogue", async (req: Request, res: Response) => {
+  router.post("/game/:id/epilogue", ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
     if (!games.get(req.params.id as string)) {
       res.status(404).json({ error: "Game not found" });
       return;
@@ -83,7 +92,7 @@ export function createEndgameRoutes(
     }
   });
 
-  router.post("/game/:id/report-card", async (req: Request, res: Response) => {
+  router.post("/game/:id/report-card", ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
     if (!games.get(req.params.id as string)) {
       res.status(404).json({ error: "Game not found" });
       return;

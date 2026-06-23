@@ -12,6 +12,7 @@
   "dependencies": {
     "express": "^5.1.0",
     "cors": "^2.8.5",
+    "express-rate-limit": "^7.5.0",
     "openai": "^6.44.0",
     "pg": "^8.13.0",
     "langfuse": "^3.37.0",

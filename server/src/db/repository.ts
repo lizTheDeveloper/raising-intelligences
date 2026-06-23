@@ -52,6 +52,7 @@ function reconstructState(input: {
   messages: Message[];
   identitySnapshots: IdentitySnapshot[];
   sidebarUsed: { parent1: boolean; parent2: boolean };
+  sidebarActive?: string | null;
 }): GameState {
   const currentEvent =
     input.events.find((e) => e.eventNumber === input.currentEventNumber) ??
@@ -88,7 +89,7 @@ function reconstructState(input: {
     messages: input.messages,
     parentMessageCount,
     sidebarUsed: input.sidebarUsed,
-    sidebarActive: null,
+    sidebarActive: (input.sidebarActive as GameState["sidebarActive"]) ?? null,
     lastActivityAt: Date.now(),
   };
 }
@@ -101,8 +102,8 @@ export class PgGameRepository implements GameRepository {
       `INSERT INTO games
          (id, child_name, relationship_type, phase, current_event_number,
           total_events, identity_document,
-          sidebar_used_parent1, sidebar_used_parent2, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+          sidebar_used_parent1, sidebar_used_parent2, sidebar_active, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
        ON CONFLICT (id) DO UPDATE SET
          child_name            = EXCLUDED.child_name,
          relationship_type     = EXCLUDED.relationship_type,
@@ -112,6 +113,7 @@ export class PgGameRepository implements GameRepository {
          identity_document     = EXCLUDED.identity_document,
          sidebar_used_parent1  = EXCLUDED.sidebar_used_parent1,
          sidebar_used_parent2  = EXCLUDED.sidebar_used_parent2,
+         sidebar_active        = EXCLUDED.sidebar_active,
          updated_at            = now()`,
       [
         state.id,
@@ -123,6 +125,7 @@ export class PgGameRepository implements GameRepository {
         state.identityDocument,
         state.sidebarUsed.parent1,
         state.sidebarUsed.parent2,
+        state.sidebarActive ?? null,
       ]
     );
   }
@@ -204,11 +207,13 @@ export class PgGameRepository implements GameRepository {
       identity_document: string;
       sidebar_used_parent1: boolean;
       sidebar_used_parent2: boolean;
+      sidebar_active: string | null;
     }>(
       `SELECT id, child_name, relationship_type, phase,
               current_event_number, total_events, identity_document,
               COALESCE(sidebar_used_parent1, false) AS sidebar_used_parent1,
-              COALESCE(sidebar_used_parent2, false) AS sidebar_used_parent2
+              COALESCE(sidebar_used_parent2, false) AS sidebar_used_parent2,
+              sidebar_active
        FROM games WHERE id = $1`,
       [gameId]
     );
@@ -287,6 +292,7 @@ export class PgGameRepository implements GameRepository {
         parent1: game.sidebar_used_parent1,
         parent2: game.sidebar_used_parent2,
       },
+      sidebarActive: game.sidebar_active,
     });
   }
 }
@@ -310,6 +316,7 @@ export class InMemoryGameRepository implements GameRepository {
       identityDocument: string;
       sidebarUsedParent1: boolean;
       sidebarUsedParent2: boolean;
+      sidebarActive: string | null;
     }
   >();
   private messages = new Map<string, Message[]>();
@@ -328,6 +335,7 @@ export class InMemoryGameRepository implements GameRepository {
       identityDocument: state.identityDocument,
       sidebarUsedParent1: state.sidebarUsed.parent1,
       sidebarUsedParent2: state.sidebarUsed.parent2,
+      sidebarActive: state.sidebarActive ?? null,
     });
   }
 
@@ -390,6 +398,7 @@ export class InMemoryGameRepository implements GameRepository {
         parent1: game.sidebarUsedParent1,
         parent2: game.sidebarUsedParent2,
       },
+      sidebarActive: game.sidebarActive,
     });
   }
 

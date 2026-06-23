@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import path from "path";
+import rateLimit from "express-rate-limit";
 import type { RequestHandler } from "express";
 import { createServer, type Server as HttpServer } from "http";
 import { Server as SocketServer } from "socket.io";
@@ -81,8 +82,12 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   } = options;
 
   const app = express();
+  app.set("trust proxy", 1);
   app.use(cors({ origin: allowedOrigin }));
   app.use(express.json());
+
+  // Global rate limit: 200 req / min per IP. Catches broad abuse.
+  app.use(rateLimit({ windowMs: 60_000, max: 200, standardHeaders: true, legacyHeaders: false }));
 
   const conversationEngine = new ConversationEngine(llm);
   const endgameEngine = new EndgameEngine(llm);
@@ -92,8 +97,16 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   const games = new Map<string, GameState>();
   const sessions = new Map<string, Session>();
 
-  app.use("/api", createGameRoutes(conversationEngine, games, repo));
-  app.use("/api", createEndgameRoutes(endgameEngine, games, repo));
+  // Tighter limits on LLM-triggering and game-creation endpoints.
+  const llmRateLimit = rateLimit({ windowMs: 60_000, max: 10, standardHeaders: true, legacyHeaders: false });
+  const gameCreateLimit = rateLimit({ windowMs: 60_000, max: 5, standardHeaders: true, legacyHeaders: false });
+
+  // Single shared lock map — prevents cross-module races between game.ts,
+  // endgame.ts, and socket handlers operating on the same game concurrently.
+  const gameLocks = new Map<string, Promise<void>>();
+
+  app.use("/api", createGameRoutes(conversationEngine, games, repo, { llmRateLimit, gameCreateLimit, gameLocks }));
+  app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit, gameLocks }));
   app.use("/api", createUserRoutes());
 
   app.get(
@@ -126,6 +139,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     conversationEngine,
     endgameEngine,
     repo,
+    gameLocks,
   });
 
   let evictionTimer: NodeJS.Timeout | undefined;

@@ -33,6 +33,9 @@ export interface SocketDeps {
   conversationEngine: ConversationEngine;
   endgameEngine: EndgameEngine;
   repo: GameRepository;
+  /** Shared lock map — when provided, socket operations are serialized with
+   * HTTP route operations on the same game, preventing cross-module races. */
+  gameLocks?: Map<string, Promise<void>>;
 }
 
 interface SocketData {
@@ -75,20 +78,24 @@ function lobbyState(io: Server, session: Session): LobbyState {
 }
 
 export function registerSocketHandlers(deps: SocketDeps): void {
-  const { io, games, sessions, conversationEngine, endgameEngine, repo } = deps;
+  const { io, games, sessions, conversationEngine, endgameEngine, repo,
+          gameLocks = new Map<string, Promise<void>>() } = deps;
 
   // Per-game operation queue — serializes PARENT_MESSAGE and END_CHAT so two
   // concurrent socket events can't read the same game snapshot, run their LLM
   // calls in parallel, and then overwrite each other on write-back.
-  const gameLocks = new Map<string, Promise<void>>();
-
+  // Uses the shared map (if provided) so HTTP and socket operations on the
+  // same game are serialized across module boundaries.
   function withGameLock<T>(gameId: string, fn: () => Promise<T>): Promise<T> {
     const prev = gameLocks.get(gameId) ?? Promise.resolve();
     // Chain fn after the previous operation; swallow prev's error so the queue
     // never stalls permanently because one handler threw.
     const next = prev.catch(() => {}).then(fn);
     // Store a settling promise (never rejects) so the next enqueuer can safely await it.
-    gameLocks.set(gameId, next.then(() => {}, () => {}));
+    // Delete the entry once settled so the map doesn't grow unbounded.
+    const settled = next.then(() => {}, () => {});
+    settled.then(() => { if (gameLocks.get(gameId) === settled) gameLocks.delete(gameId); });
+    gameLocks.set(gameId, settled);
     return next;
   }
 
