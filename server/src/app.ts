@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import path from "path";
+import rateLimit from "express-rate-limit";
 import type { RequestHandler } from "express";
 import { createServer, type Server as HttpServer } from "http";
 import { Server as SocketServer } from "socket.io";
@@ -84,6 +85,9 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   app.use(cors({ origin: allowedOrigin }));
   app.use(express.json());
 
+  // Global rate limit: 200 req / min per IP. Catches broad abuse.
+  app.use(rateLimit({ windowMs: 60_000, max: 200, standardHeaders: true, legacyHeaders: false }));
+
   const conversationEngine = new ConversationEngine(llm);
   const endgameEngine = new EndgameEngine(llm);
 
@@ -92,8 +96,12 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   const games = new Map<string, GameState>();
   const sessions = new Map<string, Session>();
 
-  app.use("/api", createGameRoutes(conversationEngine, games, repo));
-  app.use("/api", createEndgameRoutes(endgameEngine, games, repo));
+  // Tighter limits on LLM-triggering and game-creation endpoints.
+  const llmRateLimit = rateLimit({ windowMs: 60_000, max: 10, standardHeaders: true, legacyHeaders: false });
+  const gameCreateLimit = rateLimit({ windowMs: 60_000, max: 5, standardHeaders: true, legacyHeaders: false });
+
+  app.use("/api", createGameRoutes(conversationEngine, games, repo, { llmRateLimit, gameCreateLimit }));
+  app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit }));
   app.use("/api", createUserRoutes());
 
   app.get(

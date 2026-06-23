@@ -1,5 +1,5 @@
 import { Router } from "express";
-import type { Request, Response } from "express";
+import type { Request, Response, RequestHandler } from "express";
 import { existsSync } from "fs";
 import path from "path";
 import { ConversationEngine } from "../game/conversation-engine.js";
@@ -14,11 +14,18 @@ const MAX_CHILD_NAME_LENGTH = 50;
 const MAX_MESSAGE_LENGTH = 2000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+interface GameRouteLimiters {
+  llmRateLimit?: RequestHandler;
+  gameCreateLimit?: RequestHandler;
+}
+
 export function createGameRoutes(
   engine: ConversationEngine,
   games: Map<string, GameState>,
-  repo: GameRepository
+  repo: GameRepository,
+  limiters: GameRouteLimiters = {}
 ): Router {
+  const { llmRateLimit, gameCreateLimit } = limiters;
   const router = Router();
 
   // Per-game operation queue — serializes write operations so concurrent HTTP
@@ -47,7 +54,7 @@ export function createGameRoutes(
     return loaded;
   }
 
-  router.post("/game", async (req: Request, res: Response) => {
+  router.post("/game", ...(gameCreateLimit ? [gameCreateLimit] : []), async (req: Request, res: Response) => {
     const { childName, relationshipType } = req.body as {
       childName: string;
       relationshipType?: string;
@@ -106,7 +113,7 @@ export function createGameRoutes(
     }
   });
 
-  router.post("/game/:id/message", async (req: Request, res: Response) => {
+  router.post("/game/:id/message", ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
     const { sender, content } = req.body as { sender: Sender; content: string };
 
     if (!VALID_SENDERS.includes(sender)) {
@@ -167,7 +174,7 @@ export function createGameRoutes(
     });
   });
 
-  router.post("/game/:id/end-chat", async (req: Request, res: Response) => {
+  router.post("/game/:id/end-chat", ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
     const precheck = await resolveGame(req.params.id as string);
     if (!precheck) {
       res.status(404).json({ error: "Game not found" });
