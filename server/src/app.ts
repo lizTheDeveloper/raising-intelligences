@@ -8,6 +8,8 @@ import { Server as SocketServer } from "socket.io";
 import { createGameRoutes } from "./routes/game.js";
 import { createEndgameRoutes } from "./routes/endgame.js";
 import { createUserRoutes } from "./routes/user.js";
+import { createAdminRoutes } from "./routes/admin.js";
+import type { AdminQueries } from "./db/admin-queries.js";
 import { ConversationEngine } from "./game/conversation-engine.js";
 import { EndgameEngine } from "./game/endgame-engine.js";
 import type { LLMClient } from "./llm/client.js";
@@ -40,6 +42,8 @@ export interface BuildServerOptions {
   /** Custom /health handler (e.g. one that pings Postgres). Defaults to a
    * static `{ status: "ok", db: dbLabel }`. */
   healthHandler?: RequestHandler;
+  /** Read-only analytics queries for the admin dashboard. */
+  adminQueries?: AdminQueries;
 }
 
 /**
@@ -79,6 +83,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
       ? "/raising-intelligences/socket.io"
       : "/socket.io",
     healthHandler,
+    adminQueries,
   } = options;
 
   const app = express();
@@ -108,6 +113,9 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   app.use("/api", createGameRoutes(conversationEngine, games, repo, { llmRateLimit, gameCreateLimit, gameLocks }));
   app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit, gameLocks }));
   app.use("/api", createUserRoutes());
+  if (adminQueries) {
+    app.use("/api", createAdminRoutes(adminQueries));
+  }
 
   app.get(
     "/health",
