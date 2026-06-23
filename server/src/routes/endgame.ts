@@ -16,9 +16,17 @@ export function createEndgameRoutes(
 ): Router {
   const router = Router();
 
+  const gameLocks = new Map<string, Promise<void>>();
+
+  function withGameLock<T>(gameId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = gameLocks.get(gameId) ?? Promise.resolve();
+    const next = prev.catch(() => {}).then(fn);
+    gameLocks.set(gameId, next.then(() => {}, () => {}));
+    return next;
+  }
+
   router.post("/game/:id/epilogue", async (req: Request, res: Response) => {
-    const state = games.get(req.params.id as string);
-    if (!state) {
+    if (!games.get(req.params.id as string)) {
       res.status(404).json({ error: "Game not found" });
       return;
     }
@@ -27,21 +35,29 @@ export function createEndgameRoutes(
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
-    try {
-      const result = await engine.generateEpilogue(state, (chunk) => {
-        res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
-      });
-      games.set(result.state.id, result.state);
-      await repo.saveGame(result.state);
-      res.write(
-        `data: ${JSON.stringify({ type: "done", phase: result.state.phase, epilogue: result.epilogue })}\n\n`
-      );
-      res.end();
-    } catch (err) {
-      console.error("[endgame] epilogue error:", err);
-      res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
-      res.end();
-    }
+    await withGameLock(req.params.id as string, async () => {
+      const state = games.get(req.params.id as string);
+      if (!state) {
+        res.write(`data: ${JSON.stringify({ type: "error", error: "Game not found" })}\n\n`);
+        res.end();
+        return;
+      }
+      try {
+        const result = await engine.generateEpilogue(state, (chunk) => {
+          res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
+        });
+        games.set(result.state.id, result.state);
+        await repo.saveGame(result.state);
+        res.write(
+          `data: ${JSON.stringify({ type: "done", phase: result.state.phase, epilogue: result.epilogue })}\n\n`
+        );
+        res.end();
+      } catch (err) {
+        console.error("[endgame] epilogue error:", err);
+        res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
+        res.end();
+      }
+    });
   });
 
   router.post("/game/:id/adult-chat", async (req: Request, res: Response) => {
@@ -67,8 +83,7 @@ export function createEndgameRoutes(
   });
 
   router.post("/game/:id/report-card", async (req: Request, res: Response) => {
-    const state = games.get(req.params.id as string);
-    if (!state) {
+    if (!games.get(req.params.id as string)) {
       res.status(404).json({ error: "Game not found" });
       return;
     }
@@ -78,22 +93,30 @@ export function createEndgameRoutes(
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
-    try {
-      const result = await engine.generateReportCard(state, epilogue ?? "", (chunk) => {
-        res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
-      });
-      games.set(result.state.id, result.state);
-      await repo.saveEndgame(result.state.id, epilogue ?? "", result.reportCard);
-      await repo.saveGame(result.state);
-      res.write(
-        `data: ${JSON.stringify({ type: "done", phase: result.state.phase, reportCard: result.reportCard })}\n\n`
-      );
-      res.end();
-    } catch (err) {
-      console.error("[endgame] report-card error:", err);
-      res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
-      res.end();
-    }
+    await withGameLock(req.params.id as string, async () => {
+      const state = games.get(req.params.id as string);
+      if (!state) {
+        res.write(`data: ${JSON.stringify({ type: "error", error: "Game not found" })}\n\n`);
+        res.end();
+        return;
+      }
+      try {
+        const result = await engine.generateReportCard(state, epilogue ?? "", (chunk) => {
+          res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
+        });
+        games.set(result.state.id, result.state);
+        await repo.saveEndgame(result.state.id, epilogue ?? "", result.reportCard);
+        await repo.saveGame(result.state);
+        res.write(
+          `data: ${JSON.stringify({ type: "done", phase: result.state.phase, reportCard: result.reportCard })}\n\n`
+        );
+        res.end();
+      } catch (err) {
+        console.error("[endgame] report-card error:", err);
+        res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
+        res.end();
+      }
+    });
   });
 
   return router;

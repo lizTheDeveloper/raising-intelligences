@@ -17,6 +17,18 @@ export function createGameRoutes(
 ): Router {
   const router = Router();
 
+  // Per-game operation queue — serializes write operations so concurrent HTTP
+  // requests on the same gameId can't read the same snapshot, run their LLM
+  // calls in parallel, and then overwrite each other on write-back.
+  const gameLocks = new Map<string, Promise<void>>();
+
+  function withGameLock<T>(gameId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = gameLocks.get(gameId) ?? Promise.resolve();
+    const next = prev.catch(() => {}).then(fn);
+    gameLocks.set(gameId, next.then(() => {}, () => {}));
+    return next;
+  }
+
   // Resolve a game from the in-memory store, falling back to the repository
   // (reconstructing from the latest persisted checkpoint) for reconnects.
   async function resolveGame(id: string): Promise<GameState | null> {
@@ -72,17 +84,11 @@ export function createGameRoutes(
     } catch (err) {
       console.error("[game] next-event error:", err);
       const e = err instanceof Error ? err : new Error(String(err));
-      res.status(500).json({ error: "An internal error occurred", detail: e.message, stack: e.stack });
+      res.status(500).json({ error: "An internal error occurred" });
     }
   });
 
   router.post("/game/:id/message", async (req: Request, res: Response) => {
-    const state = await resolveGame(req.params.id as string);
-    if (!state) {
-      res.status(404).json({ error: "Game not found" });
-      return;
-    }
-
     const { sender, content } = req.body as { sender: Sender; content: string };
 
     if (!VALID_SENDERS.includes(sender)) {
@@ -98,37 +104,9 @@ export function createGameRoutes(
       return;
     }
 
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-
-    try {
-      const result = await engine.handleParentMessage(state, sender, content, (chunk) => {
-        res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
-      });
-      games.set(result.state.id, result.state);
-      // Persist just the two new tail messages (parent + kid), then the checkpoint.
-      const tail = result.state.messages.slice(-2);
-      for (const m of tail) await repo.saveMessage(result.state.id, m);
-      await repo.saveGame(result.state);
-      res.write(
-        `data: ${JSON.stringify({
-          type: "done",
-          kidResponse: result.kidResponse,
-          messagesRemaining: engine.getMessageCapRemaining(result.state),
-        })}\n\n`
-      );
-      res.end();
-    } catch (err) {
-      console.error("[game] message error:", err);
-      res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
-      res.end();
-    }
-  });
-
-  router.post("/game/:id/end-chat", async (req: Request, res: Response) => {
-    const state = await resolveGame(req.params.id as string);
-    if (!state) {
+    // Pre-check so we can return a proper 404 before switching to SSE mode.
+    const precheck = await resolveGame(req.params.id as string);
+    if (!precheck) {
       res.status(404).json({ error: "Game not found" });
       return;
     }
@@ -137,23 +115,74 @@ export function createGameRoutes(
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
-    try {
-      const next = await engine.endFamilyChat(state, (chunk) => {
-        res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
-      });
-      games.set(next.id, next);
-      const latestSnapshot = next.identitySnapshots[next.identitySnapshots.length - 1];
-      if (latestSnapshot) await repo.saveSnapshot(next.id, latestSnapshot);
-      await repo.saveGame(next);
-      res.write(
-        `data: ${JSON.stringify({ type: "done", phase: next.phase })}\n\n`
-      );
-      res.end();
-    } catch (err) {
-      console.error("[game] end-chat error:", err);
-      res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
-      res.end();
+    await withGameLock(req.params.id as string, async () => {
+      // Re-read state inside the lock — another handler may have written a newer
+      // snapshot while this request was queued.
+      const state = await resolveGame(req.params.id as string);
+      if (!state) {
+        res.write(`data: ${JSON.stringify({ type: "error", error: "Game not found" })}\n\n`);
+        res.end();
+        return;
+      }
+      try {
+        const result = await engine.handleParentMessage(state, sender, content, (chunk) => {
+          res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
+        });
+        games.set(result.state.id, result.state);
+        // Persist just the two new tail messages (parent + kid), then the checkpoint.
+        const tail = result.state.messages.slice(-2);
+        for (const m of tail) await repo.saveMessage(result.state.id, m);
+        await repo.saveGame(result.state);
+        res.write(
+          `data: ${JSON.stringify({
+            type: "done",
+            kidResponse: result.kidResponse,
+            messagesRemaining: engine.getMessageCapRemaining(result.state),
+          })}\n\n`
+        );
+        res.end();
+      } catch (err) {
+        console.error("[game] message error:", err);
+        res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
+        res.end();
+      }
+    });
+  });
+
+  router.post("/game/:id/end-chat", async (req: Request, res: Response) => {
+    const precheck = await resolveGame(req.params.id as string);
+    if (!precheck) {
+      res.status(404).json({ error: "Game not found" });
+      return;
     }
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    await withGameLock(req.params.id as string, async () => {
+      const state = await resolveGame(req.params.id as string);
+      if (!state) {
+        res.write(`data: ${JSON.stringify({ type: "error", error: "Game not found" })}\n\n`);
+        res.end();
+        return;
+      }
+      try {
+        const next = await engine.endFamilyChat(state, (chunk) => {
+          res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
+        });
+        games.set(next.id, next);
+        const latestSnapshot = next.identitySnapshots[next.identitySnapshots.length - 1];
+        if (latestSnapshot) await repo.saveSnapshot(next.id, latestSnapshot);
+        await repo.saveGame(next);
+        res.write(`data: ${JSON.stringify({ type: "done", phase: next.phase })}\n\n`);
+        res.end();
+      } catch (err) {
+        console.error("[game] end-chat error:", err);
+        res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
+        res.end();
+      }
+    });
   });
 
   router.post("/game/:id/end-debrief", async (req: Request, res: Response) => {

@@ -165,6 +165,7 @@ export function SoloGame() {
   if (phase === "epilogue") {
     return (
       <div className="app">
+        {error && <p className="error-banner">{error}</p>}
         <Endgame epilogue={epilogue} onContinue={generateReportCard} />
       </div>
     );
