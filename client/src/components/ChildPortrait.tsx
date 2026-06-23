@@ -27,25 +27,33 @@ export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
     const fallbackUrl = `/portraits/${slug}.png`;
     let mounted = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    // Guard against double-firing onLoad if both the fallback and the custom
+    // portrait eventually succeed (fallback fires immediately on first 404,
+    // custom portrait may still succeed on a later retry).
+    let onLoadFired = false;
+
+    const fireOnLoad = () => {
+      if (!onLoadFired) {
+        onLoadFired = true;
+        onLoad?.();
+      }
+    };
 
     const tryLoadFallback = () => {
       if (!mounted) return;
       const img = new Image();
       img.onload = () => {
-        if (mounted) {
-          setSrc((currentSrc) => {
-            // Only use fallback if we haven't successfully loaded the custom portrait yet
-            if (currentSrc === url) return currentSrc;
-            onLoad?.();
-            return fallbackUrl;
-          });
-        }
+        if (!mounted) return;
+        // State updater must be pure — no side-effects inside it.
+        setSrc((currentSrc) => {
+          if (currentSrc === url) return currentSrc; // custom portrait already won the race
+          return fallbackUrl;
+        });
+        fireOnLoad();
       };
       img.onerror = () => {
-        // If even the fallback fails, make sure the user isn't permanently blocked
-        if (mounted) {
-          onLoad?.();
-        }
+        // Even if the fallback is missing, unblock the UI.
+        if (mounted) fireOnLoad();
       };
       img.src = fallbackUrl;
     };
@@ -56,13 +64,13 @@ export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
       img.onload = () => {
         if (mounted) {
           setSrc(url);
-          onLoad?.();
+          fireOnLoad();
         }
       };
       img.onerror = () => {
         if (!mounted) return;
 
-        // On the first failure, trigger fallback load so the user can start playing immediately
+        // On the first failure, trigger fallback so the user can start playing immediately.
         if (attempts === 0) {
           tryLoadFallback();
         }

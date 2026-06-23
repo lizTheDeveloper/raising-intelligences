@@ -26,30 +26,23 @@ export function SoloGame() {
     endDebrief,
     epilogue,
     reportCard,
+    error,
     generateEpilogue,
     generateReportCard,
   } = useGame();
 
   const [nameInput, setNameInput] = useState("");
-  const [relationshipInput, setRelationshipInput] = useState("romantic partners");
   const [loadingEvent, setLoadingEvent] = useState(false);
   const [showGuardian, setShowGuardian] = useState(false);
 
-  const RELATIONSHIP_OPTIONS = [
-    "romantic partners",
-    "friends",
-    "siblings",
-    "ex-partners",
-    "co-parents who were never together",
-  ];
-
   const handleStart = async () => {
     if (!nameInput.trim()) return;
-    await createGame(nameInput.trim(), relationshipInput);
+    const id = await createGame(nameInput.trim());
+    if (!id) return;
     // Show guardian screen immediately, generate first event in the background
     setShowGuardian(true);
     setLoadingEvent(true);
-    await nextEvent();
+    await nextEvent(id);
     setLoadingEvent(false);
   };
 
@@ -79,20 +72,6 @@ export function SoloGame() {
               autoFocus
               className="name-input"
             />
-            <p className="dim" style={{ marginTop: "24px" }}>
-              your relationship
-            </p>
-            <select
-              value={relationshipInput}
-              onChange={(e) => setRelationshipInput(e.target.value)}
-              className="relationship-select"
-            >
-              {RELATIONSHIP_OPTIONS.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
-            </select>
             <button type="submit" className="btn" disabled={!nameInput.trim()}>
               begin
             </button>
@@ -118,6 +97,7 @@ export function SoloGame() {
   if (phase === "event_intro") {
     return (
       <div className="app">
+        {error && <p className="error-banner">{error}</p>}
         <EventIntro
           event={currentEvent}
           onReady={currentEvent ? beginChat : handleNextEvent}
@@ -131,6 +111,7 @@ export function SoloGame() {
   if (phase === "family_chat") {
     return (
       <div className="app">
+        {error && <p className="error-banner">{error}</p>}
         <p className="age-marker">— age {currentEvent?.age} —</p>
         {currentEvent?.description && (
           <p className="event-context">{currentEvent.description}</p>
@@ -204,7 +185,8 @@ export function SoloGame() {
 
   return (
     <div className="app">
-      <p>{phase}</p>
+      {error && <p className="error-banner">{error}</p>}
+      <p className="dim">{phase}</p>
     </div>
   );
 }
