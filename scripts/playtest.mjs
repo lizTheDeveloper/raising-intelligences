@@ -148,21 +148,20 @@ const BASE = "http://localhost:5173";
         await sendBtn.click();
       }
 
-      // Wait for kid response — send button re-enables
-      log("  Waiting for kid response...");
+      // Wait for kid response — watch for a new .message-kid element.
+      // (The send button stays disabled while text is empty, so it's not a
+      // reliable signal here — using message count instead.)
+      const kidBefore = await page.$$eval("div.message.message-kid", (els) => els.length);
+      log(`  Waiting for kid response (have ${kidBefore} kid messages)...`);
       try {
-        await page.waitForFunction(() => {
-          const btn = document.querySelector("form.message-input button");
-          return btn && !btn.disabled;
-        }, { timeout: 60000 });
+        await page.waitForFunction(
+          (before) => document.querySelectorAll("div.message.message-kid").length > before,
+          kidBefore,
+          { timeout: 60000 }
+        );
         log("  ✓ Response received");
       } catch {
-        // Check if there's a streaming state issue
-        const isStillStreaming = await page.evaluate(() => {
-          const btn = document.querySelector("form.message-input button");
-          return btn?.disabled ?? "no button";
-        });
-        record("Kid response timed out", `After message ${i + 1}, send button state: ${isStillStreaming}`, ["bug"]);
+        record("Kid response timed out", `After message ${i + 1}, still ${kidBefore} kid messages after 60s`, ["bug"]);
       }
 
       const kidMsgs = await page.$$("div.message.message-kid");
@@ -272,14 +271,16 @@ const BASE = "http://localhost:5173";
         } else {
           await input.press("Enter");
         }
+        const kidBefore2 = await page.$$eval("div.message.message-kid", (els) => els.length);
         try {
-          await page.waitForFunction(() => {
-            const b = document.querySelector("form.message-input button");
-            return b && !b.disabled;
-          }, { timeout: 60000 });
+          await page.waitForFunction(
+            (before) => document.querySelectorAll("div.message.message-kid").length > before,
+            kidBefore2,
+            { timeout: 60000 }
+          );
           log("  ✓ Response received");
         } catch {
-          record("Second chat response timed out", `Message ${i + 1} in event 2`, ["bug"]);
+          record("Second chat response timed out", `Message ${i + 1} in event 2, still ${kidBefore2} kid messages after 60s`, ["bug"]);
         }
       }
 
