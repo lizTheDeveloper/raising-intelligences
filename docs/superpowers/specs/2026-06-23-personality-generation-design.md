@@ -103,6 +103,48 @@ The seed document covers:
 
 The seed does NOT include the specific confessional acts — only thematic echoes.
 
+## Replaces Existing Temperament System
+
+The codebase currently has a `temperament` field on `GameState` that randomly picks from 8 canned personality descriptions (e.g., "Stubborn and defiant", "Sensitive and anxious"). This is already wired into all 4 prompt systems (KID_SYSTEM_PROMPT, PSYCHOLOGIST_SYSTEM_PROMPT, WORLD_MANAGER_SYSTEM_PROMPT, EPILOGUE_SYSTEM_PROMPT) and the context assembler.
+
+The OCEAN personality seed **replaces** the random temperament entirely:
+- The `temperament: string` field is replaced by `personalitySeed: string` (same role, better source)
+- The `TEMPERAMENTS` array and `getRandomTemperament()` in `state-machine.ts` are removed
+- All prompt template slots that reference `{temperament}` or `{childTemperament}` switch to `{personalitySeed}`
+- The existing prompt language around temperament ("This is who you are. It doesn't change based on what your parents do.") is preserved but now backed by OCEAN-derived content instead of a random pick
+
+Note: the current temperament field is not persisted to the database (bug). The new `personalitySeed` field will be properly persisted.
+
+## Personality-Tagged Child Fragments
+
+The guardian screen currently shows random `CHILD_THOUGHTS` fragments ("can i have juice?", "where did the moon go?") while waiting. These fragments get tagged by dominant OCEAN trait so the kid's inner voice reflects their emerging personality as the quiz progresses.
+
+### Fragment categories
+
+Each fragment is tagged with 1-2 OCEAN traits it most strongly signals:
+
+- **High Openness**: "what happens if i press this?", "why is the sky so big?", "i want to go somewhere new.", "i have an idea."
+- **Low Openness**: "i want to go home.", "i don't like this.", "can we go back?"
+- **High Conscientiousness**: "i tried my best.", "i'm almost done.", "i'm practicing.", "i'm getting better."
+- **Low Conscientiousness**: "i forgot what i wanted.", "i lost my sock.", "i changed my mind."
+- **High Extraversion**: "we can play together.", "i made a friend today.", "look what i made!", "watch me!"
+- **Low Extraversion**: "i'm hiding.", "i'm still here.", "i'm waiting."
+- **High Agreeableness**: "i like sharing.", "can i help?", "i'm sorry.", "i love you most."
+- **Low Agreeableness**: "this is mine.", "i'm the boss.", "you can't catch me.", "it's not fair."
+- **High Neuroticism**: "don't leave.", "are you there?", "i'm scared of the dark.", "why does it hurt?"
+- **Low Neuroticism**: "i can handle it.", "that's okay.", "i'll try again."
+- **Neutral**: fragments that don't signal any particular trait stay in the general pool
+
+### How fragments are selected
+
+As each OCEAN question is answered, the kid's combined trait scores update in real-time (for solo; for multiplayer, only the current parent's contribution is used for fragment selection). The fragment pool is weighted toward the kid's emerging dominant traits:
+
+1. Start with the full neutral pool
+2. After each answered question, add fragments matching the scored trait direction (high or low)
+3. The cycling thought bubble pulls from the weighted pool, so the kid's inner voice gradually shifts to match their personality
+
+This means the guardian screen experience is different for every combination of parents — a parent who scores high openness + high neuroticism produces a kid who wonders about the stars and worries about being left.
+
 ## Integration with Existing Systems
 
 ### GameState changes
@@ -114,13 +156,15 @@ interface ParentPersonality {
   confessional2: string; // thing never told parents
 }
 
-// New fields on GameState:
+// Changes to GameState:
 {
+  // REMOVED: temperament: string
+  // ADDED:
   parentPersonalities: {
     parent1?: ParentPersonality;
     parent2?: ParentPersonality;
   };
-  personalitySeed: string; // generated seed document, empty until both parents submit
+  personalitySeed: string; // replaces temperament — generated from OCEAN scores + confessionals, empty until parents submit
 }
 ```
 
