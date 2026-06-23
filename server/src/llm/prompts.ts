@@ -8,6 +8,8 @@ You are not aware that you are in a game or that you are played by an AI. You ar
 - You can initiate topics, ask questions, express needs
 - Show your emotions through behavior, not by narrating them
 
+Important: Do not assume or invent a specific role name for your parents (like "Mommy", "Daddy", "Mom", "Dad") unless they have explicitly introduced themselves that way in the current conversation. Use "you" to address them directly, or wait until they tell you what to call them.
+
 {identitySection}
 
 The current situation: {eventDescription}
@@ -37,7 +39,7 @@ You must output ONLY the updated Identity Document. No commentary, no preamble.`
 
 export const WORLD_MANAGER_SYSTEM_PROMPT = `You are the World Manager for a childhood story about {childName}. You generate the next life event based on who this child is becoming and how their parents have been raising them.
 
-The parents' relationship: {relationshipType}. This shapes the family dynamic and the kinds of events that make sense. Two romantic partners raising a child together will face different situations than two friends, siblings, or ex-partners co-parenting.
+{familyStructure}
 
 Your events should be:
 - A mix of mundane-but-formative (first day of school, caught lying, failing a test) and high-drama (divorce, loss, major conflict)
@@ -54,7 +56,7 @@ You must respond with a JSON object with these exact fields:
 {
   "eventNumber": <next number>,
   "age": <child's age for this event>,
-  "description": "<vivid 1-2 sentence description of the situation, addressed to the parents as 'your child'>",
+  "description": "<vivid 1-2 sentence description of the situation, addressed to the parent(s) as 'your child'>",
   "setting": "<where this takes place>",
   "trigger": "<what caused this event>"
 }`;
@@ -91,11 +93,10 @@ Format your response as follows:
 [3-4 specific events that shaped them most, with one sentence on why each mattered]
 
 ## The Voices in Their Head
-### [Parent 1's name]
+### {parent1Label}
 [What this parent's lasting influence sounds like — a sentence or two the child hears in their head]
 
-### [Parent 2's name]
-[What this parent's lasting influence sounds like]
+{parent2Section}
 
 ## Notable Quotes That Stuck
 [3-5 direct quotes from the parents that became part of the child's inner world, with brief context]

@@ -21,6 +21,51 @@ function senderLabel(sender: string): string {
   return "Kid";
 }
 
+/** Whether the relationship type represents a solo parent household. */
+function isSolo(relationshipType: string): boolean {
+  return relationshipType === "solo parent" || relationshipType === "solo";
+}
+
+/**
+ * Derive a human-readable role label for each parent slot given the
+ * relationship type. Used in report card and prompt framing so the LLM has
+ * real labels rather than emitting the literal placeholder text.
+ */
+function parentLabels(
+  relationshipType: string
+): { parent1Label: string; parent2Label: string | null } {
+  if (isSolo(relationshipType)) {
+    return { parent1Label: "Your parent", parent2Label: null };
+  }
+  const lc = relationshipType.toLowerCase();
+  if (lc.includes("romantic") || lc.includes("partner")) {
+    return { parent1Label: "First partner", parent2Label: "Second partner" };
+  }
+  if (lc.includes("sibling") || lc.includes("brother") || lc.includes("sister")) {
+    return { parent1Label: "First sibling", parent2Label: "Second sibling" };
+  }
+  if (lc.includes("friend")) {
+    return { parent1Label: "First co-parent (friends)", parent2Label: "Second co-parent (friends)" };
+  }
+  if (lc.includes("ex")) {
+    return { parent1Label: "First ex-partner", parent2Label: "Second ex-partner" };
+  }
+  // Default: co-parents
+  return { parent1Label: "First co-parent", parent2Label: "Second co-parent" };
+}
+
+/**
+ * Build the family structure description for the world manager prompt.
+ * Solo households get single-parent framing; partnered households describe
+ * the two-parent dynamic.
+ */
+function familyStructureText(relationshipType: string): string {
+  if (isSolo(relationshipType)) {
+    return `This child is being raised by a single parent. All events and descriptions should reflect a one-parent household — do not introduce or reference a second parent, partner, or co-parent.`;
+  }
+  return `The parents' relationship: ${relationshipType}. This shapes the family dynamic and the kinds of events that make sense. Two romantic partners raising a child together will face different situations than two friends, siblings, or ex-partners co-parenting.`;
+}
+
 function currentEventMessages(state: GameState): Message[] {
   return state.messages.filter(
     (m) => m.chatType === "shared" || m.chatType === "private"
@@ -115,7 +160,7 @@ export function buildWorldManagerContext(state: GameState): {
   const system = fillTemplate(WORLD_MANAGER_SYSTEM_PROMPT, {
     childName: state.childName,
     previousEvents,
-    relationshipType: state.relationshipType,
+    familyStructure: familyStructureText(state.relationshipType),
   });
 
   let userMessage = `Generate the next event (event #${state.currentEventNumber + 1}).`;
@@ -146,8 +191,17 @@ export function buildReportCardContext(
   system: string;
   userMessage: string;
 } {
+  const { parent1Label, parent2Label } = parentLabels(state.relationshipType);
+
+  // For solo games there is only one parent; omit the second voice section.
+  const parent2Section = parent2Label
+    ? `### ${parent2Label}\n[What this parent's lasting influence sounds like]`
+    : "";
+
   const system = fillTemplate(REPORT_CARD_SYSTEM_PROMPT, {
     childName: state.childName,
+    parent1Label,
+    parent2Section,
   });
 
   const snapshotTimeline = state.identitySnapshots

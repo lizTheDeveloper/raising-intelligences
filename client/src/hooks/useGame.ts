@@ -30,7 +30,7 @@ export function useGame() {
   const [error, setError] = useState<string | null>(null);
 
   const createGame = useCallback(
-    async (name: string, relationshipType = "co-parents") => {
+    async (name: string, relationshipType = "solo parent") => {
       const res = await fetch(`${API}/game`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
