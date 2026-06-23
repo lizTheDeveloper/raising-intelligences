@@ -126,12 +126,16 @@ async function generateWithReference(
   writeFileSync(outPath, buf);
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function apiKey(): string | null {
   if (process.env.DISABLE_PORTRAITS === "1") return null;
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) logger.warn("portrait_skipped", { reason: "OPENROUTER_API_KEY not set" });
   return key ?? null;
 }
+
+const MAX_PORTRAIT_ATTEMPTS = 5;
 
 async function generateWithRetry(
   gameId: string,
@@ -145,6 +149,10 @@ async function generateWithRetry(
 ): Promise<void> {
   let attempt = 0;
   while (!existsSync(outPath)) {
+    if (attempt >= MAX_PORTRAIT_ATTEMPTS) {
+      logger.error("portrait_generation_abandoned", { gameId, slug, attempts: attempt });
+      return;
+    }
     try {
       if (!prevPath) {
         await generateFirst(figure, hair, clothing, outPath, key);
@@ -163,6 +171,10 @@ async function generateWithRetry(
 // Called at game creation — generates only the first portrait (age-03) so the
 // guardian screen has something to show as quickly as possible.
 export async function generateFirstPortrait(gameId: string): Promise<void> {
+  if (!UUID_RE.test(gameId)) {
+    logger.warn("portrait_invalid_game_id", { gameId });
+    return;
+  }
   const key = apiKey();
   if (!key) return;
 
@@ -183,6 +195,10 @@ const inProgress = new Set<string>();
 // Called when a conversation begins — generates the next missing portrait in the
 // chain so it's ready by the time the player reaches the following event.
 export async function generateNextPortrait(gameId: string): Promise<void> {
+  if (!UUID_RE.test(gameId)) {
+    logger.warn("portrait_invalid_game_id", { gameId });
+    return;
+  }
   const key = apiKey();
   if (!key) return;
 
