@@ -71,7 +71,8 @@ export function createGameRoutes(
       res.json({ event: next.currentEvent, phase: next.phase });
     } catch (err) {
       console.error("[game] next-event error:", err);
-      res.status(500).json({ error: "An internal error occurred", detail: err.message, stack: err.stack });
+      const e = err instanceof Error ? err : new Error(String(err));
+      res.status(500).json({ error: "An internal error occurred", detail: e.message, stack: e.stack });
     }
   });
 
