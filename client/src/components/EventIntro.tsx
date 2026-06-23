@@ -13,7 +13,10 @@ export function EventIntro({ event, onReady, waiting, gameId }: Props) {
     return (
       <div className="event-intro">
         <ChildPresence age={event?.age ?? 3} size={90} />
-        <p className="dim">generating next event...</p>
+        <div className="event-loading">
+          <span className="event-spinner" aria-hidden="true" />
+          <p className="dim">generating next event...</p>
+        </div>
       </div>
     );
   }

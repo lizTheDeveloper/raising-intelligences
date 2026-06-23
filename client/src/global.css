@@ -484,6 +484,39 @@ body::after {
   50% { opacity: 0.85; }
 }
 
+.event-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.event-spinner {
+  display: block;
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--fg-dim);
+  border-top-color: var(--warm);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.error-banner {
+  background: rgba(180, 60, 60, 0.15);
+  border: 1px solid rgba(180, 60, 60, 0.4);
+  color: #e88;
+  padding: 10px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  text-align: center;
+  max-width: 480px;
+  margin: 0 auto 16px;
+}
+
 /* Mobile: anchor the input to the bottom with safe-area padding */
 .chat {
   padding-bottom: env(safe-area-inset-bottom, 0);

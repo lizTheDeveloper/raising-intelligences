@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --ignore '../client/public/portraits/**' --ignore 'test-results/**' --ignore '.playwright-mcp/**' src/index.ts",
     "build": "tsc -b",
     "migrate": "tsx src/db/migrate.ts",
     "test": "vitest run"
