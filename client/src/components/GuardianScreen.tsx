@@ -404,6 +404,7 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
         <div className="guardian-buttons">
           <button
             className="btn"
+            data-testid="btn-guardian-ready"
             onClick={() => {
               track("guardian_accepted");
               onReady();
@@ -411,7 +412,7 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
           >
             I'm ready
           </button>
-          <button className="btn dim" onClick={handleNotReady}>
+          <button className="btn dim" data-testid="btn-guardian-not-ready" onClick={handleNotReady}>
             I'm not ready
           </button>
         </div>

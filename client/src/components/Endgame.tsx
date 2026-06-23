@@ -29,6 +29,7 @@ export function Endgame({ epilogue, onContinue }: Props) {
         <button
           onClick={onContinue}
           className="btn"
+          data-testid="btn-continue"
           style={{ animationDelay: `${paragraphs.length * 420 + 400}ms` }}
         >
           continue

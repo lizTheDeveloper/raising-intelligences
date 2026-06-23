@@ -25,7 +25,7 @@ export function EventIntro({ event, onReady, waiting, gameId }: Props) {
     return (
       <div className="event-intro">
         <ChildPresence age={0} size={90} />
-        <button onClick={onReady} className="btn">
+        <button onClick={onReady} className="btn" data-testid="btn-begin-event">
           begin
         </button>
       </div>
@@ -39,7 +39,7 @@ export function EventIntro({ event, onReady, waiting, gameId }: Props) {
       </div>
       <p className="age-marker">— age {event.age} —</p>
       <p className="event-description">{event.description}</p>
-      <button onClick={onReady} className="btn">
+      <button onClick={onReady} className="btn" data-testid="btn-enter-event">
         enter
       </button>
     </div>
