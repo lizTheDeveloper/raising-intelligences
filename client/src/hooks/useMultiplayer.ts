@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
+import { track } from "../analytics";
 
 const E = {
   CREATE_GAME: "create_game",
@@ -127,6 +128,7 @@ export function useMultiplayer() {
       setGameId(d.gameId);
       setSlot(d.slot);
       setInLobby(true);
+      track("player_joined", { game_id: d.gameId });
       if (d.playerToken) {
         playerTokenRef.current = d.playerToken;
         saveResume(d.gameId, d.playerToken);
