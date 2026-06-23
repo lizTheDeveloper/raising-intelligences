@@ -26,27 +26,20 @@ export function SoloGame() {
     endDebrief,
     epilogue,
     reportCard,
+    error,
     generateEpilogue,
     generateReportCard,
   } = useGame();
 
   const [nameInput, setNameInput] = useState("");
-  const [relationshipInput, setRelationshipInput] = useState("romantic partners");
   const [loadingEvent, setLoadingEvent] = useState(false);
   const [showGuardian, setShowGuardian] = useState(false);
 
-  const RELATIONSHIP_OPTIONS = [
-    "romantic partners",
-    "friends",
-    "siblings",
-    "ex-partners",
-    "co-parents who were never together",
-  ];
-
   const handleStart = async () => {
     if (!nameInput.trim()) return;
-    await createGame(nameInput.trim(), relationshipInput);
-    // Show guardian screen immediately, generate first event in the background
+    // Solo mode: single parent, no relationship to select.
+    await createGame(nameInput.trim(), "solo");
+    // Show guardian screen immediately, generate first event in the background.
     setShowGuardian(true);
     setLoadingEvent(true);
     await nextEvent();
@@ -79,20 +72,6 @@ export function SoloGame() {
               autoFocus
               className="name-input"
             />
-            <p className="dim" style={{ marginTop: "24px" }}>
-              your relationship
-            </p>
-            <select
-              value={relationshipInput}
-              onChange={(e) => setRelationshipInput(e.target.value)}
-              className="relationship-select"
-            >
-              {RELATIONSHIP_OPTIONS.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
-            </select>
             <button type="submit" className="btn" disabled={!nameInput.trim()}>
               begin
             </button>
@@ -131,6 +110,7 @@ export function SoloGame() {
   if (phase === "family_chat") {
     return (
       <div className="app">
+        {error && <p className="error">{error}</p>}
         <p className="age-marker">— age {currentEvent?.age} —</p>
         {currentEvent?.description && (
           <p className="event-context">{currentEvent.description}</p>
@@ -159,6 +139,7 @@ export function SoloGame() {
   if (phase === "debrief") {
     return (
       <div className="app">
+        {error && <p className="error">{error}</p>}
         <Debrief onContinue={endDebrief} />
         <div className="debrief">
           <button onClick={generateEpilogue} className="btn btn-secondary">
@@ -172,6 +153,7 @@ export function SoloGame() {
   if (phase === "epilogue") {
     return (
       <div className="app">
+        {error && <p className="error">{error}</p>}
         <Endgame epilogue={epilogue} onContinue={generateReportCard} />
       </div>
     );
@@ -180,6 +162,7 @@ export function SoloGame() {
   if (phase === "adult_chat") {
     return (
       <div className="app">
+        {error && <p className="error">{error}</p>}
         <p className="age-marker">— adulthood —</p>
         <Chat
           messages={messages}

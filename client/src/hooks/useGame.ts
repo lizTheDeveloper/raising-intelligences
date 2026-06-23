@@ -27,6 +27,7 @@ export function useGame() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [epilogue, setEpilogue] = useState("");
   const [reportCard, setReportCard] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   const createGame = useCallback(
     async (name: string, relationshipType = "co-parents") => {
@@ -46,9 +47,15 @@ export function useGame() {
 
   const nextEvent = useCallback(async () => {
     if (!gameId) return;
+    setError(null);
     const res = await fetch(`${API}/game/${gameId}/next-event`, {
       method: "POST",
     });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setError((body as { error?: string }).error ?? "Failed to load next event");
+      return;
+    }
     const data = await res.json();
     setCurrentEvent(data.event);
     // Stay on event_intro so the player can read the description before chatting.
@@ -82,31 +89,46 @@ export function useGame() {
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let kidMessage = "";
+      // Buffer incomplete SSE lines across TCP packet boundaries so JSON.parse
+      // never sees a partial data line.
+      let lineBuffer = "";
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        const text = decoder.decode(value);
-        const lines = text.split("\n");
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data = JSON.parse(line.slice(6));
-            if (data.type === "chunk") {
-              kidMessage += data.text;
-              setStreamingMessage(kidMessage);
-            } else if (data.type === "done") {
-              setMessages((prev) => [
-                ...prev,
-                { sender: "kid", content: data.kidResponse, chatType: "shared" },
-              ]);
-              setStreamingMessage("");
-              setMessagesRemaining(data.messagesRemaining);
+          lineBuffer += decoder.decode(value, { stream: true });
+          const lines = lineBuffer.split("\n");
+          // Keep the last (potentially incomplete) fragment in the buffer.
+          lineBuffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.type === "chunk") {
+                kidMessage += data.text;
+                setStreamingMessage(kidMessage);
+              } else if (data.type === "done") {
+                setMessages((prev) => [
+                  ...prev,
+                  { sender: "kid", content: data.kidResponse, chatType: "shared" },
+                ]);
+                setStreamingMessage("");
+                setMessagesRemaining(data.messagesRemaining);
+              } else if (data.type === "error") {
+                setError(data.error ?? "An error occurred");
+              }
+            } catch {
+              // Malformed JSON on this line — skip it, don't crash the loop.
             }
           }
         }
+      } finally {
+        // Always release the lock, even if JSON.parse or the network threw.
+        setIsStreaming(false);
       }
-      setIsStreaming(false);
     },
     [gameId, isStreaming]
   );
@@ -114,9 +136,17 @@ export function useGame() {
   const endChat = useCallback(async () => {
     if (!gameId) return;
     setPhase("processing");
+    setError(null);
     const res = await fetch(`${API}/game/${gameId}/end-chat`, {
       method: "POST",
     });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setError((body as { error?: string }).error ?? "Failed to process conversation");
+      // Roll back to family_chat so the player isn't stuck on a blank screen.
+      setPhase("family_chat");
+      return;
+    }
     const data = await res.json();
     setPhase(data.phase);
   }, [gameId]);
@@ -134,7 +164,15 @@ export function useGame() {
   const generateEpilogue = useCallback(async () => {
     if (!gameId) return;
     setPhase("processing");
+    setError(null);
     const res = await fetch(`${API}/game/${gameId}/epilogue`, { method: "POST" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setError((body as { error?: string }).error ?? "Failed to generate epilogue");
+      // Roll back to debrief so the player can retry.
+      setPhase("debrief");
+      return;
+    }
     const data = await res.json();
     setEpilogue(data.epilogue);
     setPhase(data.phase);
@@ -143,11 +181,18 @@ export function useGame() {
   const generateReportCard = useCallback(async () => {
     if (!gameId) return;
     setPhase("processing");
+    setError(null);
     const res = await fetch(`${API}/game/${gameId}/report-card`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ epilogue }),
     });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setError((body as { error?: string }).error ?? "Failed to generate report card");
+      setPhase("epilogue");
+      return;
+    }
     const data = await res.json();
     setReportCard(data.reportCard);
     setPhase(data.phase);
@@ -164,6 +209,7 @@ export function useGame() {
     isStreaming,
     epilogue,
     reportCard,
+    error,
     createGame,
     nextEvent,
     beginChat,

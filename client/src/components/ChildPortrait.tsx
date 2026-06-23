@@ -27,25 +27,31 @@ export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
     const fallbackUrl = `/portraits/${slug}.png`;
     let mounted = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    // Guard so onLoad fires at most once per effect lifecycle, regardless of
+    // which image path resolves first (custom portrait vs. fallback).
+    let loadNotified = false;
+
+    const notifyLoad = () => {
+      if (!loadNotified) {
+        loadNotified = true;
+        onLoad?.();
+      }
+    };
 
     const tryLoadFallback = () => {
       if (!mounted) return;
       const img = new Image();
       img.onload = () => {
-        if (mounted) {
-          setSrc((currentSrc) => {
-            // Only use fallback if we haven't successfully loaded the custom portrait yet
-            if (currentSrc === url) return currentSrc;
-            onLoad?.();
-            return fallbackUrl;
-          });
-        }
+        if (!mounted) return;
+        // Only switch to the fallback if the custom portrait hasn't loaded yet.
+        // NOTE: onLoad must NOT be called inside the setSrc updater — doing so
+        // would trigger a GuardianScreen state update during ChildPortrait's
+        // render cycle (React "Cannot update a component while rendering" error).
+        setSrc((currentSrc) => (currentSrc === url ? currentSrc : fallbackUrl));
+        notifyLoad();
       };
       img.onerror = () => {
-        // If even the fallback fails, make sure the user isn't permanently blocked
-        if (mounted) {
-          onLoad?.();
-        }
+        if (mounted) notifyLoad();
       };
       img.src = fallbackUrl;
     };
@@ -56,17 +62,13 @@ export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
       img.onload = () => {
         if (mounted) {
           setSrc(url);
-          onLoad?.();
+          notifyLoad();
         }
       };
       img.onerror = () => {
         if (!mounted) return;
-
-        // On the first failure, trigger fallback load so the user can start playing immediately
-        if (attempts === 0) {
-          tryLoadFallback();
-        }
-
+        // On first failure, immediately try the fallback so the player isn't blocked.
+        if (attempts === 0) tryLoadFallback();
         if (attempts < 12) {
           timer = setTimeout(() => tryLoad(attempts + 1), 2000);
         }
