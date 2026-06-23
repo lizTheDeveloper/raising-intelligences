@@ -148,9 +148,11 @@ const BASE = "http://localhost:5173";
         await sendBtn.click();
       }
 
-      // Wait for kid response — watch for a new .message-kid element.
-      // (The send button stays disabled while text is empty, so it's not a
-      // reliable signal here — using message count instead.)
+      // Wait for kid response — watch for a new .message-kid element AND
+      // for the chat input to re-enable (isStreaming=false), which means the
+      // SSE stream has fully closed. The streaming message is already a
+      // .message-kid element so we must also wait for the input to unlock,
+      // otherwise we race the end-conversation button check.
       const kidBefore = await page.$$eval("div.message.message-kid", (els) => els.length);
       log(`  Waiting for kid response (have ${kidBefore} kid messages)...`);
       try {
@@ -158,6 +160,14 @@ const BASE = "http://localhost:5173";
           (before) => document.querySelectorAll("div.message.message-kid").length > before,
           kidBefore,
           { timeout: 60000 }
+        );
+        // Wait for streaming to fully complete (input re-enables).
+        await page.waitForFunction(
+          () => {
+            const inp = document.querySelector("form.message-input input");
+            return inp ? !inp.disabled : false;
+          },
+          { timeout: 30000 }
         );
         log("  ✓ Response received");
       } catch {
