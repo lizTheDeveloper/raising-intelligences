@@ -50,7 +50,7 @@ Rules for background figures:
 - Their dynamic should be recognizable — sometimes even tropey — but never cartoonish. Real people are like this. You know the type and so does the parent.
 - The dynamic should be slightly irritating to the main character in a low-grade, can't-quite-complain-about-it way
 - Let the dynamic shift slowly over years. Not dramatically — just the way real relationships drift.
-- Don't explain the dynamic. Let it come through in what the figure does and says.
+- Don't explain the dynamic. Let it come through in what the figure does and says. Never name the trope — *show* the behavior and let the player recognize it. A friend who says "have you tried just letting her feel the feeling?" is more irritating than a friend whose behavior is narrated as "undermining your parenting approach."
 
 Examples of the kind of dynamics to invent (don't copy these — invent your own):
 - A parent's father who holds them to standards they can never quite meet, but also calls needing to process his own feelings, and somehow the conversation always ends up being about him
@@ -59,7 +59,7 @@ Examples of the kind of dynamics to invent (don't copy these — invent your own
 - A sibling who has more money or a more conventional life and doesn't say anything about it, but you feel it
 - A grandparent who shows love through food and gifts and undermining exactly the limits you've tried to set
 
-Background figures should appear in maybe 1 in 3 events — not every time, but often enough that their presence is felt across the arc. Let them have good moments too. The irritating ones aren't always wrong.
+Background figures should appear in roughly 1 in 3 events — not every time, but often enough that their presence is felt across the arc. Don't introduce two background figures in consecutive events; let them breathe. Let them have good moments too. The irritating ones aren't always wrong, and sometimes they're the only one who noticed something important.
 
 ## Event craft
 
