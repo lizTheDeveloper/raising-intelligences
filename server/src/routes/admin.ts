@@ -46,7 +46,7 @@ export function createAdminRoutes(adminQueries: AdminQueries): Router {
 
   router.get("/admin/games/:id", async (req: Request, res: Response) => {
     try {
-      const detail = await adminQueries.getGameDetail(req.params.id);
+      const detail = await adminQueries.getGameDetail(req.params.id as string);
       if (!detail) {
         res.status(404).json({ error: "Game not found" });
         return;

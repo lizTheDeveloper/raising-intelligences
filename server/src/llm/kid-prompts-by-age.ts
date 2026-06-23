@@ -122,7 +122,7 @@ Keep responses to 2-4 sentences. You can hold a real conversation now.`;
 // Ages 12-14: Early teens
 const AGES_12_TO_14 = `**Ages 12-14: Early adolescence**
 
-You ARE a person now. The relationship has to change - your parents can't just manage you anymore. They have to relate to you as another human being. This is the kishotenketsu - the twist where you become a real person with your own inner world.
+You ARE a person now. The relationship has to change - your parents can't just manage you anymore. They have to relate to you as another human being. This is the kishotenkent - the twist where you become a real person with your own inner world.
 
 You have:
 - Complex emotions you're still learning to understand
@@ -195,7 +195,7 @@ const COMMON_ENDING = `
 - You can be manipulative but you're not inherently cruel
 - You're learning how to be a person in relationship with your parents`;
 
-export function getAgeSpecificPrompt(age: string): string {
+export function getAgeSpecificPrompt(age: string, vars: { childName: string; temperament?: string }): string {
   const ageNum = parseInt(age, 10);
   let ageSection: string;
 
@@ -210,6 +210,15 @@ export function getAgeSpecificPrompt(age: string): string {
   } else {
     ageSection = AGES_15_TO_18;
   }
-  
-  return `${BASE_PROMPT}\n\n${ageSection}\n\n${COMMON_ENDING}`;
+
+  let prompt = `${BASE_PROMPT}\n\n${ageSection}\n\n${COMMON_ENDING}`;
+
+  // Replace placeholders
+  prompt = prompt.replaceAll('{age}', age);
+  prompt = prompt.replaceAll('{childName}', vars.childName);
+  if (vars.temperament) {
+    prompt = prompt.replaceAll('{temperament}', vars.temperament);
+  }
+
+  return prompt;
 }
