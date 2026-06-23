@@ -398,7 +398,6 @@ body::after {
   font-size: 10px;
   color: var(--fg-dim);
   letter-spacing: 3px;
-  text-transform: lowercase;
   margin-bottom: 2px;
 }
 

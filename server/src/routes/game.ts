@@ -233,11 +233,17 @@ export function createGameRoutes(
     generateNextPortrait(state.id).catch(() => {});
   });
 
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
   // Long-poll until the portrait file for this game+slug appears on disk.
   // The client calls this ONCE and waits — no retry loop, no polling.
   // Responds with { url } when ready, 408 if it takes longer than 5 minutes.
   router.get("/game/:id/portraits/:slug/await", async (req: Request, res: Response) => {
     const { id, slug } = req.params as { id: string; slug: string };
+    if (!UUID_RE.test(id)) {
+      res.status(400).json({ error: "Invalid game ID" });
+      return;
+    }
     if (!/^age-\d+$/.test(slug)) {
       res.status(400).json({ error: "Invalid slug" });
       return;
@@ -247,8 +253,11 @@ export function createGameRoutes(
     const CHECK_INTERVAL_MS = 1000;
     const deadline = Date.now() + TIMEOUT_MS;
 
+    let closed = false;
+    res.on("close", () => { closed = true; });
+
     const check = () => {
-      if (res.writableEnded) return;
+      if (closed || res.writableEnded) return;
       if (existsSync(filePath)) {
         res.json({ url: `portraits/${id}/${slug}.png` });
         return;
@@ -260,7 +269,6 @@ export function createGameRoutes(
       setTimeout(check, CHECK_INTERVAL_MS);
     };
 
-    res.on("close", () => { /* client disconnected — check() will bail on res.writableEnded */ });
     check();
   });
 
