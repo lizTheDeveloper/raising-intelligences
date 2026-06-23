@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { ChildPresence } from "./ChildPresence";
+import { track } from "../analytics";
 
 interface Props {
   age: number;
@@ -65,19 +66,21 @@ export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
       img.onload = () => {
         if (mounted) {
           setSrc(url);
+          track("portrait_loaded", { ageBucket: slug, attempts });
           fireOnLoad();
         }
       };
       img.onerror = () => {
         if (!mounted) return;
 
-        // On the first failure, trigger fallback so the user can start playing immediately.
         if (attempts === 0) {
           tryLoadFallback();
         }
 
         if (attempts < 12) {
           timer = setTimeout(() => tryLoad(attempts + 1), 2000);
+        } else {
+          track("portrait_failed", { ageBucket: slug });
         }
       };
       img.src = url;

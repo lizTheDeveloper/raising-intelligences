@@ -71,6 +71,11 @@ export function useGame() {
   const [reportCard, setReportCard] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  const setTrackedError = useCallback((msg: string | null, step?: string) => {
+    if (msg) track("error_occurred", { step: step ?? "unknown" });
+    setError(msg);
+  }, []);
+
   const createGame = useCallback(
     async (name: string, relationshipType = "solo parent") => {
       const res = await fetch(`${API}/game`, {
@@ -80,7 +85,7 @@ export function useGame() {
       });
       if (!res.ok) {
         const body = await res.text().catch(() => "");
-        setError(`Failed to create game: ${res.status}${body ? ` — ${body}` : ""}`);
+        setTrackedError(`Failed to create game: ${res.status}${body ? ` — ${body}` : ""}`, "create_game");
         return;
       }
       const data = await res.json();
@@ -102,16 +107,17 @@ export function useGame() {
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      setError(`Failed to load next event: ${res.status}${body ? ` — ${body}` : ""}`);
+      setTrackedError(`Failed to load next event: ${res.status}${body ? ` — ${body}` : ""}`, "next_event");
       return;
     }
     const data = await res.json();
     setCurrentEvent(data.event);
-    // Stay on event_intro so the player can read the description before chatting.
-    // The server has already transitioned to family_chat and is ready to accept messages.
     setPhase("event_intro");
     setMessages([]);
     setMessagesRemaining(12);
+    if (data.event) {
+      track("event_intro_viewed", { age: data.event.age, eventNumber: data.event.eventNumber });
+    }
   }, [gameId]);
 
   const beginChat = useCallback(() => {
@@ -119,8 +125,8 @@ export function useGame() {
     if (gameId) {
       fetch(`${API}/game/${gameId}/portraits/next`, { method: "POST" }).catch(() => {});
     }
-    track("conversation_started");
-  }, [gameId]);
+    track("conversation_started", { age: currentEvent?.age ?? 0 });
+  }, [gameId, currentEvent]);
 
   // Fix for #20: buffer partial SSE lines across network reads and guard
   // JSON.parse with try/catch so a mid-packet TCP split can never lock the UI.
@@ -145,7 +151,7 @@ export function useGame() {
 
         if (!res.ok || !res.body) {
           const body = await res.text().catch(() => "");
-          setError(`Message failed: ${res.status}${body ? ` — ${body}` : ""}`);
+          setTrackedError(`Message failed: ${res.status}${body ? ` — ${body}` : ""}`, "send_message");
           return;
         }
 
@@ -194,6 +200,12 @@ export function useGame() {
 
   const endChat = useCallback(async () => {
     if (!gameId) return;
+    const messagesSent = 12 - messagesRemaining;
+    track("conversation_ended", {
+      age: currentEvent?.age ?? 0,
+      messagesSent,
+      hitCap: messagesRemaining === 0,
+    });
     setPhase("processing");
     setStreamingDocText("");
     setError(null);
@@ -201,7 +213,7 @@ export function useGame() {
       const res = await fetch(`${API}/game/${gameId}/end-chat`, { method: "POST" });
       if (!res.ok || !res.body) {
         const body = await res.text().catch(() => "");
-        setError(`Failed to end chat: ${res.status}${body ? ` — ${body}` : ""}`);
+        setTrackedError(`Failed to end chat: ${res.status}${body ? ` — ${body}` : ""}`, "end_chat");
         setPhase("family_chat");
         setStreamingDocText("");
         return;
@@ -214,11 +226,11 @@ export function useGame() {
       setStreamingDocText("");
       setPhase(data.phase);
     } catch (err) {
-      setError(`Failed to end chat: ${err instanceof Error ? err.message : String(err)}`);
+      setTrackedError(`Failed to end chat: ${err instanceof Error ? err.message : String(err)}`, "end_chat");
       setPhase("family_chat");
       setStreamingDocText("");
     }
-  }, [gameId]);
+  }, [gameId, messagesRemaining, currentEvent]);
 
   const endDebrief = useCallback(async () => {
     if (!gameId) return;
@@ -239,7 +251,7 @@ export function useGame() {
       const res = await fetch(`${API}/game/${gameId}/epilogue`, { method: "POST" });
       if (!res.ok || !res.body) {
         const body = await res.text().catch(() => "");
-        setError(`Failed to generate epilogue: ${res.status}${body ? ` — ${body}` : ""}`);
+        setTrackedError(`Failed to generate epilogue: ${res.status}${body ? ` — ${body}` : ""}`, "epilogue");
         setPhase("debrief");
         setStreamingDocText("");
         return;
@@ -254,7 +266,7 @@ export function useGame() {
       setPhase(data.phase);
       track("epilogue_reached");
     } catch (err) {
-      setError(`Failed to generate epilogue: ${err instanceof Error ? err.message : String(err)}`);
+      setTrackedError(`Failed to generate epilogue: ${err instanceof Error ? err.message : String(err)}`, "epilogue");
       setPhase("debrief");
       setStreamingDocText("");
     }
@@ -273,7 +285,7 @@ export function useGame() {
       });
       if (!res.ok || !res.body) {
         const body = await res.text().catch(() => "");
-        setError(`Failed to generate report card: ${res.status}${body ? ` — ${body}` : ""}`);
+        setTrackedError(`Failed to generate report card: ${res.status}${body ? ` — ${body}` : ""}`, "report_card");
         setPhase("epilogue");
         setStreamingDocText("");
         return;
@@ -288,7 +300,7 @@ export function useGame() {
       setPhase(data.phase);
       track("game_completed");
     } catch (err) {
-      setError(`Failed to generate report card: ${err instanceof Error ? err.message : String(err)}`);
+      setTrackedError(`Failed to generate report card: ${err instanceof Error ? err.message : String(err)}`, "report_card");
       setPhase("epilogue");
       setStreamingDocText("");
     }
