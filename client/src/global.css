@@ -212,57 +212,62 @@ body::after {
   justify-content: center;
 }
 
+.guardian-intro-image {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 1.2s ease;
+  pointer-events: none;
+}
+
+.guardian-intro-image.guardian-intro-visible {
+  opacity: 1;
+}
+
+.guardian-intro-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  mask-image: radial-gradient(ellipse 85% 85% at 50% 45%, black 60%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 85% 85% at 50% 45%, black 60%, transparent 100%);
+  filter: saturate(0.85) brightness(0.9);
+}
+
 .guardian-portrait-wrap {
   width: 200px;
   height: 200px;
-  opacity: 0.3;
+  opacity: 0;
   transition: opacity 1.4s ease;
+  position: relative;
+  z-index: 1;
 }
 
 .guardian-portrait-wrap.guardian-portrait-revealed {
   opacity: 1;
 }
 
-.guardian-fragments {
-  position: absolute;
-  inset: 0;
+.guardian-loading-lines {
   display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding-bottom: 0;
-  pointer-events: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-height: 80px;
 }
 
-.guardian-fragment {
-  position: absolute;
-  bottom: -36px;
+.guardian-line {
   font-size: 13px;
   color: var(--fg-dim);
   font-style: italic;
   letter-spacing: 0.5px;
-  white-space: nowrap;
-  animation: fragmentAppear 2.6s ease both;
-}
-
-.guardian-revealed-text {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  animation: fadeIn 1s ease both;
-}
-
-.guardian-revealed-text p {
-  font-size: 14px;
-  color: var(--fg-dim);
-  letter-spacing: 2px;
   margin: 0;
-  line-height: 2;
+  line-height: 1.8;
+  opacity: 0;
+  animation: guardianLineIn 0.8s ease forwards;
 }
 
-.guardian-event-loading {
-  display: flex;
-  justify-content: center;
-  padding: 12px 0 4px;
+@keyframes guardianLineIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 0.75; transform: none; }
 }
 
 .guardian-thoughts {

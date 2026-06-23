@@ -1,16 +1,36 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { ChildPortrait } from "./ChildPortrait";
 import { track } from "../analytics";
 
-const FRAGMENTS = [
-  "they took their first steps.",
-  "they said your name.",
-  "they asked why things are the way they are.",
-  "they laughed at something small.",
-  "they fell asleep in the car on the way home.",
-  "they scraped their knee and looked to you first.",
-  "they reached for your hand.",
-  "they're already becoming someone.",
+const INTRO_VARIANTS = 6;
+
+interface IntroStage {
+  age: number;
+  lines: string[];
+}
+
+const INTRO_STAGES: IntroStage[] = [
+  {
+    age: 0,
+    lines: [
+      "born on a quiet night.",
+      "so small you were afraid to breathe.",
+    ],
+  },
+  {
+    age: 1,
+    lines: [
+      "they reached for everything.",
+      "they said something that almost sounded like your name.",
+    ],
+  },
+  {
+    age: 2,
+    lines: [
+      "they took their first steps.",
+      "they fell. they got back up.",
+    ],
+  },
 ];
 
 const CHILD_THOUGHTS = [
@@ -125,8 +145,6 @@ const CHILD_THOUGHTS = [
   "i love my shoes.",
   "i don't like this shirt.",
   "i want to wear the red one.",
-  "it's raining inside.",
-  "i made it rain.",
   "i'm the boss.",
   "you can't catch me.",
   "i'm hiding.",
@@ -158,42 +176,29 @@ const CHILD_THOUGHTS = [
   "look what i made.",
   "i'm proud of this.",
   "i want to go home now.",
-  "i'm tired but i won't sleep.",
   "my feet hurt.",
   "i want to be carried.",
   "pick me up.",
-  "i'm too big for that.",
-  "but i want to anyway.",
   "i changed my mind.",
   "i don't know.",
-  "yes and no.",
   "maybe tomorrow.",
   "i'll think about it.",
-  "i need to decide.",
   "this or that?",
   "i pick both.",
   "can we have pizza?",
   "i want pancakes.",
-  "i hate vegetables.",
   "i love ice cream.",
   "i want dessert first.",
-  "can i have water?",
   "not that straw.",
-  "the cup is dirty.",
   "i need a new spoon.",
   "this chair is mine.",
   "i saw a truck.",
-  "i saw a bus.",
   "i saw a train.",
   "they go fast.",
-  "i want to drive.",
   "beep beep.",
-  "i'm the conductor.",
   "all aboard.",
-  "next stop.",
   "i'm coming through.",
   "excuse me.",
-  "i'm right here.",
   "i'm still little.",
   "but i'm big too.",
   "sometimes.",
@@ -201,62 +206,41 @@ const CHILD_THOUGHTS = [
   "i'm brave today.",
   "i'm not scared.",
   "okay maybe a little.",
-  "but not of that.",
   "i can handle it.",
   "i'm strong enough.",
   "i'm smart enough.",
   "i know that word.",
-  "it means...",
   "i forgot what it means.",
   "i'll learn it again.",
   "i'm practicing.",
   "i'm getting better.",
   "watch me.",
-  "i'm showing you.",
   "this is important.",
   "listen to me.",
   "i have something to say.",
   "are you listening?",
-  "this is serious.",
-  "i'm not joking.",
   "i promise.",
   "cross my heart.",
-  "i meant it.",
-  "i was telling the truth.",
   "i can count to ten.",
   "one, two...",
   "i lost my place.",
   "start over?",
-  "i'm counting again.",
   "numbers are hard.",
   "letters too.",
   "but i'm learning.",
-  "my teacher said so.",
-  "she's nice.",
-  "she helps me.",
   "i like school.",
   "i don't like school.",
   "sometimes i like it.",
   "it depends.",
-  "on if it's raining.",
-  "i don't like rain.",
-  "i like sun.",
-  "i like snow too.",
-  "it's cold but fun.",
   "i made a snowball.",
-  "i made a snowman.",
   "where did he go?",
   "he melted.",
   "that's okay.",
-  "he wanted to go anyway.",
   "everything goes somewhere.",
   "i know that now.",
   "i'm older.",
   "i turned three.",
   "that's a big number.",
-  "three is my favorite.",
-  "not two anymore.",
-  "two was too small.",
   "i'm bigger now.",
   "i'm learning how to use the toilet.",
   "sometimes i forget.",
@@ -276,91 +260,156 @@ interface Props {
   onReady: () => void;
 }
 
+function pickVariant(): number {
+  return Math.floor(Math.random() * INTRO_VARIANTS);
+}
+
 export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props) {
-  const [fragmentIdx, setFragmentIdx] = useState(0);
-  const [thoughtIdx, setThoughtIdx] = useState(() => Math.floor(Math.random() * CHILD_THOUGHTS.length));
+  const [visibleLines, setVisibleLines] = useState<string[]>([]);
+  const [currentStage, setCurrentStage] = useState(-1);
+  const [introComplete, setIntroComplete] = useState(false);
   const [portraitReady, setPortraitReady] = useState(false);
+  const [showFinalText, setShowFinalText] = useState(false);
+  const [thoughtIdx, setThoughtIdx] = useState(() =>
+    Math.floor(Math.random() * CHILD_THOUGHTS.length)
+  );
   const [showMessage, setShowMessage] = useState(false);
 
-  useEffect(() => {
-    if (portraitReady) return;
-    const id = setInterval(() => {
-      setFragmentIdx((i) => (i + 1) % FRAGMENTS.length);
-    }, 2600);
-    return () => clearInterval(id);
-  }, [portraitReady]);
+  const variant = useMemo(pickVariant, []);
+  const base = import.meta.env.BASE_URL;
 
   useEffect(() => {
-    if (eventReady) return;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    let lineIndex = 0;
+    let stageIndex = 0;
+
+    const showNextLine = () => {
+      if (stageIndex >= INTRO_STAGES.length) {
+        setIntroComplete(true);
+        return;
+      }
+
+      const stage = INTRO_STAGES[stageIndex];
+
+      if (lineIndex === 0) {
+        setCurrentStage(stageIndex);
+      }
+
+      setVisibleLines((prev) => [...prev, stage.lines[lineIndex]]);
+      lineIndex++;
+
+      if (lineIndex >= stage.lines.length) {
+        stageIndex++;
+        lineIndex = 0;
+        timers.push(setTimeout(showNextLine, 2400));
+      } else {
+        timers.push(setTimeout(showNextLine, 1600));
+      }
+    };
+
+    timers.push(setTimeout(showNextLine, 1200));
+
+    return () => timers.forEach(clearTimeout);
+  }, []);
+
+  useEffect(() => {
+    if (!introComplete || !portraitReady) return;
+
+    const t = setTimeout(() => {
+      setVisibleLines((prev) => [...prev, "three years old.", "they need you."]);
+      setShowFinalText(true);
+    }, 800);
+    return () => clearTimeout(t);
+  }, [introComplete, portraitReady]);
+
+  useEffect(() => {
+    if (!showFinalText || eventReady) return;
     const id = setInterval(() => {
-      setThoughtIdx((prevIdx) => {
-        // Pick a different thought to avoid showing the same one twice in a row
-        const newIdx = Math.floor(Math.random() * CHILD_THOUGHTS.length);
-        if (newIdx === prevIdx && CHILD_THOUGHTS.length > 1) {
-          return (newIdx + 1) % CHILD_THOUGHTS.length;
+      setThoughtIdx((prev) => {
+        const next = Math.floor(Math.random() * CHILD_THOUGHTS.length);
+        if (next === prev && CHILD_THOUGHTS.length > 1) {
+          return (next + 1) % CHILD_THOUGHTS.length;
         }
-        return newIdx;
+        return next;
       });
     }, 7000);
     return () => clearInterval(id);
-  }, [eventReady]);
+  }, [showFinalText, eventReady]);
 
   const handleNotReady = () => {
     setShowMessage(true);
-    // Brief delay to show the message before transitioning
     setTimeout(() => {
       track("guardian_not_ready");
       onReady();
     }, 1500);
   };
 
-  const canBegin = eventReady && !showMessage;
+  const canBegin = eventReady && showFinalText && !showMessage;
 
   return (
     <div className="guardian-screen">
       <h2 className="guardian-name">{childName}</h2>
 
       <div className="guardian-figure">
-        {/* Portrait fades in once ready; fragments show until then */}
-        <div className={`guardian-portrait-wrap${portraitReady ? " guardian-portrait-revealed" : ""}`}>
-          <ChildPortrait age={3} size={200} gameId={gameId} onLoad={() => setPortraitReady(true)} />
-        </div>
-
-        {!portraitReady && (
-          <div className="guardian-fragments">
-            <span key={fragmentIdx} className="guardian-fragment">
-              {FRAGMENTS[fragmentIdx]}
-            </span>
+        {INTRO_STAGES.map((stage, i) => (
+          <div
+            key={stage.age}
+            className={`guardian-intro-image${
+              !introComplete && currentStage === i
+                ? " guardian-intro-visible"
+                : ""
+            }`}
+          >
+            <img
+              src={`${base}portraits/intro/age-${stage.age}-${variant}.jpg`}
+              alt=""
+              aria-hidden="true"
+            />
           </div>
-        )}
+        ))}
+
+        <div
+          className={`guardian-portrait-wrap${
+            introComplete && portraitReady ? " guardian-portrait-revealed" : ""
+          }`}
+        >
+          <ChildPortrait
+            age={3}
+            size={200}
+            gameId={gameId}
+            onLoad={() => setPortraitReady(true)}
+          />
+        </div>
       </div>
 
-      {portraitReady && !eventReady && (
-        <>
-          <div className="guardian-revealed-text">
-            <p>three years old.</p>
-            <p>they need you.</p>
-          </div>
-          <div className="guardian-thoughts">
-            <span key={thoughtIdx} className="guardian-thought">
-              {CHILD_THOUGHTS[thoughtIdx]}
-            </span>
-          </div>
-        </>
+      <div className="guardian-loading-lines">
+        {visibleLines.map((line, i) => (
+          <p key={i} className="guardian-line">
+            {line}
+          </p>
+        ))}
+      </div>
+
+      {showFinalText && !eventReady && (
+        <div className="guardian-thoughts">
+          <span key={thoughtIdx} className="guardian-thought">
+            {CHILD_THOUGHTS[thoughtIdx]}
+          </span>
+        </div>
       )}
 
-      {eventReady && (
+      {canBegin && (
         <div className="guardian-buttons">
           <button
             className="btn"
-            onClick={() => { track("guardian_accepted"); onReady(); }}
+            onClick={() => {
+              track("guardian_accepted");
+              onReady();
+            }}
           >
             I'm ready
           </button>
-          <button
-            className="btn dim"
-            onClick={handleNotReady}
-          >
+          <button className="btn dim" onClick={handleNotReady}>
             I'm not ready
           </button>
         </div>
