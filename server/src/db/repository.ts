@@ -13,6 +13,12 @@ export interface IdentitySnapshot {
   document: string;
 }
 
+export interface PlayerRecord {
+  slot: string;
+  displayName: string;
+  token: string;
+}
+
 /**
  * Write-through persistence for games. The in-memory `GameState` remains
  * authoritative during play; the repository mirrors each mutation to durable
@@ -31,6 +37,8 @@ export interface GameRepository {
   ): Promise<void>;
   /** Reconstruct an in-memory GameState from the latest checkpoint, or null. */
   loadGame(gameId: string): Promise<GameState | null>;
+  savePlayer(gameId: string, slot: string, displayName: string, token: string): Promise<void>;
+  loadPlayers(gameId: string): Promise<PlayerRecord[]>;
 }
 
 const DEFAULT_TOTAL_EVENTS = 10;
@@ -58,10 +66,6 @@ function reconstructState(input: {
     input.events.find((e) => e.eventNumber === input.currentEventNumber) ??
     null;
 
-  // Count parent messages belonging ONLY to the current event so reconnecting
-  // players don't have all prior events' messages counted against their cap.
-  // Messages created since migration 002 carry an eventNumber tag; older rows
-  // default to 0 and won't match any real currentEventNumber > 0.
   const inChat =
     input.phase === "family_chat" ||
     input.phase === "sidebar" ||
@@ -196,6 +200,33 @@ export class PgGameRepository implements GameRepository {
     );
   }
 
+  async savePlayer(gameId: string, slot: string, displayName: string, token: string): Promise<void> {
+    await this.db.query(
+      `INSERT INTO players (game_id, slot, display_name, token)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (game_id, slot) DO UPDATE SET
+         display_name = EXCLUDED.display_name,
+         token        = EXCLUDED.token`,
+      [gameId, slot, displayName, token]
+    );
+  }
+
+  async loadPlayers(gameId: string): Promise<PlayerRecord[]> {
+    const res = await this.db.query<{
+      slot: string;
+      display_name: string;
+      token: string;
+    }>(
+      `SELECT slot, display_name, token FROM players WHERE game_id = $1`,
+      [gameId]
+    );
+    return res.rows.map((r) => ({
+      slot: r.slot,
+      displayName: r.display_name,
+      token: r.token,
+    }));
+  }
+
   async loadGame(gameId: string): Promise<GameState | null> {
     const gameRes = await this.db.query<{
       id: string;
@@ -299,9 +330,7 @@ export class PgGameRepository implements GameRepository {
 
 /**
  * In-memory implementation of GameRepository for tests and for running the
- * game without a Postgres connection. Mirrors PgGameRepository semantics:
- * upsert-by-id game checkpoints, append messages, upsert events/snapshots by
- * event number, single endgame per game.
+ * game without a Postgres connection.
  */
 export class InMemoryGameRepository implements GameRepository {
   private games = new Map<
@@ -323,6 +352,7 @@ export class InMemoryGameRepository implements GameRepository {
   private events = new Map<string, Map<number, GameEvent>>();
   private snapshots = new Map<string, Map<number, IdentitySnapshot>>();
   private endgames = new Map<string, { epilogue: string; reportCard: string }>();
+  private playerRecords = new Map<string, Map<string, PlayerRecord>>();
 
   async saveGame(state: GameState): Promise<void> {
     this.games.set(state.id, {
@@ -367,6 +397,16 @@ export class InMemoryGameRepository implements GameRepository {
     reportCard: string
   ): Promise<void> {
     this.endgames.set(gameId, { epilogue, reportCard });
+  }
+
+  async savePlayer(gameId: string, slot: string, displayName: string, token: string): Promise<void> {
+    const map = this.playerRecords.get(gameId) ?? new Map<string, PlayerRecord>();
+    map.set(slot, { slot, displayName, token });
+    this.playerRecords.set(gameId, map);
+  }
+
+  async loadPlayers(gameId: string): Promise<PlayerRecord[]> {
+    return [...(this.playerRecords.get(gameId)?.values() ?? [])];
   }
 
   async loadGame(gameId: string): Promise<GameState | null> {

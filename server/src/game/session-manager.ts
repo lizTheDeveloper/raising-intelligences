@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import type { Sender } from "../types.js";
 
 /**
@@ -15,6 +16,8 @@ export interface Player {
   connectionId: string;
   displayName: string;
   ready: boolean;
+  connected: boolean;
+  token: string;
 }
 
 export interface Session {
@@ -41,6 +44,10 @@ export function getPlayerBySlot(session: Session, slot: PlayerSlot): Player | un
   return session.players.find((p) => p.slot === slot);
 }
 
+export function getPlayerByToken(session: Session, token: string): Player | undefined {
+  return session.players.find((p) => p.token === token);
+}
+
 /**
  * Add a connection to the first free parent slot. If the connection is already
  * present, it is returned unchanged (idempotent reconnects). Throws when the
@@ -56,19 +63,68 @@ export function addPlayer(
   if (existing) return { session, player: existing };
 
   const takenSlots = new Set(session.players.map((p) => p.slot));
-  const slot = SLOTS.find((s) => !takenSlots.has(s));
+  let slot = SLOTS.find((s) => !takenSlots.has(s));
+
   if (!slot) {
-    throw new Error("Session is full (two players maximum)");
+    // Reclaim a disconnected slot (re-invite scenario)
+    const disconnected = session.players.find((p) => !p.connected);
+    if (disconnected) {
+      slot = disconnected.slot;
+      session = {
+        ...session,
+        players: session.players.filter((p) => p !== disconnected),
+      };
+    } else {
+      throw new Error("Session is full (two players maximum)");
+    }
   }
 
+  const token = randomUUID();
   const player: Player = {
     slot,
     connectionId,
     displayName: displayName?.trim() || defaultName(slot),
     ready: false,
+    connected: true,
+    token,
   };
   const next: Session = { ...session, players: [...session.players, player] };
   return { session: next, player };
+}
+
+/**
+ * Reconnect a returning player: update their connectionId and mark connected.
+ */
+export function reconnectPlayer(
+  session: Session,
+  token: string,
+  newConnectionId: string
+): { session: Session; player: Player } {
+  let reconnected: Player | undefined;
+  const next: Session = {
+    ...session,
+    players: session.players.map((p) => {
+      if (p.token === token) {
+        reconnected = { ...p, connectionId: newConnectionId, connected: true, ready: false };
+        return reconnected;
+      }
+      return p;
+    }),
+  };
+  if (!reconnected) throw new Error("Player not found for token");
+  return { session: next, player: reconnected };
+}
+
+/**
+ * Mark a player as disconnected without removing their slot reservation.
+ */
+export function disconnectPlayer(session: Session, connectionId: string): Session {
+  return {
+    ...session,
+    players: session.players.map((p) =>
+      p.connectionId === connectionId ? { ...p, connected: false, ready: false } : p
+    ),
+  };
 }
 
 export function removePlayer(session: Session, connectionId: string): Session {
@@ -105,11 +161,11 @@ export function setDisplayName(
   };
 }
 
-/** Both slots filled and both players ready — the start/proceed gate. */
+/** Both slots filled, both connected, and both ready. */
 export function allReady(session: Session): boolean {
   return (
     session.players.length === SLOTS.length &&
-    session.players.every((p) => p.ready)
+    session.players.every((p) => p.ready && p.connected)
   );
 }
 

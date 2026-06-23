@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { SoloGame } from "./components/SoloGame";
 import { MultiplayerGame } from "./components/MultiplayerGame";
+import { clearResume } from "./hooks/useMultiplayer";
 import { track } from "./analytics";
 
 const TAGLINES = [
@@ -154,6 +155,11 @@ export function App() {
   useEffect(() => {
     document.body.className = theme;
   }, [theme]);
+
+  // Clear resume data on the main page so players aren't trapped in a stale game
+  useEffect(() => {
+    if (mode === "choose") clearResume();
+  }, [mode]);
 
   if (mode === "solo") return <SoloGame />;
   if (mode === "multiplayer") return <MultiplayerGame joinGameId={joinGameId} />;

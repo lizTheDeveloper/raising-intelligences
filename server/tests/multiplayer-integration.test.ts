@@ -83,25 +83,29 @@ describe("Multiplayer integration", () => {
     expect(p1.lastState?.currentEvent ?? null).toBeNull();
   });
 
-  it("frees the slot on disconnect and lets a new player reclaim it", async () => {
+  it("marks player disconnected and allows token-based reconnect", async () => {
     const { c: p1, gameId } = await host();
     const p2 = await client();
-    const j2 = p2.once(E.JOINED);
+    const j2 = p2.once<{ gameId: string; slot: string; playerToken: string }>(E.JOINED);
     p2.emit(E.JOIN_GAME, { gameId });
-    await j2;
+    const { playerToken } = await j2;
 
-    // Parent 1 sees the lobby shrink when parent 2 drops.
-    const shrunk = p1.waitFor<LobbyState>(E.LOBBY, (l) => l.players.length === 1);
+    // Parent 1 sees parent 2 become disconnected (not removed).
+    const disconnected = p1.waitFor<LobbyState>(
+      E.LOBBY,
+      (l) => l.players.length === 2 && !l.players.find((p) => p.slot === "parent2")!.connected
+    );
     p2.close();
-    expect((await shrunk).players.length).toBe(1);
+    const lobby = await disconnected;
+    expect(lobby.players.length).toBe(2);
+    expect(lobby.players.find((p) => p.slot === "parent2")!.connected).toBe(false);
 
-    // A new connection reclaims the freed parent2 seat.
+    // A new connection reclaims the same slot using the token.
     const p2b = await client();
     const joined = p2b.once<{ slot: string }>(E.JOINED);
     const state = p2b.waitFor<ViewerState>(E.STATE, (s) => s.id === gameId);
-    p2b.emit(E.JOIN_GAME, { gameId });
+    p2b.emit(E.JOIN_GAME, { gameId, playerToken });
     expect((await joined).slot).toBe("parent2");
-    // And it receives the current game state on join.
     expect((await state).id).toBe(gameId);
   });
 

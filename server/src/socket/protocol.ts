@@ -15,6 +15,7 @@ export interface CreateGamePayload {
 export interface JoinGamePayload {
   gameId: string;
   displayName?: string;
+  playerToken?: string;
 }
 export interface ReadyPayload {
   ready: boolean;

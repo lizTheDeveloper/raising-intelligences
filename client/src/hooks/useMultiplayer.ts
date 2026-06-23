@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 
-// Mirror of server/src/socket/protocol.ts (kept in sync by convention).
 const E = {
   CREATE_GAME: "create_game",
   JOIN_GAME: "join_game",
@@ -24,6 +23,33 @@ const E = {
   REPORT_CARD_READY: "report_card_ready",
   ERROR: "error",
 } as const;
+
+const RESUME_KEY = "ri_resume";
+
+interface ResumeData {
+  gameId: string;
+  playerToken: string;
+}
+
+function loadResume(): ResumeData | null {
+  try {
+    const raw = localStorage.getItem(RESUME_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (data?.gameId && data?.playerToken) return data as ResumeData;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function saveResume(gameId: string, playerToken: string): void {
+  localStorage.setItem(RESUME_KEY, JSON.stringify({ gameId, playerToken }));
+}
+
+export function clearResume(): void {
+  localStorage.removeItem(RESUME_KEY);
+}
 
 export type Slot = "parent1" | "parent2";
 
@@ -72,20 +98,37 @@ export function useMultiplayer() {
   const [reportCard, setReportCard] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [inLobby, setInLobby] = useState(false);
+  const playerTokenRef = useRef<string | null>(null);
 
   const ensureSocket = useCallback((): Socket => {
     if (socketRef.current) return socketRef.current;
-    // Socket.io path: production uses /raising-intelligences/socket.io which
-    // is matched by Traefik's ri-socket-io router (no strip). Dev uses /socket.io.
     const socketPath = import.meta.env.PROD ? "/raising-intelligences/socket.io" : "/socket.io";
     const socket = io({ autoConnect: true, path: socketPath });
-    socket.on("connect", () => setConnected(true));
+
+    socket.on("connect", () => {
+      setConnected(true);
+      // Auto-rejoin on reconnect if we have resume data
+      const resume = loadResume();
+      if (resume) {
+        socket.emit(E.JOIN_GAME, {
+          gameId: resume.gameId,
+          playerToken: resume.playerToken,
+        });
+      }
+    });
+
     socket.on("disconnect", () => setConnected(false));
-    socket.on(E.JOINED, (d: { gameId: string; slot: Slot }) => {
+
+    socket.on(E.JOINED, (d: { gameId: string; slot: Slot; playerToken?: string }) => {
       setGameId(d.gameId);
       setSlot(d.slot);
       setInLobby(true);
+      if (d.playerToken) {
+        playerTokenRef.current = d.playerToken;
+        saveResume(d.gameId, d.playerToken);
+      }
     });
+
     socket.on(E.LOBBY, (d: { players: PublicPlayer[] }) => setPlayers(d.players));
     socket.on(E.STATE, (s: ViewerState) => {
       setState(s);
@@ -169,6 +212,18 @@ export function useMultiplayer() {
     socketRef.current?.emit(E.REPORT_CARD, { epilogue });
   }, [epilogue]);
 
+  const leaveGame = useCallback(() => {
+    clearResume();
+    setGameId(null);
+    setSlot(null);
+    setPlayers([]);
+    setState(null);
+    setInLobby(false);
+    setError(null);
+    socketRef.current?.close();
+    socketRef.current = null;
+  }, []);
+
   return {
     connected,
     gameId,
@@ -192,5 +247,7 @@ export function useMultiplayer() {
     startEpilogue,
     startAdultChat,
     generateReportCard,
+    leaveGame,
+    ensureSocket,
   };
 }

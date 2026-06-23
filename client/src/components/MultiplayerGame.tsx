@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useMultiplayer } from "../hooks/useMultiplayer";
+import { useMultiplayer, clearResume } from "../hooks/useMultiplayer";
 import { Lobby } from "./Lobby";
 import { MessageList } from "./MessageList";
 import { MessageInput } from "./MessageInput";
@@ -26,6 +26,18 @@ export function MultiplayerGame({ joinGameId }: Props) {
   const [childInput, setChildInput] = useState("");
   const [relationship, setRelationship] = useState(RELATIONSHIP_OPTIONS[0]);
   const [gateReady, setGateReady] = useState(false);
+  const autoResumeAttempted = useRef(false);
+
+  // On mount, if we have resume data in localStorage, connect the socket
+  // to trigger auto-rejoin (the connect handler in useMultiplayer does the rest).
+  useEffect(() => {
+    if (autoResumeAttempted.current) return;
+    autoResumeAttempted.current = true;
+    const raw = localStorage.getItem("ri_resume");
+    if (raw) {
+      mp.ensureSocket();
+    }
+  }, [mp]);
 
   const state = mp.state;
   const mySlot = mp.slot;
@@ -33,8 +45,6 @@ export function MultiplayerGame({ joinGameId }: Props) {
   const inMySidebar = sidebarActive !== null && sidebarActive === mySlot;
   const inOtherSidebar = sidebarActive !== null && sidebarActive !== mySlot;
 
-  // Reset local ready toggle when the server loads a new event preview so the
-  // player must explicitly confirm they have read the description.
   const prevEventNumberRef = useRef(state?.currentEventNumber ?? 0);
   useEffect(() => {
     const cur = state?.currentEventNumber ?? 0;
@@ -124,15 +134,15 @@ export function MultiplayerGame({ joinGameId }: Props) {
           slot={mySlot}
           players={mp.players}
           childName={state?.childName ?? childInput}
+          error={mp.error}
           onReady={mp.ready}
+          onLeave={mp.leaveGame}
         />
       </div>
     );
   }
 
   // ---- Between chapters: two-step ready gate ----
-  // Step 1 (currentEvent null): both ready → server generates and previews the event
-  // Step 2 (currentEvent set): both ready → server starts family chat
   if (state.phase === "event_intro") {
     return (
       <div className="app fade-in">
@@ -221,7 +231,7 @@ export function MultiplayerGame({ joinGameId }: Props) {
     );
   }
 
-  // ---- Debrief: parents-only beat, then ready up to continue ----
+  // ---- Debrief ----
   if (state.phase === "debrief") {
     return (
       <div className="app fade-in">

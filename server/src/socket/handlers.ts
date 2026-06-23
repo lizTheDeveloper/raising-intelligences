@@ -7,13 +7,16 @@ import { createGame, PARENT_MESSAGE_CAP } from "../game/state-machine.js";
 import { generateFirstPortrait, generateNextPortrait } from "../portrait-gen.js";
 import {
   type Session,
+  type PlayerSlot,
   createSession,
   addPlayer,
-  removePlayer,
   setReady,
   allReady,
   resetReady,
   getPlayer,
+  getPlayerByToken,
+  reconnectPlayer,
+  disconnectPlayer,
 } from "../game/session-manager.js";
 import {
   SOCKET_EVENTS as E,
@@ -33,8 +36,6 @@ export interface SocketDeps {
   conversationEngine: ConversationEngine;
   endgameEngine: EndgameEngine;
   repo: GameRepository;
-  /** Shared lock map — when provided, socket operations are serialized with
-   * HTTP route operations on the same game, preventing cross-module races. */
   gameLocks?: Map<string, Promise<void>>;
 }
 
@@ -43,8 +44,6 @@ interface SocketData {
   slot?: Sender;
 }
 
-/** Build the per-viewer projection of game state: identity doc removed,
- * messages filtered to what this slot is allowed to see. */
 function viewerState(state: GameState, slot: Sender): ViewerState {
   const messages = state.messages.filter((m) => m.visibleTo.includes(slot));
   return {
@@ -63,16 +62,14 @@ function viewerState(state: GameState, slot: Sender): ViewerState {
   };
 }
 
-function lobbyState(io: Server, session: Session): LobbyState {
-  const room = io.sockets.adapter.rooms.get(session.gameId);
-  const connectedIds = new Set<string>(room ? [...room] : []);
+function lobbyState(session: Session): LobbyState {
   return {
     gameId: session.gameId,
     players: session.players.map((p) => ({
       slot: p.slot,
       displayName: p.displayName,
       ready: p.ready,
-      connected: connectedIds.has(p.connectionId),
+      connected: p.connected,
     })),
   };
 }
@@ -81,38 +78,30 @@ export function registerSocketHandlers(deps: SocketDeps): void {
   const { io, games, sessions, conversationEngine, endgameEngine, repo,
           gameLocks = new Map<string, Promise<void>>() } = deps;
 
-  // Per-game operation queue — serializes PARENT_MESSAGE and END_CHAT so two
-  // concurrent socket events can't read the same game snapshot, run their LLM
-  // calls in parallel, and then overwrite each other on write-back.
-  // Uses the shared map (if provided) so HTTP and socket operations on the
-  // same game are serialized across module boundaries.
   function withGameLock<T>(gameId: string, fn: () => Promise<T>): Promise<T> {
     const prev = gameLocks.get(gameId) ?? Promise.resolve();
-    // Chain fn after the previous operation; swallow prev's error so the queue
-    // never stalls permanently because one handler threw.
     const next = prev.catch(() => {}).then(fn);
-    // Store a settling promise (never rejects) so the next enqueuer can safely await it.
-    // Delete the entry once settled so the map doesn't grow unbounded.
     const settled = next.then(() => {}, () => {});
     settled.then(() => { if (gameLocks.get(gameId) === settled) gameLocks.delete(gameId); });
     gameLocks.set(gameId, settled);
     return next;
   }
 
-  /** Emit a tailored ViewerState to every connected socket in the room. */
   function broadcastState(gameId: string): void {
     const state = games.get(gameId);
     const session = sessions.get(gameId);
     if (!state || !session) return;
     for (const player of session.players) {
-      io.to(player.connectionId).emit(E.STATE, viewerState(state, player.slot));
+      if (player.connected) {
+        io.to(player.connectionId).emit(E.STATE, viewerState(state, player.slot));
+      }
     }
   }
 
   function broadcastLobby(gameId: string): void {
     const session = sessions.get(gameId);
     if (!session) return;
-    io.to(gameId).emit(E.LOBBY, lobbyState(io, session));
+    io.to(gameId).emit(E.LOBBY, lobbyState(session));
   }
 
   io.on("connection", (socket: Socket) => {
@@ -126,6 +115,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       return data.gameId ? games.get(data.gameId) : undefined;
     }
 
+    // ---- CREATE_GAME ----
     socket.on(E.CREATE_GAME, async (payload: CreateGamePayload) => {
       if (!payload?.childName) return fail("childName is required");
       const state = createGame(payload.childName, payload.relationshipType);
@@ -141,15 +131,18 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       data.slot = added.player.slot;
       await socket.join(state.id);
 
-      socket.emit(E.JOINED, { gameId: state.id, slot: added.player.slot });
+      await repo.savePlayer(state.id, added.player.slot, added.player.displayName, added.player.token);
+      socket.emit(E.JOINED, { gameId: state.id, slot: added.player.slot, playerToken: added.player.token });
       broadcastLobby(state.id);
       generateFirstPortrait(state.id).catch(() => {});
     });
 
+    // ---- JOIN_GAME (new join OR reconnect) ----
     socket.on(E.JOIN_GAME, async (payload: JoinGamePayload) => {
       const gameId = payload?.gameId;
       if (!gameId) return fail("gameId is required");
 
+      // Load game state if not in memory
       let state = games.get(gameId);
       if (!state) {
         const loaded = await repo.loadGame(gameId);
@@ -160,7 +153,47 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       }
       if (!state) return fail("Game not found");
 
+      // Restore session from DB if not in memory
       let session = sessions.get(gameId) ?? createSession(gameId);
+      if (session.players.length === 0) {
+        const dbPlayers = await repo.loadPlayers(gameId);
+        for (const rec of dbPlayers) {
+          session = {
+            ...session,
+            players: [
+              ...session.players,
+              {
+                slot: rec.slot as PlayerSlot,
+                connectionId: "",
+                displayName: rec.displayName,
+                ready: false,
+                connected: false,
+                token: rec.token,
+              },
+            ],
+          };
+        }
+        sessions.set(gameId, session);
+      }
+
+      // Token-based reconnect: returning player reclaims their slot
+      if (payload.playerToken) {
+        const existing = getPlayerByToken(session, payload.playerToken);
+        if (existing) {
+          const reconnected = reconnectPlayer(session, payload.playerToken, socket.id);
+          session = reconnected.session;
+          sessions.set(gameId, session);
+          data.gameId = gameId;
+          data.slot = reconnected.player.slot;
+          await socket.join(gameId);
+          socket.emit(E.JOINED, { gameId, slot: reconnected.player.slot, playerToken: reconnected.player.token });
+          broadcastLobby(gameId);
+          socket.emit(E.STATE, viewerState(state, reconnected.player.slot));
+          return;
+        }
+      }
+
+      // New player: assign to first free slot
       let added;
       try {
         added = addPlayer(session, socket.id, payload.displayName);
@@ -174,11 +207,13 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       data.slot = added.player.slot;
       await socket.join(gameId);
 
-      socket.emit(E.JOINED, { gameId, slot: added.player.slot });
+      await repo.savePlayer(gameId, added.player.slot, added.player.displayName, added.player.token);
+      socket.emit(E.JOINED, { gameId, slot: added.player.slot, playerToken: added.player.token });
       broadcastLobby(gameId);
       socket.emit(E.STATE, viewerState(state, added.player.slot));
     });
 
+    // ---- READY ----
     socket.on(E.READY, async (payload: ReadyPayload) => {
       const gameId = data.gameId;
       const session = gameId ? sessions.get(gameId) : undefined;
@@ -193,7 +228,6 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
       try {
         if (state.phase === "event_intro" && state.currentEvent === null) {
-          // Step 1: generate the event and preview it; stay in event_intro
           const next = await conversationEngine.loadEvent(state);
           games.set(next.id, next);
           if (next.currentEvent) await repo.saveEvent(next.id, next.currentEvent);
@@ -202,7 +236,6 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           broadcastState(gameId);
           broadcastLobby(gameId);
         } else if (state.phase === "event_intro" && state.currentEvent !== null) {
-          // Step 2: both players have read the preview; start the chat
           const next = conversationEngine.beginChat(state);
           games.set(next.id, next);
           await repo.saveGame(next);
@@ -219,10 +252,13 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           broadcastLobby(gameId);
         }
       } catch (err) {
+        sessions.set(gameId, resetReady(updated));
+        broadcastLobby(gameId);
         fail(String(err));
       }
     });
 
+    // ---- PARENT_MESSAGE ----
     socket.on(E.PARENT_MESSAGE, (payload: ParentMessagePayload) => {
       const gameId = data.gameId;
       const slot = data.slot;
@@ -231,20 +267,15 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       if (!payload?.content?.trim()) return;
 
       withGameLock(gameId, async () => {
-        // Re-read state inside the lock — a prior handler may have written a
-        // newer snapshot while this one was waiting.
         const state = currentState();
         const session = sessions.get(gameId);
         if (!state || !session) { fail("Not in a game"); return; }
 
-        // During a sidebar only the initiating parent may speak.
         if (state.phase === "sidebar" && state.sidebarActive !== slot) {
           fail("The other parent is in a private conversation");
           return;
         }
 
-        // Stream kid chunks: to the room in shared chat, or only to the sidebar
-        // participant during a private conversation.
         const inSidebar = state.phase === "sidebar";
         const emitChunk = (chunk: string) => {
           if (inSidebar) {
@@ -372,20 +403,16 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       }
     });
 
+    // ---- DISCONNECT: mark disconnected, don't remove ----
     socket.on("disconnect", () => {
       const gameId = data.gameId;
       if (!gameId) return;
       const session = sessions.get(gameId);
       if (!session) return;
-      // Keep the slot reservation only if no one else is around; otherwise free
-      // it so the seat can be reclaimed. We free on disconnect and let reconnect
-      // re-add — the game state itself persists in the games Map / repo.
       if (getPlayer(session, socket.id)) {
-        const updated = removePlayer(session, socket.id);
-        if (updated.players.length === 0) {
-          sessions.delete(gameId);
-        } else {
-          sessions.set(gameId, updated);
+        const updated = disconnectPlayer(session, socket.id);
+        sessions.set(gameId, updated);
+        if (updated.players.some((p) => p.connected)) {
           broadcastLobby(gameId);
         }
       }
