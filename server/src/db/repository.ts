@@ -53,6 +53,7 @@ function reconstructState(input: {
   phase: GamePhase;
   childName: string;
   relationshipType: string;
+  temperament?: string;
   currentEventNumber: number;
   totalEvents: number;
   identityDocument: string;
@@ -84,6 +85,7 @@ function reconstructState(input: {
     phase: input.phase,
     childName: input.childName,
     relationshipType: input.relationshipType,
+    temperament: input.temperament ?? "",
     currentEvent,
     currentEventNumber: input.currentEventNumber,
     totalEvents: input.totalEvents,
@@ -339,6 +341,7 @@ export class InMemoryGameRepository implements GameRepository {
       id: string;
       childName: string;
       relationshipType: string;
+      temperament: string;
       phase: GamePhase;
       currentEventNumber: number;
       totalEvents: number;
@@ -359,6 +362,7 @@ export class InMemoryGameRepository implements GameRepository {
       id: state.id,
       childName: state.childName,
       relationshipType: state.relationshipType,
+      temperament: state.temperament,
       phase: state.phase,
       currentEventNumber: state.currentEventNumber,
       totalEvents: state.totalEvents,
@@ -428,6 +432,7 @@ export class InMemoryGameRepository implements GameRepository {
       phase: game.phase,
       childName: game.childName,
       relationshipType: game.relationshipType,
+      temperament: game.temperament,
       currentEventNumber: game.currentEventNumber,
       totalEvents: game.totalEvents,
       identityDocument: game.identityDocument,
