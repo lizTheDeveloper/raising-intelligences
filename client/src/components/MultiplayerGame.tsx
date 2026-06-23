@@ -171,6 +171,10 @@ export function MultiplayerGame({ joinGameId }: Props) {
           )}
         </p>
 
+        {state.currentEvent?.description && state.phase !== "adult_chat" && (
+          <p className="event-context">{state.currentEvent.description}</p>
+        )}
+
         {inMySidebar && <p className="sidebar-banner">private conversation</p>}
         {inOtherSidebar && (
           <p className="sidebar-banner dim">the other parent is talking privately…</p>
