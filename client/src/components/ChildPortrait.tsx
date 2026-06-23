@@ -56,9 +56,12 @@ export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
         };
         img.src = url;
       })
-      .catch((err: unknown) => {
-        if (err instanceof Error && err.name === "AbortError") return;
-        if (mounted) track("portrait_failed", { ageBucket: slug });
+      .catch((e: unknown) => {
+        if (e instanceof Error && e.name === "AbortError") return;
+        if (mounted) {
+          track("portrait_failed", { ageBucket: slug });
+          onLoad?.();
+        }
       });
 
     return () => {
