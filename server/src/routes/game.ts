@@ -23,9 +23,9 @@ export function createGameRoutes(
   // calls in parallel, and then overwrite each other on write-back.
   const gameLocks = new Map<string, Promise<void>>();
 
-  // Prefetched first-event promises — kicked off during POST /game so the
-  // GuardianScreen doesn't have to wait for the World Manager LLM call.
-  const prefetchedEvents = new Map<string, Promise<GameState>>();
+  // Prefetched event promises — kicked off at game creation (event 1) and after
+  // every end-chat (events 2+), so next-event returns instantly instead of waiting.
+  const prefetchedEvents = new Map<string, Promise<import("../types.js").GameEvent>>();
 
   function withGameLock<T>(gameId: string, fn: () => Promise<T>): Promise<T> {
     const prev = gameLocks.get(gameId) ?? Promise.resolve();
@@ -64,7 +64,7 @@ export function createGameRoutes(
     // Kick off portrait and first-event generation in parallel so the
     // GuardianScreen doesn't have to wait for either.
     generateFirstPortrait(state.id).catch(() => {});
-    prefetchedEvents.set(state.id, engine.startEvent(state));
+    prefetchedEvents.set(state.id, engine.prefetchNextEvent(state));
   });
 
   router.get("/game/:id/state", async (req: Request, res: Response) => {
@@ -80,31 +80,19 @@ export function createGameRoutes(
   router.post("/game/:id/next-event", async (req: Request, res: Response) => {
     const gameId = req.params.id as string;
 
-    // Use prefetched event if available (generated during POST /game)
-    const prefetched = prefetchedEvents.get(gameId);
-    if (prefetched) {
-      prefetchedEvents.delete(gameId);
-      try {
-        const next = await prefetched;
-        games.set(next.id, next);
-        if (next.currentEvent) await repo.saveEvent(next.id, next.currentEvent);
-        await repo.saveGame(next);
-        res.json({ event: next.currentEvent, phase: next.phase });
-      } catch (err) {
-        logger.error("next_event_prefetch_error", { gameId, error: String(err) });
-        res.status(500).json({ error: "An internal error occurred" });
-      }
-      return;
-    }
-
-    // Fallback: no prefetched event (reconnect or edge case)
     const state = await resolveGame(gameId);
     if (!state) {
       res.status(404).json({ error: "Game not found" });
       return;
     }
+
+    const prefetched = prefetchedEvents.get(gameId);
+    prefetchedEvents.delete(gameId);
+
     try {
-      const next = await engine.startEvent(state);
+      const next = prefetched
+        ? engine.applyPrefetchedEvent(state, await prefetched)
+        : await engine.startEvent(state);
       games.set(next.id, next);
       if (next.currentEvent) await repo.saveEvent(next.id, next.currentEvent);
       await repo.saveGame(next);
@@ -204,6 +192,11 @@ export function createGameRoutes(
         await repo.saveGame(next);
         res.write(`data: ${JSON.stringify({ type: "done", phase: next.phase })}\n\n`);
         res.end();
+        // Prefetch next event while player reads debrief — eliminates the loading
+        // screen between debrief and the next scenario.
+        if (next.currentEventNumber < next.totalEvents) {
+          prefetchedEvents.set(next.id, engine.prefetchNextEvent(next));
+        }
       } catch (err) {
         logger.error("end_chat_error", { gameId: req.params.id, error: String(err) });
         res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);

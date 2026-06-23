@@ -84,6 +84,17 @@ export class ConversationEngine {
     return next;
   }
 
+  /** Generate the next event without transitioning phase — called in background during debrief. */
+  async prefetchNextEvent(state: GameState): Promise<GameEvent> {
+    const ctx = buildWorldManagerContext(state);
+    return this.llm.completeJson<GameEvent>(ctx.system, ctx.userMessage, "world_manager");
+  }
+
+  /** Apply a pre-fetched event to the current state — skips the LLM call. */
+  applyPrefetchedEvent(state: GameState, event: GameEvent): GameState {
+    return transition(state, { type: "START_EVENT", event });
+  }
+
   endDebrief(state: GameState): GameState {
     return transition(state, { type: "END_DEBRIEF" });
   }
