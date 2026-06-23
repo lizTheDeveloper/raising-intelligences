@@ -151,6 +151,7 @@ export function SoloGame() {
   if (phase === "debrief") {
     return (
       <div className="app">
+        {error && <p className="error-banner">{error}</p>}
         <Debrief onContinue={handleDebrief} />
         <div className="debrief">
           <button onClick={generateEpilogue} className="btn btn-secondary">

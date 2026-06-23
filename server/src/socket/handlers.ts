@@ -77,6 +77,21 @@ function lobbyState(io: Server, session: Session): LobbyState {
 export function registerSocketHandlers(deps: SocketDeps): void {
   const { io, games, sessions, conversationEngine, endgameEngine, repo } = deps;
 
+  // Per-game operation queue — serializes PARENT_MESSAGE and END_CHAT so two
+  // concurrent socket events can't read the same game snapshot, run their LLM
+  // calls in parallel, and then overwrite each other on write-back.
+  const gameLocks = new Map<string, Promise<void>>();
+
+  function withGameLock<T>(gameId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = gameLocks.get(gameId) ?? Promise.resolve();
+    // Chain fn after the previous operation; swallow prev's error so the queue
+    // never stalls permanently because one handler threw.
+    const next = prev.catch(() => {}).then(fn);
+    // Store a settling promise (never rejects) so the next enqueuer can safely await it.
+    gameLocks.set(gameId, next.then(() => {}, () => {}));
+    return next;
+  }
+
   /** Emit a tailored ViewerState to every connected socket in the room. */
   function broadcastState(gameId: string): void {
     const state = games.get(gameId);
@@ -201,32 +216,37 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       }
     });
 
-    socket.on(E.PARENT_MESSAGE, async (payload: ParentMessagePayload) => {
+    socket.on(E.PARENT_MESSAGE, (payload: ParentMessagePayload) => {
       const gameId = data.gameId;
       const slot = data.slot;
-      const state = currentState();
-      const session = gameId ? sessions.get(gameId) : undefined;
-      if (!gameId || !slot || !state || !session) return fail("Not in a game");
+      if (!gameId || !slot) return fail("Not in a game");
       if (slot === "kid") return fail("Invalid sender");
       if (!payload?.content?.trim()) return;
 
-      // During a sidebar only the initiating parent may speak.
-      if (state.phase === "sidebar" && state.sidebarActive !== slot) {
-        return fail("The other parent is in a private conversation");
-      }
+      withGameLock(gameId, async () => {
+        // Re-read state inside the lock — a prior handler may have written a
+        // newer snapshot while this one was waiting.
+        const state = currentState();
+        const session = sessions.get(gameId);
+        if (!state || !session) { fail("Not in a game"); return; }
 
-      // Stream kid chunks: to the room in shared chat, or only to the sidebar
-      // participant during a private conversation.
-      const inSidebar = state.phase === "sidebar";
-      const emitChunk = (chunk: string) => {
-        if (inSidebar) {
-          socket.emit(E.KID_CHUNK, { text: chunk });
-        } else {
-          io.to(gameId).emit(E.KID_CHUNK, { text: chunk });
+        // During a sidebar only the initiating parent may speak.
+        if (state.phase === "sidebar" && state.sidebarActive !== slot) {
+          fail("The other parent is in a private conversation");
+          return;
         }
-      };
 
-      try {
+        // Stream kid chunks: to the room in shared chat, or only to the sidebar
+        // participant during a private conversation.
+        const inSidebar = state.phase === "sidebar";
+        const emitChunk = (chunk: string) => {
+          if (inSidebar) {
+            socket.emit(E.KID_CHUNK, { text: chunk });
+          } else {
+            io.to(gameId).emit(E.KID_CHUNK, { text: chunk });
+          }
+        };
+
         const result = await conversationEngine.handleParentMessage(
           state,
           slot,
@@ -240,9 +260,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
         broadcastState(gameId);
         io.to(gameId).emit(E.MESSAGE_DONE, {});
-      } catch (err) {
-        fail(String(err));
-      }
+      }).catch((err) => fail(String(err)));
     });
 
     socket.on(E.START_SIDEBAR, () => {
@@ -272,12 +290,14 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       }
     });
 
-    socket.on(E.END_CHAT, async () => {
+    socket.on(E.END_CHAT, () => {
       const gameId = data.gameId;
-      const state = currentState();
-      const session = gameId ? sessions.get(gameId) : undefined;
-      if (!gameId || !state || !session) return fail("Not in a game");
-      try {
+      if (!gameId) return fail("Not in a game");
+
+      withGameLock(gameId, async () => {
+        const state = currentState();
+        const session = sessions.get(gameId);
+        if (!state || !session) { fail("Not in a game"); return; }
         const emitChunk = (chunk: string) => {
           io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
         };
@@ -290,9 +310,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         io.to(gameId).emit(E.DOC_DONE, { documentType: "identity" });
         broadcastState(gameId);
         broadcastLobby(gameId);
-      } catch (err) {
-        fail(String(err));
-      }
+      }).catch((err) => fail(String(err)));
     });
 
     socket.on(E.START_EPILOGUE, async () => {
