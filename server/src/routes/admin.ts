@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { Request, Response, NextFunction } from "express";
 import type { AdminQueries } from "../db/admin-queries.js";
+import { logger } from "../logger.js";
 
 export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
   const token = process.env.ADMIN_TOKEN;
@@ -25,6 +26,7 @@ export function createAdminRoutes(adminQueries: AdminQueries): Router {
       const stats = await adminQueries.getOverview();
       res.json(stats);
     } catch (err) {
+      logger.error("admin_overview_error", { error: String(err) });
       res.status(500).json({ error: "Internal server error" });
     }
   });
@@ -37,6 +39,7 @@ export function createAdminRoutes(adminQueries: AdminQueries): Router {
       const result = await adminQueries.listGames({ status, limit, offset });
       res.json(result);
     } catch (err) {
+      logger.error("admin_games_list_error", { error: String(err) });
       res.status(500).json({ error: "Internal server error" });
     }
   });
@@ -50,6 +53,7 @@ export function createAdminRoutes(adminQueries: AdminQueries): Router {
       }
       res.json(detail);
     } catch (err) {
+      logger.error("admin_game_detail_error", { error: String(err) });
       res.status(500).json({ error: "Internal server error" });
     }
   });
