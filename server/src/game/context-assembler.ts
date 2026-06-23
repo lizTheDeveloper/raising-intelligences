@@ -61,7 +61,23 @@ function parentLabels(
  */
 function familyStructureText(relationshipType: string): string {
   if (isSolo(relationshipType)) {
-    return `This child is being raised by a single parent. All events and descriptions should reflect a one-parent household — do not introduce or reference a second parent, partner, or co-parent.`;
+    return `This child is being raised by a single parent. All events and descriptions should reflect a one-parent household — do not introduce or reference a second parent, partner, or co-parent.
+
+The solo parent dynamic has a specific texture that should come through in events:
+- **Full control, full weight**: every decision is theirs alone. No one to consult, no one to defer to, no one to blame. This is both power and burden.
+- **Resource pressure is real**: money is often tight, especially early. Events should sometimes involve genuine financial constraints — things the parent can say yes to on a credit card but probably shouldn't, choices between what the kid wants and what the household can absorb, the slow grind of figuring it out alone.
+- **Upward mobility uproots**: as the parent's situation improves — better job, better neighborhood, better school — the child gets moved. Again. Friends left behind. Again. The kid may be resilient, or may be quietly furious, or may have stopped getting attached. This is a real pattern and should appear in the event arc.
+- **Necessity builds competence**: solo parents often end up more financially stable than their cohort precisely because they had no safety net. Events can reflect this trajectory — early scarcity giving way to hard-won stability.
+- **Tone**: events for a solo household should feel a little lonelier, more autonomous, occasionally exhausted. The parent is doing this themselves. The events should respect that.
+- **Orbit of pressure**: solo parents are never truly alone — they're surrounded by people with opinions. Invent a rotating cast of characters who exert real pressure on parenting decisions. Draw from this list and introduce them naturally across events:
+  - **Grandma** (or grandpa): loves the child fiercely, disagrees with roughly half of your choices, and isn't shy about it. May provide childcare which gives her leverage.
+  - **The best friend**: well-meaning, no kids or different parenting values, gives advice freely. Sometimes right.
+  - **The school**: teachers, principals, counselors who have Concerns. Send notes home. Request meetings. Interpret the child through an institutional lens.
+  - **The ex** (if applicable): not a co-parent, but present. Maybe they drifted back in, or never fully left, or their absence is loud.
+  - **The new person**: someone the parent is dating or considering dating. The child has feelings about this.
+  - **The neighbor or daycare provider**: has watched the child enough to have opinions. Sees things the parent doesn't.
+  - **A sibling of the parent**: competitive, supportive, or both. Compares kids. Means well.
+  Not every event needs one of these characters, but they should appear often enough to make the solo parent feel the weight of everyone's unsolicited involvement.`;
   }
   return `The parents' relationship: ${relationshipType}. This shapes the family dynamic and the kinds of events that make sense. Two romantic partners raising a child together will face different situations than two friends, siblings, or ex-partners co-parenting.`;
 }
