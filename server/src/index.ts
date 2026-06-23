@@ -94,13 +94,19 @@ async function main() {
     logger.info("server_started", { port: Number(PORT) });
   });
 
-  const shutdown = async () => {
+  const shutdown = async (signal: string) => {
+    logger.info("shutdown_initiated", { signal });
+    // Close all active connections (including in-flight SSE streams) before
+    // tearing down socket.io. This lets tsx watch restart cleanly without
+    // having to send SIGKILL, which would otherwise produce "socket hang-up"
+    // 500 errors on the client during long LLM calls.
+    httpServer.closeAllConnections();
     await close();
     await flushLangfuse();
     process.exit(0);
   };
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
 main().catch((err) => {

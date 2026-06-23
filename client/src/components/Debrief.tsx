@@ -9,7 +9,7 @@ export function Debrief({ onContinue }: Props) {
         <p className="debrief-line-1">time passed</p>
         <p className="debrief-line-2">they are a little different now</p>
       </div>
-      <button onClick={onContinue} className="btn">
+      <button onClick={onContinue} className="btn" data-testid="btn-next-event">
         next event
       </button>
     </div>

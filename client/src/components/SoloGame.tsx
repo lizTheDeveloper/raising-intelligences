@@ -83,7 +83,7 @@ export function SoloGame() {
               autoFocus
               className="name-input"
             />
-            <button type="submit" className="btn" disabled={!nameInput.trim()}>
+            <button type="submit" className="btn" data-testid="btn-begin" disabled={!nameInput.trim()}>
               begin
             </button>
           </form>
@@ -154,7 +154,7 @@ export function SoloGame() {
         {error && <p className="error-banner">{error}</p>}
         <Debrief onContinue={handleDebrief} />
         <div className="debrief">
-          <button onClick={generateEpilogue} className="btn btn-secondary">
+          <button onClick={generateEpilogue} className="btn btn-secondary" data-testid="btn-epilogue">
             end childhood → epilogue
           </button>
         </div>

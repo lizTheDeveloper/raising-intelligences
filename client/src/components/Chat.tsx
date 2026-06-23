@@ -38,7 +38,7 @@ export function Chat({
         disabled={isStreaming}
         messagesRemaining={messagesRemaining}
       />
-      <button onClick={onEndChat} disabled={isStreaming} className="btn btn-secondary">
+      <button onClick={onEndChat} disabled={isStreaming} className="btn btn-secondary" data-testid="btn-end-chat">
         end conversation
       </button>
     </div>
