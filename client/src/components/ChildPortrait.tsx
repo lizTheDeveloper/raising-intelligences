@@ -33,7 +33,8 @@ export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
     // One request — server holds it open until the file exists, then responds.
     fetch(`${base}api/game/${gameId}/portraits/${slug}/await`, { signal: controller.signal })
       .then((res) => {
-        if (!mounted || !res.ok) return;
+        if (!mounted) return;
+        if (!res.ok) { track("portrait_failed", { ageBucket: slug }); onLoad?.(); return; }
         return res.json();
       })
       .then((data: { url?: string } | undefined) => {
