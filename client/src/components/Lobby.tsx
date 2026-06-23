@@ -1,4 +1,3 @@
-import { useState } from "react";
 import type { PublicPlayer, Slot } from "../hooks/useMultiplayer";
 
 interface Props {
@@ -12,18 +11,16 @@ interface Props {
 }
 
 export function Lobby({ gameId, slot, players, childName, error, onReady, onLeave }: Props) {
-  const [ready, setReady] = useState(false);
   const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   const link = `${window.location.origin}${base}/?game=${gameId}`;
   const me = players.find((p) => p.slot === slot);
+  const ready = me?.ready ?? false;
   const both = players.length === 2;
   const bothConnected = both && players.every((p) => p.connected);
   const coParentDisconnected = both && players.some((p) => !p.connected);
 
   const toggle = () => {
-    const next = !ready;
-    setReady(next);
-    onReady(next);
+    onReady(!ready);
   };
 
   const copy = () => {
