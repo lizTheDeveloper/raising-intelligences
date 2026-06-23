@@ -85,6 +85,7 @@ describe("InMemoryGameRepository", () => {
       chatType: "shared",
       visibleTo: ["parent1", "parent2", "kid"],
       timestamp: 100,
+      eventNumber: 1,
     };
     const m2: Message = {
       sender: "kid",
@@ -92,6 +93,7 @@ describe("InMemoryGameRepository", () => {
       chatType: "shared",
       visibleTo: ["parent1", "parent2", "kid"],
       timestamp: 200,
+      eventNumber: 1,
     };
     // Save out of order to verify sorting.
     await repo.saveMessage("game-1", m2);
@@ -110,6 +112,8 @@ describe("InMemoryGameRepository", () => {
 
   it("recomputes parentMessageCount from persisted messages when in chat", async () => {
     const repo = new InMemoryGameRepository();
+    // currentEventNumber is 1 in baseState; messages must carry the matching
+    // eventNumber so reconstructState can filter to the current event only.
     await repo.saveGame(baseState({ phase: "family_chat" }));
     await repo.saveMessage("game-1", {
       sender: "parent1",
@@ -117,6 +121,7 @@ describe("InMemoryGameRepository", () => {
       chatType: "shared",
       visibleTo: ["parent1", "parent2", "kid"],
       timestamp: 1,
+      eventNumber: 1,
     });
     await repo.saveMessage("game-1", {
       sender: "kid",
@@ -124,6 +129,7 @@ describe("InMemoryGameRepository", () => {
       chatType: "shared",
       visibleTo: ["parent1", "parent2", "kid"],
       timestamp: 2,
+      eventNumber: 1,
     });
     await repo.saveMessage("game-1", {
       sender: "parent2",
@@ -131,10 +137,43 @@ describe("InMemoryGameRepository", () => {
       chatType: "shared",
       visibleTo: ["parent1", "parent2", "kid"],
       timestamp: 3,
+      eventNumber: 1,
     });
 
     const loaded = await repo.loadGame("game-1");
     expect(loaded!.parentMessageCount).toBe(2);
+  });
+
+  it("does not count parent messages from earlier events towards the cap", async () => {
+    const repo = new InMemoryGameRepository();
+    // Simulate a game currently on event 3 (family_chat phase) that has
+    // accumulated messages from events 1 and 2 in the DB.
+    await repo.saveGame(baseState({ phase: "family_chat", currentEventNumber: 3 }));
+    // 6 parent messages from event 1
+    for (let i = 0; i < 6; i++) {
+      await repo.saveMessage("game-1", {
+        sender: "parent1", content: `e1-${i}`, chatType: "shared",
+        visibleTo: ["parent1", "parent2", "kid"], timestamp: i, eventNumber: 1,
+      });
+    }
+    // 6 parent messages from event 2
+    for (let i = 0; i < 6; i++) {
+      await repo.saveMessage("game-1", {
+        sender: "parent1", content: `e2-${i}`, chatType: "shared",
+        visibleTo: ["parent1", "parent2", "kid"], timestamp: 10 + i, eventNumber: 2,
+      });
+    }
+    // 3 parent messages so far in the CURRENT event (event 3)
+    for (let i = 0; i < 3; i++) {
+      await repo.saveMessage("game-1", {
+        sender: "parent1", content: `e3-${i}`, chatType: "shared",
+        visibleTo: ["parent1", "parent2", "kid"], timestamp: 20 + i, eventNumber: 3,
+      });
+    }
+
+    const loaded = await repo.loadGame("game-1");
+    // Must be 3, not 15 (which is what the buggy all-messages count would give).
+    expect(loaded!.parentMessageCount).toBe(3);
   });
 
   it("persists and reconstructs identity snapshots, upserting by event number", async () => {
@@ -188,6 +227,7 @@ describe("InMemoryGameRepository", () => {
       chatType: "shared",
       visibleTo: ["parent1", "parent2", "kid"],
       timestamp: 1,
+      eventNumber: 1,
     });
 
     const g2 = await repo.loadGame("game-2");
@@ -204,6 +244,7 @@ describe("InMemoryGameRepository", () => {
       chatType: "shared",
       visibleTo: ["parent1", "parent2", "kid"],
       timestamp: 1,
+      eventNumber: 1,
     });
 
     const loaded = await repo.loadGame("game-1");
