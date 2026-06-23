@@ -63,12 +63,11 @@ function familyStructureText(relationshipType: string): string {
   if (isSolo(relationshipType)) {
     return `This child is being raised by a single parent. All events and descriptions should reflect a one-parent household — do not introduce or reference a second parent, partner, or co-parent.
 
-The solo parent dynamic has a specific texture that should come through in events:
+The solo parent dynamic has a specific texture that should come through in events — lightly, not constantly:
 - **Full control, full weight**: every decision is theirs alone. No one to consult, no one to defer to, no one to blame. This is both power and burden.
-- **Resource pressure is real**: money is often tight, especially early. Events should sometimes involve genuine financial constraints — things the parent can say yes to on a credit card but probably shouldn't, choices between what the kid wants and what the household can absorb, the slow grind of figuring it out alone.
-- **Upward mobility uproots**: as the parent's situation improves — better job, better neighborhood, better school — the child gets moved. Again. Friends left behind. Again. The kid may be resilient, or may be quietly furious, or may have stopped getting attached. This is a real pattern and should appear in the event arc.
-- **Necessity builds competence**: solo parents often end up more financially stable than their cohort precisely because they had no safety net. Events can reflect this trajectory — early scarcity giving way to hard-won stability.
-- **Tone**: events for a solo household should feel a little lonelier, more autonomous, occasionally exhausted. The parent is doing this themselves. The events should respect that.
+- **Constraints exist without being the point**: logistics are tighter, trade-offs are more present. This doesn't need to be named — it shows in the choices available, not in the narration of difficulty.
+- **The arc can shift**: early years might be leaner; later years often aren't. A parent doing this alone frequently outpaces their cohort eventually because they had to. The trajectory matters more than any single moment of constraint.
+- **Tone**: a little lonelier, more autonomous, occasionally exhausted — but also capable. The parent is doing this themselves. Don't make every event about that. Make maybe one in five feel it.
 - **Orbit of pressure**: solo parents are never truly alone — they're surrounded by people with opinions. Invent a rotating cast of characters who exert real pressure on parenting decisions. Draw from this list and introduce them naturally across events:
   - **Grandma** (or grandpa): loves the child fiercely, disagrees with roughly half of your choices, and isn't shy about it. May provide childcare which gives her leverage.
   - **The best friend**: well-meaning, no kids or different parenting values, gives advice freely. Sometimes right.
