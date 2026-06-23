@@ -7,7 +7,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "http://localhost:3001",
+        target: "http://localhost:3002",
         changeOrigin: true,
         timeout: 180000,
         proxyTimeout: 180000,
@@ -20,6 +20,12 @@ export default defineConfig({
             }
           });
         },
+      },
+      // Generated portraits live on the Express server, not in client/public.
+      // Only needed for dev — in production the Express server handles /portraits directly.
+      "/portraits": {
+        target: "http://localhost:3002",
+        changeOrigin: true,
       },
     },
   },

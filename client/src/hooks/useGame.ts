@@ -260,6 +260,10 @@ export function useGame() {
               ]);
               setStreamingMessage("");
               setMessagesRemaining(data.messagesRemaining as number);
+              // Unlock input immediately — the kid has responded and the user
+              // can type again. The stream may not have physically closed yet
+              // (finally will also clear this), but there's nothing left to receive.
+              setIsStreaming(false);
             } else if (data.type === "error") {
               throw new Error((data.error as string) ?? "Stream error");
             }

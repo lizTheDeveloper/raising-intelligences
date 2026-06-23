@@ -48,7 +48,10 @@ export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
           }
         };
         img.onerror = () => {
-          if (mounted) track("portrait_failed", { ageBucket: slug });
+          if (mounted) {
+            track("portrait_failed", { ageBucket: slug });
+            onLoad?.(); // unblock GuardianScreen even if image load fails
+          }
         };
         img.src = url;
       })
