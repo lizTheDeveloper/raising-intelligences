@@ -163,10 +163,16 @@ async function generateWithRetry(
     } catch (e) {
       attempt++;
       logger.error("portrait_attempt_failed", { gameId, slug, attempt, error: (e as Error).message });
+      if (attempt >= MAX_PORTRAIT_ATTEMPTS) {
+        logger.error("portrait_give_up", { gameId, slug, attempts: attempt });
+        return;
+      }
       await new Promise((r) => setTimeout(r, 2000 * attempt));
     }
   }
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Called at game creation — generates only the first portrait (age-03) so the
 // guardian screen has something to show as quickly as possible.

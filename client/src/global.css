@@ -344,14 +344,28 @@ body::after {
   color: var(--fg);
 }
 
+.guardian-not-ready-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  opacity: 0;
+  animation: fadeIn 0.8s ease forwards;
+}
+
 .guardian-not-ready-message {
   font-size: 12px;
   color: var(--fg-dim);
   font-style: italic;
   letter-spacing: 0.5px;
   margin-top: 4px;
-  opacity: 0;
-  animation: fadeIn 0.8s ease forwards;
+}
+
+.guardian-not-ready-subtext {
+  font-size: 11px;
+  color: var(--fg-dim);
+  opacity: 0.65;
+  letter-spacing: 0.3px;
 }
 
 .event-intro {
@@ -469,7 +483,7 @@ body::after {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 80dvh;
+  padding: 32px 0;
   gap: 16px;
 }
 
