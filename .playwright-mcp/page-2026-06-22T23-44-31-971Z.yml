@@ -1,0 +1,7 @@
+- generic [ref=e23]:
+  - heading "Aurora" [level=2] [ref=e24]
+  - img [ref=e28]
+  - generic [ref=e29]:
+    - paragraph [ref=e30]: three years old.
+    - paragraph [ref=e31]: they need you.
+  - button "I'm ready" [ref=e32] [cursor=pointer]

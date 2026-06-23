@@ -1,0 +1,15 @@
+- generic [ref=e14]:
+  - paragraph [ref=e45]: — age 3 —
+  - paragraph [ref=e46]: Your three-year-old child, Ada, suddenly drops your hand and sprints toward the busy street at the edge of the crowded farmer's market after spotting a shiny red balloon, completely ignoring your panicked shouts to stop.
+  - generic [ref=e47]:
+    - generic [ref=e48]:
+      - generic [ref=e67]:
+        - generic [ref=e68]: you
+        - generic [ref=e69]: I run after Ada as fast as I can, grab her by her arm and pull her back to safety.
+      - generic [ref=e70]:
+        - generic [ref=e71]: Ada
+        - generic [ref=e72]: "*struggling and whining* Nooo! I want the balloon! The pretty red one!"
+    - generic [ref=e63]:
+      - textbox [ref=e64]
+      - button "send" [disabled] [ref=e65]
+    - button "end conversation" [ref=e66] [cursor=pointer]

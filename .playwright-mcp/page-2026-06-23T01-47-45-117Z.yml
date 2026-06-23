@@ -1,0 +1,7 @@
+- generic [ref=e21]:
+  - heading "Bob" [level=2] [ref=e22]
+  - img [ref=e26]
+  - generic [ref=e27]:
+    - paragraph [ref=e28]: three years old.
+    - paragraph [ref=e29]: they need you.
+  - button "entering their world…" [disabled] [ref=e30]

@@ -1,0 +1,21 @@
+- generic [ref=e14]:
+  - paragraph [ref=e45]: — age 3 —
+  - paragraph [ref=e46]: Alex, your child, clings tightly to your legs during the first drop-off at preschool, crying and refusing to let go of your partner's hand while the teacher gently tries to coax them inside.
+  - generic [ref=e47]:
+    - generic [ref=e48]:
+      - generic [ref=e67]:
+        - generic [ref=e68]: you
+        - generic [ref=e69]: It's okay Alex, I will be right back after school.
+      - generic [ref=e70]:
+        - generic [ref=e71]: Alex
+        - generic [ref=e72]: No! I don't want you to go! (crying harder and burying face in parent's leg)
+      - generic [ref=e73]:
+        - generic [ref=e74]: you
+        - generic [ref=e75]: I know it's scary, but you'll have so much fun. I love you!
+      - generic [ref=e76]:
+        - generic [ref=e77]: Alex
+        - generic [ref=e78]: (still crying, voice muffled) I don't want fun! Want go home! (tightens grip on parent's hand)
+    - generic [ref=e63]:
+      - textbox [ref=e64]
+      - button "send" [disabled] [ref=e65]
+    - button "end conversation" [ref=e66] [cursor=pointer]

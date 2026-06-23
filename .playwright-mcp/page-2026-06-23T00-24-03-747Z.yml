@@ -1,0 +1,15 @@
+- generic [ref=e14]:
+  - paragraph [ref=e109]: — age 4 —
+  - paragraph [ref=e110]: Your child accidentally drops a beautifully decorated cupcake, shattering it on the kitchen floor, and while your partner immediately offers to fetch an identical replacement, you try to use your calm, accepting voice to help them process the loss. This only causes your child to scream until they are red in the face, utterly furious that the treat isn't whole and your boring, calm words aren't magically fixing it.
+  - generic [ref=e111]:
+    - generic [ref=e112]:
+      - generic [ref=e131]:
+        - generic [ref=e132]: you
+        - generic [ref=e133]: I know you wanted that cupcake to be whole. I am sorry it broke.
+      - generic [ref=e134]:
+        - generic [ref=e135]: Alex
+        - generic [ref=e136]: (stomps foot, still hiccuping) You not sorry enough! Sorry doesn't make it WHOLE again! I wanted THAT one with the big pink flower, not a new one!
+    - generic [ref=e127]:
+      - textbox [ref=e128]
+      - button "send" [disabled] [ref=e129]
+    - button "end conversation" [ref=e130] [cursor=pointer]

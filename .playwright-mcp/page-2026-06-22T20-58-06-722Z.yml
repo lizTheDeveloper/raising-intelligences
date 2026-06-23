@@ -1,0 +1,7 @@
+- generic [ref=e10]:
+  - paragraph [ref=e22]: — age 3 —
+  - generic [ref=e23]:
+    - generic [ref=e25]:
+      - textbox "12 messages left" [active] [ref=e26]
+      - button "send" [disabled] [ref=e27]
+    - button "end conversation" [ref=e28] [cursor=pointer]

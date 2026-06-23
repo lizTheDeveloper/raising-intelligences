@@ -1,0 +1,8 @@
+- generic [ref=e14]:
+  - paragraph [ref=e111]: — age 4 —
+  - paragraph [ref=e112]: When your child, Alex, refuses to surrender his frayed security blanket during circle time at his new, budget-stretching preschool, his teacher calls you at work to express concerns about his soothing routines. Sitting in the driver's seat of your idling car, you are left to weigh the very real cost of losing a half-day's wages to go comfort him against your mother Eleanor's blunt voicemail insisting the boy just needs to toughen up.
+  - generic [ref=e113]:
+    - generic [ref=e129]:
+      - textbox [active] [ref=e130]
+      - button "send" [disabled] [ref=e131]
+    - button "end conversation" [ref=e132] [cursor=pointer]

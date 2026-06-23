@@ -1,0 +1,20 @@
+- generic [ref=e14]:
+  - paragraph [ref=e35]: — age 3 —
+  - generic [ref=e36]:
+    - generic [ref=e37]:
+      - generic [ref=e56]:
+        - generic [ref=e57]: you
+        - generic [ref=e58]: Ada, it's okay. Let's take a deep breath. A broken banana is still just as yummy, or we can look for another one. I'm right here with you.
+      - generic [ref=e59]:
+        - generic [ref=e60]: Ada
+        - generic [ref=e61]: (wailing, face bright red with tears streaming down) NOOOO! I wanted the WHOLE banana! It was my goooood banana and now it's BROKEN! (stomping feet) Not fair, not fair, NOT FAIR!
+      - generic [ref=e62]:
+        - generic [ref=e63]: you
+        - generic [ref=e64]: I understand, sweetie. It feels really bad when things break. How about we put the two halves together like a puzzle, or would you like a big hug?
+      - generic [ref=e65]:
+        - generic [ref=e66]: Ada
+        - generic [ref=e67]: (hiccuping, still crying but slightly calmer) I... I don't want puzzle banana! (rubs eyes with fists) Want Daddy to fix it. Daddy can fix everything! (looks around frantically for other parent)
+    - generic [ref=e52]:
+      - textbox [ref=e53]
+      - button "send" [disabled] [ref=e54]
+    - button "end conversation" [ref=e55] [cursor=pointer]

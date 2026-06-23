@@ -1,0 +1,8 @@
+- generic [ref=e14]:
+  - paragraph [ref=e43]: — age 3 —
+  - paragraph [ref=e44]: It's 7:45 AM and your three-year-old, Leo, is having a screaming meltdown on the floor of your cramped entryway because his sneakers are 'the wrong blue,' leaving you exactly ten minutes before a steep late fee hits your debit card at daycare. You're entirely alone on a workday, running on four hours of sleep, and your mother Evelyn's parting advice from watching him yesterday—'You just need to let him feel his big feelings without rushing him, you're making him anxious'—echoes in your head, making your desperate need to just get out the door feel like a profound personal failure.
+  - generic [ref=e45]:
+    - generic [ref=e61]:
+      - textbox [active] [ref=e62]
+      - button "send" [disabled] [ref=e63]
+    - button "end conversation" [ref=e64] [cursor=pointer]

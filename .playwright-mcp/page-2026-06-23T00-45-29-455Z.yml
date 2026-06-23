@@ -1,0 +1,8 @@
+- generic [ref=e14]:
+  - paragraph [ref=e45]: — age 3 —
+  - paragraph [ref=e46]: Alex, your child, clings tightly to your legs during the first drop-off at preschool, crying and refusing to let go of your partner's hand while the teacher gently tries to coax them inside.
+  - generic [ref=e47]:
+    - generic [ref=e63]:
+      - textbox [active] [ref=e64]
+      - button "send" [disabled] [ref=e65]
+    - button "end conversation" [ref=e66] [cursor=pointer]

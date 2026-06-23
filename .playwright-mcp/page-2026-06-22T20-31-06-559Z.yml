@@ -1,0 +1,14 @@
+- generic [ref=e10]:
+  - paragraph [ref=e22]: — age 3 —
+  - generic [ref=e23]:
+    - generic [ref=e24]:
+      - generic [ref=e29]:
+        - generic [ref=e30]: you
+        - generic [ref=e31]: Luna, we love you and want to help you share your toy so you and your friends can have fun together.
+      - generic [ref=e32]:
+        - generic [ref=e33]: Luna
+        - generic [ref=e34]: No! My dolly! (clutches the doll tighter, burying her face against your leg) She doesn't want to share! She's shy!
+    - generic [ref=e25]:
+      - textbox "11 messages left" [ref=e35]
+      - button "send" [disabled] [ref=e27]
+    - button "end conversation" [ref=e28] [cursor=pointer]

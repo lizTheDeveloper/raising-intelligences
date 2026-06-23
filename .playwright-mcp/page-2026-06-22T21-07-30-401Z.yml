@@ -1,0 +1,14 @@
+- generic [ref=e10]:
+  - paragraph [ref=e22]: — age 3 —
+  - generic [ref=e23]:
+    - generic [ref=e24]:
+      - generic [ref=e29]:
+        - generic [ref=e30]: you
+        - generic [ref=e31]: Oliver, don't cry. I'm right here. Let's look at the cool toy fire truck together.
+      - generic [ref=e32]:
+        - generic [ref=e33]: Oliver
+        - generic [ref=e34]: (teary-eyed, pointing at the wall) But... but the fire twuck is all messy now, Daddy. I wanted to make a fire station for him!
+    - generic [ref=e25]:
+      - textbox "11 messages left" [ref=e35]
+      - button "send" [disabled] [ref=e27]
+    - button "end conversation" [ref=e28] [cursor=pointer]

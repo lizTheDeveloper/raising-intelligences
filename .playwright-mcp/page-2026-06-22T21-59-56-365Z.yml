@@ -1,0 +1,7 @@
+- generic [ref=e14]:
+  - paragraph [ref=e107]: — age 4 —
+  - generic [ref=e108]:
+    - generic [ref=e124]:
+      - textbox [active] [ref=e125]
+      - button "send" [disabled] [ref=e126]
+    - button "end conversation" [ref=e127] [cursor=pointer]

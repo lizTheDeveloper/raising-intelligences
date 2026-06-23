@@ -1,0 +1,8 @@
+- generic [ref=e14]:
+  - paragraph [ref=e109]: — age 4 —
+  - paragraph [ref=e110]: Your child accidentally drops a beautifully decorated cupcake, shattering it on the kitchen floor, and while your partner immediately offers to fetch an identical replacement, you try to use your calm, accepting voice to help them process the loss. This only causes your child to scream until they are red in the face, utterly furious that the treat isn't whole and your boring, calm words aren't magically fixing it.
+  - generic [ref=e111]:
+    - generic [ref=e127]:
+      - textbox [active] [ref=e128]
+      - button "send" [disabled] [ref=e129]
+    - button "end conversation" [ref=e130] [cursor=pointer]

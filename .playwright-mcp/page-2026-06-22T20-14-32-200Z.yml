@@ -1,0 +1,14 @@
+- generic [ref=e10]:
+  - paragraph [ref=e22]: — age 3 —
+  - generic [ref=e23]:
+    - generic [ref=e24]:
+      - generic [ref=e29]:
+        - generic [ref=e30]: you
+        - generic [ref=e31]: Luna, sweetie, I know that Bunny is your favorite and it is hard to share him. But the teacher is just asking us to share for a little bit. How about we ask the teacher if we can play with the blocks together with your friend?
+      - generic [ref=e32]:
+        - generic [ref=e33]: Luna
+        - generic [ref=e34]: NO! Bunny is MINE! (clutching the rabbit tighter and stomping her foot) I don't wanna share! He's my best friend, not theirs!
+    - generic [ref=e25]:
+      - textbox "11 messages left" [ref=e35]
+      - button "send" [disabled] [ref=e27]
+    - button "end conversation" [ref=e28] [cursor=pointer]

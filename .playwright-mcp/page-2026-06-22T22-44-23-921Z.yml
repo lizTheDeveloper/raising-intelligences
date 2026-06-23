@@ -1,0 +1,7 @@
+- generic [ref=e23]:
+  - heading "Ada" [level=2] [ref=e24]
+  - generic [ref=e25]:
+    - img [ref=e27]
+    - generic:
+      - generic: they took their first steps.
+  - button "meeting them…" [disabled] [ref=e31]

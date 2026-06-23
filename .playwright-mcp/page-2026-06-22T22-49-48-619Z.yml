@@ -1,0 +1,15 @@
+- generic [ref=e14]:
+  - paragraph [ref=e109]: — age 4 —
+  - paragraph [ref=e110]: Your four-year-old, Ada, locks eyes with a glittering, red sequined fairy wand in the museum gift shop and drops to the floor in a furious, foot-stomping tantrum when you tell her no. When her other parent tries to de-escalate the meltdown by offering a plain wooden wand, Ada's rage only magnifies as she screams that it isn't the exact right one, prompting you to raise your voice in panic.
+  - generic [ref=e111]:
+    - generic [ref=e112]:
+      - generic [ref=e131]:
+        - generic [ref=e132]: you
+        - generic [ref=e133]: We are in public, Ada, and screaming like this is not okay. Let's step outside and take a deep breath together to calm down.
+      - generic [ref=e134]:
+        - generic [ref=e135]: Ada
+        - generic [ref=e136]: "*still sniffling, but quieter* I don't wanna breathe. I wanna see the shiny wand. Can we go back inside?"
+    - generic [ref=e127]:
+      - textbox [ref=e128]
+      - button "send" [disabled] [ref=e129]
+    - button "end conversation" [ref=e130] [cursor=pointer]

@@ -1,0 +1,14 @@
+- generic [ref=e10]:
+  - paragraph [ref=e22]: — age 3 —
+  - generic [ref=e23]:
+    - generic [ref=e24]:
+      - generic [ref=e29]:
+        - generic [ref=e30]: you
+        - generic [ref=e31]: Hello
+      - generic [ref=e32]:
+        - generic [ref=e33]: Alex
+        - generic [ref=e34]: "*Hugging the kitten tightly, eyes wide* \"But Mommy, she was all cold and shivering outside! She needs a home... can she stay? Pwease?\""
+    - generic [ref=e25]:
+      - textbox "11 messages left" [ref=e35]
+      - button "send" [disabled] [ref=e27]
+    - button "end conversation" [ref=e28] [cursor=pointer]

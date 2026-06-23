@@ -1,0 +1,8 @@
+- generic [ref=e14]:
+  - paragraph [ref=e109]: — age 4 —
+  - paragraph [ref=e110]: During a playdate at your home, your daughter's cousin asks to play with her favorite stuffed animal, and when your partner gently prompts her to 'use her words' to set a boundary instead of just snatching it back, Aurora's words completely lock up. She freezes, looks desperately at you to intervene and fix it, and ultimately throws the toy at the cousin in a silent, frantic panic.
+  - generic [ref=e111]:
+    - generic [ref=e127]:
+      - textbox [active] [ref=e128]
+      - button "send" [disabled] [ref=e129]
+    - button "end conversation" [ref=e130] [cursor=pointer]

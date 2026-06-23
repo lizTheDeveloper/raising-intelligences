@@ -1,0 +1,38 @@
+<!-- @dsCard group="Core" -->
+<!DOCTYPE html>
+<html><head>
+<link rel="stylesheet" href="../../../styles.css">
+<style>
+  body { padding: 32px; display: flex; flex-direction: column; gap: 32px; }
+  .label { font-size: 10px; color: var(--fg-dim); letter-spacing: 2px; text-transform: uppercase; margin-bottom: 8px; }
+</style>
+</head><body>
+  <div>
+    <div class="label">fade-in — 600ms ease, 4px upward slide</div>
+    <div class="fade-in">
+      <p>This text faded in with a subtle upward movement.</p>
+    </div>
+  </div>
+  <div>
+    <div class="label">pulse — 2.4s infinite, 0.4–0.85 opacity</div>
+    <p class="pulse dim">time passes...</p>
+  </div>
+  <div>
+    <div class="label">presence breathe — 5.5s infinite, subtle scale</div>
+    <div style="width:60px; height:60px; border-radius:50%; background:var(--kid); opacity:0.3; animation: presenceBreathe 5.5s ease-in-out infinite;"></div>
+  </div>
+  <div>
+    <div class="label">warm glow pulse — 6s infinite, radial gradient</div>
+    <div style="position:relative; height:100px; width:200px;">
+      <div class="start-glow" style="top:0;"></div>
+    </div>
+  </div>
+  <div>
+    <div class="label">staggered reveal — delay each element</div>
+    <div style="display:flex; flex-direction:column; gap:8px;">
+      <p class="dim" style="font-size:11px; letter-spacing:5px; opacity:0; animation: fadeIn 900ms ease both; animation-delay: 0ms;">first line appears</p>
+      <p style="color:var(--kid); font-size:20px; font-weight:300; opacity:0; animation: fadeIn 900ms ease both; animation-delay: 600ms;">second line follows</p>
+      <p style="opacity:0; animation: fadeIn 900ms ease both; animation-delay: 1200ms;">third line last</p>
+    </div>
+  </div>
+</body></html>

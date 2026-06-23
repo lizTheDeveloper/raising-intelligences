@@ -1,0 +1,15 @@
+- generic [ref=e14]:
+  - paragraph [ref=e101]: — age 4 —
+  - paragraph [ref=e102]: After picking up your child from preschool, you discover a sparkly, unfamiliar toy car stuffed deep into their jacket pocket that clearly belongs to a classmate. When you calmly ask where it came from and reach to take the car back, your child's chest gets hot, their legs turn to jelly, and they drop to the hallway floor screaming that the toy was found and now belongs to them.
+  - generic [ref=e103]:
+    - generic [ref=e104]:
+      - generic [ref=e123]:
+        - generic [ref=e124]: you
+        - generic [ref=e125]: Alex, we cannot take things that don't belong to us. We need to return this car to your classmate tomorrow.
+      - generic [ref=e126]:
+        - generic [ref=e127]: Alex
+        - generic [ref=e128]: (legs kicking against the floor) NOOO! I FOUND IT! It was under the red chair in the play corner and nobody was playing with it so it's MINE now!
+    - generic [ref=e119]:
+      - textbox [ref=e120]
+      - button "send" [disabled] [ref=e121]
+    - button "end conversation" [ref=e122] [cursor=pointer]

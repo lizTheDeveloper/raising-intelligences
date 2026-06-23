@@ -1,0 +1,15 @@
+- generic [ref=e14]:
+  - paragraph [ref=e106]: — age 4 —
+  - paragraph [ref=e107]: Your child, Alex, has a complete meltdown in the pediatrician's office when your partner tries to distract him from the scary medical tools by offering a plastic dinosaur. Screaming that he only wants you, your child violently swats the toy away and reaches desperately for the door, leaving your partner to manage the intense rejection while you finish talking to the nurse.
+  - generic [ref=e108]:
+    - generic [ref=e109]:
+      - generic [ref=e128]:
+        - generic [ref=e129]: you
+        - generic [ref=e130]: I hurry over, pick him up, and say 'It is okay, I am here. We just have to let the doctor check your heart, then we can go get ice cream.'
+      - generic [ref=e131]:
+        - generic [ref=e132]: Alex
+        - generic [ref=e133]: (still clinging tight, face pressed against your shoulder, but my crying is quieter now) D... don't want ice cweam. Want to go HOME. Wif you. Wif you right now.
+    - generic [ref=e124]:
+      - textbox [ref=e125]
+      - button "send" [disabled] [ref=e126]
+    - button "end conversation" [ref=e127] [cursor=pointer]

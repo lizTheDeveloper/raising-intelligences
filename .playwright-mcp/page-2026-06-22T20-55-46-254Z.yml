@@ -1,0 +1,20 @@
+- generic [ref=e10]:
+  - paragraph [ref=e22]: — age 3 —
+  - generic [ref=e23]:
+    - generic [ref=e24]:
+      - generic [ref=e29]:
+        - generic [ref=e30]: you
+        - generic [ref=e31]: Hello Alex, what are you doing?
+      - generic [ref=e32]:
+        - generic [ref=e33]: Alex
+        - generic [ref=e34]: (stomping feet and pointing at the blue toy) NO! I want the RED one! The red one is better!
+      - generic [ref=e36]:
+        - generic [ref=e37]: you
+        - generic [ref=e38]: I will get you the red toy, please calm down.
+      - generic [ref=e39]:
+        - generic [ref=e40]: Alex
+        - generic [ref=e41]: "*whining loudly and grabbing the blue toy tighter* Nooo! I don't want you to get it! You don't understand! The lady gave me the wrong one! *drops to the floor*"
+    - generic [ref=e25]:
+      - textbox "10 messages left" [ref=e42]
+      - button "send" [disabled] [ref=e27]
+    - button "end conversation" [ref=e28] [cursor=pointer]

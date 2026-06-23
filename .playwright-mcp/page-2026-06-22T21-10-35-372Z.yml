@@ -1,0 +1,20 @@
+- generic [ref=e10]:
+  - paragraph [ref=e22]: — age 3 —
+  - generic [ref=e23]:
+    - generic [ref=e24]:
+      - generic [ref=e29]:
+        - generic [ref=e30]: you
+        - generic [ref=e31]: Oliver, don't worry. I'm right here with you. Let's take a deep breath together.
+      - generic [ref=e32]:
+        - generic [ref=e33]: Oliver
+        - generic [ref=e34]: NO! I don't want to breathe! I WANT THE RAINBOW CEREAL! (stomping feet and wailing) You never let me have ANYTHING!
+      - generic [ref=e36]:
+        - generic [ref=e37]: you
+        - generic [ref=e38]: I know you really want that rainbow cereal, Oliver, but it has too much sugar. Let's find a yummy cereal with honey on it instead! How about we look for the bee cereal?
+      - generic [ref=e39]:
+        - generic [ref=e40]: Oliver
+        - generic [ref=e41]: BUT I WANT THE RAINBOW ONE! (sobbing, clutching the cereal box tighter) The bee cereal is for babies! And it doesn't have a toy inside! SEE? (pointing at the picture of a plastic dinosaur on the box)
+    - generic [ref=e25]:
+      - textbox "10 messages left" [ref=e42]
+      - button "send" [disabled] [ref=e27]
+    - button "end conversation" [ref=e28] [cursor=pointer]

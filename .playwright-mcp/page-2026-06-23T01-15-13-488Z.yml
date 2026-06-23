@@ -1,0 +1,15 @@
+- generic [ref=e14]:
+  - paragraph [ref=e39]: — age 3 —
+  - paragraph [ref=e40]: Your child drops to the floor of the grocery store in a screaming, tearful tantrum after you refuse to buy a brightly colored plastic toy, leaving you to manage the meltdown and the shopping cart completely alone while other shoppers stare.
+  - generic [ref=e41]:
+    - generic [ref=e42]:
+      - generic [ref=e61]:
+        - generic [ref=e62]: you
+        - generic [ref=e63]: Hey Alex, it's okay. We can't buy everything we see. Let's just calm down.
+      - generic [ref=e64]:
+        - generic [ref=e65]: Alex
+        - generic [ref=e66]: (I WANT THE GREEN TOY! (sobbing, face all scrunched up) It's MINE! I NEED it!
+    - generic [ref=e57]:
+      - textbox [ref=e58]
+      - button "send" [disabled] [ref=e59]
+    - button "end conversation" [ref=e60] [cursor=pointer]

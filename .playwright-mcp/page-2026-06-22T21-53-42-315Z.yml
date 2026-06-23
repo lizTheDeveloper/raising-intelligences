@@ -1,0 +1,20 @@
+- generic [ref=e14]:
+  - paragraph [ref=e37]: — age 3 —
+  - generic [ref=e38]:
+    - generic [ref=e39]:
+      - generic [ref=e58]:
+        - generic [ref=e59]: you
+        - generic [ref=e60]: Ada, oh my! That's a very big chocolate drawing! You are indeed very creative, but walls are not for drawing on, especially with chocolate syrup. Let's work together to clean this wall, and then I'll get you some paper for your next masterpiece.
+      - generic [ref=e64]:
+        - generic [ref=e65]: Ada
+        - generic [ref=e66]: (shaking head vigorously, chocolate-sticky hands held up) No no no! It's not done yet! The chocolate needs to stay right there, it's a picture of a happy tree for Mommy and Daddy!
+      - generic [ref=e67]:
+        - generic [ref=e68]: you
+        - generic [ref=e69]: Aww, a happy tree for us! That's so kind of you, Ada. I love that you wanted to make us happy! But chocolate will get smelly and attract ants on the wall. Let's take a photo of your happy tree so we can keep it forever, and then we will clean it up together, okay?
+      - generic [ref=e70]:
+        - generic [ref=e71]: Ada
+        - generic [ref=e72]: (looking up with big, earnest eyes) Ants live outside in the dirt! They can't come in the house, can they? Can ants come in the house, Daddy?
+    - generic [ref=e54]:
+      - textbox [ref=e55]
+      - button "send" [disabled] [ref=e56]
+    - button "end conversation" [ref=e57] [cursor=pointer]

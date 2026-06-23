@@ -1,0 +1,8 @@
+- generic [ref=e14]:
+  - paragraph [ref=e45]: — age 3 —
+  - paragraph [ref=e46]: Your child refuses to relinquish a plastic yellow shovel at the park, clamping it to her chest and biting the arm of another toddler who tried to take it. This sudden, tearful standoff forces you and your partner to decide in real-time how to handle your little one's first major act of aggression.
+  - generic [ref=e47]:
+    - generic [ref=e63]:
+      - textbox [active] [ref=e64]
+      - button "send" [disabled] [ref=e65]
+    - button "end conversation" [ref=e66] [cursor=pointer]

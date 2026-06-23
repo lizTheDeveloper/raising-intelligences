@@ -1,0 +1,20 @@
+- generic [ref=e14]:
+  - paragraph [ref=e104]: — age 4 —
+  - generic [ref=e105]:
+    - generic [ref=e106]:
+      - generic [ref=e125]:
+        - generic [ref=e126]: you
+        - generic [ref=e127]: Oh Sam, I am so sorry! I didn't mean to break our promise, I just ran out to grab the forgotten bag and I'm right back now. Let's build the block tower together.
+      - generic [ref=e128]:
+        - generic [ref=e129]: Sam
+        - generic [ref=e130]: (stomping foot, blocks clattering) You went away! You said you wouldn't! My tummy got all tight and scary! (reaches out small arms) Now you have to sit on the floor with me.
+      - generic [ref=e131]:
+        - generic [ref=e132]: you
+        - generic [ref=e133]: I am sitting right here on the floor next to you now. I am holding your hands. I promise from now on I will always say 'goodbye' and tell you exactly where I am going, even if it's just for a second.
+      - generic [ref=e134]:
+        - generic [ref=e135]: Sam
+        - generic [ref=e136]: (wiping nose on sleeve, still hiccupping) Okay. But you have to help me make the tower SUPER tall. And you can't even wiggle your toes toward the door.
+    - generic [ref=e121]:
+      - textbox [ref=e122]
+      - button "send" [disabled] [ref=e123]
+    - button "end conversation" [ref=e124] [cursor=pointer]

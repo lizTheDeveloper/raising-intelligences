@@ -1,0 +1,8 @@
+- generic [ref=e14]:
+  - paragraph [ref=e45]: — age 3 —
+  - paragraph [ref=e46]: Your child clings tightly to your leg, her lower lip trembling as she faces her very first day of preschool. The situation quickly escalates into a full-blown meltdown when another toddler abruptly snatches the comfort blanket she brought from home.
+  - generic [ref=e47]:
+    - generic [ref=e63]:
+      - textbox [active] [ref=e64]
+      - button "send" [disabled] [ref=e65]
+    - button "end conversation" [ref=e66] [cursor=pointer]

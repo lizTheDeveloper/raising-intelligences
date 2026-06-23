@@ -1,0 +1,15 @@
+- generic [ref=e14]:
+  - paragraph [ref=e45]: — age 3 —
+  - paragraph [ref=e46]: On her very first day of preschool, your child Ada clings desperately to your legs in the hallway, sobbing and refusing to let go while the teacher waits patiently with outstretched hands.
+  - generic [ref=e47]:
+    - generic [ref=e48]:
+      - generic [ref=e67]:
+        - generic [ref=e68]: you
+        - generic [ref=e69]: It's okay to feel scared, Ada. I love you, and I will be back to pick you up. Let's take a deep breath together.
+      - generic [ref=e70]:
+        - generic [ref=e71]: Ada
+        - generic [ref=e72]: (tightening grip and hiding face) No! I don't want to take a breath! I don't want you to go away! Stay right here!
+    - generic [ref=e63]:
+      - textbox [ref=e64]
+      - button "send" [disabled] [ref=e65]
+    - button "end conversation" [ref=e66] [cursor=pointer]

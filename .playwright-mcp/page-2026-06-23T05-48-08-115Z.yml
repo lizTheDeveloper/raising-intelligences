@@ -1,0 +1,8 @@
+- generic [ref=e14]:
+  - paragraph [ref=e45]: — age 3 —
+  - paragraph [ref=e46]: When your child, Alex, tumbles off the edge of the thrift-store sofa and splits his chin open, you are entirely alone to scoop him up, navigate the panicked drive to urgent care, and stare down the steep copay, all while your mother Eleanor calls every five minutes to demand you let her take him and your friend Chloe texts you links to podcasts about toddler-proofing.
+  - generic [ref=e47]:
+    - generic [ref=e63]:
+      - textbox [active] [ref=e64]
+      - button "send" [disabled] [ref=e65]
+    - button "end conversation" [ref=e66] [cursor=pointer]

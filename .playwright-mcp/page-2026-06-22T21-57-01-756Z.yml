@@ -1,0 +1,14 @@
+- generic [ref=e14]:
+  - paragraph [ref=e37]: — age 3 —
+  - generic [ref=e38]:
+    - generic [ref=e39]:
+      - generic [ref=e58]:
+        - generic [ref=e59]: you
+        - generic [ref=e60]: Ada, sweetie, it's okay to feel scared. Preschool is a big step! But look at all those fun toys and nice children. I'm right here with you, and I promise we'll come back to get you as soon as play time is over. Let's take a deep breath together.
+      - generic [ref=e61]:
+        - generic [ref=e62]: Ada
+        - generic [ref=e63]: (whimpering, face pressed into your leg) Nooo! Don't wanna go in there. It smells funny. I want to stay home with you and Mama and my blue blankie!
+    - generic [ref=e54]:
+      - textbox [ref=e55]
+      - button "send" [disabled] [ref=e56]
+    - button "end conversation" [ref=e57] [cursor=pointer]

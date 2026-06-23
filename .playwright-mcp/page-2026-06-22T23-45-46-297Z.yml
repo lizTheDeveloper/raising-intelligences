@@ -1,0 +1,15 @@
+- generic [ref=e14]:
+  - paragraph [ref=e45]: — age 3 —
+  - paragraph [ref=e46]: Your child clings tightly to your leg, her lower lip trembling as she faces her very first day of preschool. The situation quickly escalates into a full-blown meltdown when another toddler abruptly snatches the comfort blanket she brought from home.
+  - generic [ref=e47]:
+    - generic [ref=e48]:
+      - generic [ref=e67]:
+        - generic [ref=e68]: you
+        - generic [ref=e69]: Oh no, let's go talk to them and see if we can get your blanket back, sweetie.
+      - generic [ref=e70]:
+        - generic [ref=e71]: Aurora
+        - generic [ref=e72]: (Shakes head vigorously, tears streaming down cheeks) No! Don't wanna talk! Want my blankie! That boy took it!
+    - generic [ref=e63]:
+      - textbox [ref=e64]
+      - button "send" [disabled] [ref=e65]
+    - button "end conversation" [ref=e66] [cursor=pointer]

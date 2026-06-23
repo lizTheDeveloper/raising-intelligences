@@ -1,0 +1,8 @@
+- generic [ref=e14]:
+  - paragraph [ref=e45]: — age 3 —
+  - paragraph [ref=e46]: Your child, Alex, wraps both arms tightly around your leg at the daycare door, sobbing hysterically and refusing to let go while the teacher waits patiently. This intense display of separation anxiety forces you and your partner to navigate a highly emotional, time-sensitive public moment together before your first workday drop-off.
+  - generic [ref=e47]:
+    - generic [ref=e63]:
+      - textbox [active] [ref=e64]
+      - button "send" [disabled] [ref=e65]
+    - button "end conversation" [ref=e66] [cursor=pointer]

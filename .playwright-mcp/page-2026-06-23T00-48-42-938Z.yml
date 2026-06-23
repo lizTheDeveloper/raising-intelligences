@@ -1,0 +1,15 @@
+- generic [ref=e14]:
+  - paragraph [ref=e108]: — age 4 —
+  - paragraph [ref=e109]: When your partner takes your child to the park alone to give you a much-needed break, your child treats the trip like a permanent abduction, screaming for you the entire car ride and refusing to unbuckle, convinced you have disappeared forever.
+  - generic [ref=e110]:
+    - generic [ref=e111]:
+      - generic [ref=e130]:
+        - generic [ref=e131]: you
+        - generic [ref=e132]: I am still here! I just needed to rest.
+      - generic [ref=e133]:
+        - generic [ref=e134]: Alex
+        - generic [ref=e135]: No! You were gone. I looked and looked and you weren't there. (sobbing, shaking head) Don't trick me.
+    - generic [ref=e126]:
+      - textbox [ref=e127]
+      - button "send" [disabled] [ref=e128]
+    - button "end conversation" [ref=e129] [cursor=pointer]

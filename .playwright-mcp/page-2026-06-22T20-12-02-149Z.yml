@@ -1,0 +1,14 @@
+- generic [ref=e10]:
+  - paragraph [ref=e22]: — age 3 —
+  - generic [ref=e23]:
+    - generic [ref=e24]:
+      - generic [ref=e29]:
+        - generic [ref=e30]: you
+        - generic [ref=e31]: Hey Luna, I know you love the swings and want to keep playing, but it's getting dark and we have to go home for dinner. We can come back tomorrow!
+      - generic [ref=e32]:
+        - generic [ref=e33]: Luna
+        - generic [ref=e34]: NO! I don't wanna go home! The swings go high high HIGH! (kicking legs and
+    - generic [ref=e25]:
+      - textbox "12 messages left" [disabled] [ref=e26]
+      - button "send" [disabled] [ref=e27]
+    - button "end conversation" [disabled] [ref=e28]

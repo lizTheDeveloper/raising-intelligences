@@ -1,0 +1,41 @@
+<!-- @dsCard group="Screens" -->
+<!DOCTYPE html>
+<html><head>
+<link rel="stylesheet" href="../../../styles.css">
+</head><body>
+<div class="app" style="height: 100vh;">
+  <div class="chat" style="flex: 1;">
+    <div class="message-list" style="flex: 1;">
+      <div class="message">
+        <div class="message-sender" style="font-size:10px; color:var(--fg-dim); letter-spacing:3px;">you</div>
+        <div class="message-content">Hey buddy, how was your first day of school?</div>
+      </div>
+      <div class="message message-kid">
+        <div class="message-sender">nova</div>
+        <div class="message-content">it was okay i guess. this kid took my crayon and didn't give it back.</div>
+      </div>
+      <div class="message">
+        <div class="message-sender" style="font-size:10px; color:var(--fg-dim); letter-spacing:3px;">you</div>
+        <div class="message-content">That sounds frustrating. What did you do?</div>
+      </div>
+      <div class="message message-kid">
+        <div class="message-sender">nova</div>
+        <div class="message-content">i just used a different one. but it was the purple one and that's my favorite.</div>
+      </div>
+    </div>
+    <div class="message-dots">
+      <div class="message-dot dot-used"></div>
+      <div class="message-dot dot-used"></div>
+      <div class="message-dot dot-active"></div>
+      <div class="message-dot dot-active"></div>
+      <div class="message-dot dot-active"></div>
+    </div>
+    <div class="message-input-wrap">
+      <div class="message-input">
+        <input type="text" placeholder="3 messages left this scene" style="flex:1; background:transparent; border:none; color:var(--fg); font-family:var(--font); font-size:15px; outline:none;">
+        <button style="background:transparent; border:1px solid #333; color:var(--fg-dim); font-family:var(--font); font-size:12px; padding:6px 16px; cursor:pointer;">send</button>
+      </div>
+    </div>
+  </div>
+</div>
+</body></html>

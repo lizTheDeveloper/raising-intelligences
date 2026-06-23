@@ -1,0 +1,15 @@
+- generic [ref=e14]:
+  - paragraph [ref=e45]: — age 3 —
+  - paragraph [ref=e46]: Your child refuses to relinquish a plastic yellow shovel at the park, clamping it to her chest and biting the arm of another toddler who tried to take it. This sudden, tearful standoff forces you and your partner to decide in real-time how to handle your little one's first major act of aggression.
+  - generic [ref=e47]:
+    - generic [ref=e48]:
+      - generic [ref=e67]:
+        - generic [ref=e68]: you
+        - generic [ref=e69]: Ada, biting is not okay because it hurts other people. We need to say sorry and share the shovel.
+      - generic [ref=e70]:
+        - generic [ref=e71]: Ada
+        - generic [ref=e72]: (Clutching the shovel tighter, tears streaming down face) No! It's MY shovel! That boy tried to take it from me first!
+    - generic [ref=e63]:
+      - textbox [ref=e64]
+      - button "send" [disabled] [ref=e65]
+    - button "end conversation" [ref=e66] [cursor=pointer]

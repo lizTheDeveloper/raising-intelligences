@@ -1,0 +1,14 @@
+- generic [ref=e14]:
+  - paragraph [ref=e37]: — age 3 —
+  - generic [ref=e38]:
+    - generic [ref=e39]:
+      - generic [ref=e58]:
+        - generic [ref=e59]: you
+        - generic [ref=e60]: Hey Sam, it's okay, you're going to make so many friends! I'll be right here waiting for you.
+      - generic [ref=e61]:
+        - generic [ref=e62]: Sam
+        - generic [ref=e63]: (sobbing, clutching the doorframe) Nooo! I don't want new friends! I want YOU! Don't go!
+    - generic [ref=e54]:
+      - textbox [ref=e55]
+      - button "send" [disabled] [ref=e56]
+    - button "end conversation" [ref=e57] [cursor=pointer]

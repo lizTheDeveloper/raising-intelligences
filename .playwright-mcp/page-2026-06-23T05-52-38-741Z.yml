@@ -1,0 +1,22 @@
+- generic [ref=e14]:
+  - paragraph [ref=e156]: "Failed to end chat: 500"
+  - paragraph [ref=e157]: — age 4 —
+  - paragraph [ref=e158]: When your child, Alex, refuses to surrender his frayed security blanket during circle time at his new, budget-stretching preschool, his teacher calls you at work to express concerns about his soothing routines. Sitting in the driver's seat of your idling car, you are left to weigh the very real cost of losing a half-day's wages to go comfort him against your mother Eleanor's blunt voicemail insisting the boy just needs to toughen up.
+  - generic [ref=e159]:
+    - generic [ref=e160]:
+      - generic [ref=e161]:
+        - generic [ref=e162]: you
+        - generic [ref=e163]: Alex, my love, I'm here. I know you love your blanket. Let's talk to the teacher about how important it is to keep you feeling safe, okay? I'm coming to see you.
+      - generic [ref=e164]:
+        - generic [ref=e165]: Alex
+        - generic [ref=e166]: (scrunching my face up) Teacher said no blankie at circle time. She said I'm too big for it.
+      - generic [ref=e167]:
+        - generic [ref=e168]: you
+        - generic [ref=e169]: You are never too big for things that make you feel safe. I will explain that to the teacher. Let's find a way where you can keep your blanket near you, like in your cubby, during circle time, ok?
+      - generic [ref=e170]:
+        - generic [ref=e171]: Alex
+        - generic [ref=e172]: (perking up a little, voice still wobbly) In my cubby? Like right over there? With my lunchbox?
+    - generic [ref=e187]:
+      - textbox [active] [ref=e188]
+      - button "send" [disabled] [ref=e189]
+    - button "end conversation" [ref=e190] [cursor=pointer]

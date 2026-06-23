@@ -1,0 +1,21 @@
+- generic [ref=e14]:
+  - paragraph [ref=e45]: — age 3 —
+  - paragraph [ref=e46]: When your child, Alex, tumbles off the edge of the thrift-store sofa and splits his chin open, you are entirely alone to scoop him up, navigate the panicked drive to urgent care, and stare down the steep copay, all while your mother Eleanor calls every five minutes to demand you let her take him and your friend Chloe texts you links to podcasts about toddler-proofing.
+  - generic [ref=e47]:
+    - generic [ref=e48]:
+      - generic [ref=e67]:
+        - generic [ref=e68]: you
+        - generic [ref=e69]: Alex, don't worry, my sweet boy. I'm holding you tight. We're going to get you all fixed up at the doctor, okay?
+      - generic [ref=e70]:
+        - generic [ref=e71]: Alex
+        - generic [ref=e72]: (shaky voice) My chin... it feels funny. There's red on my fingers.
+      - generic [ref=e73]:
+        - generic [ref=e74]: you
+        - generic [ref=e75]: Yes, it's a little bit of blood, but mommy has a clean tissue right here. Let's press it gently. See? It's going to stop soon. You are so brave.
+      - generic [ref=e76]:
+        - generic [ref=e77]: Alex
+        - generic [ref=e78]: (shifting in your arms, looking down) I want my blankie. Did you bring blankie? And my sippy cup?
+    - generic [ref=e63]:
+      - textbox [ref=e64]
+      - button "send" [disabled] [ref=e65]
+    - button "end conversation" [ref=e66] [cursor=pointer]

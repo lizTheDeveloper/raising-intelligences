@@ -1,0 +1,21 @@
+- generic [ref=e14]:
+  - paragraph [ref=e109]: — age 4 —
+  - paragraph [ref=e110]: During a playdate at your home, your daughter's cousin asks to play with her favorite stuffed animal, and when your partner gently prompts her to 'use her words' to set a boundary instead of just snatching it back, Aurora's words completely lock up. She freezes, looks desperately at you to intervene and fix it, and ultimately throws the toy at the cousin in a silent, frantic panic.
+  - generic [ref=e111]:
+    - generic [ref=e112]:
+      - generic [ref=e131]:
+        - generic [ref=e132]: you
+        - generic [ref=e133]: Aurora, we don't throw things. I know it's hard when someone wants your special toy. Let's take a deep breath together.
+      - generic [ref=e134]:
+        - generic [ref=e135]: Aurora
+        - generic [ref=e136]: (Still shaking, face scrunched up) But... but Bunny is mine! He was gonna take him and not give back. (Sniffles, clutching bunny so hard his ears are squished) Don't want a breath. Want Bunny to stay with me forever.
+      - generic [ref=e137]:
+        - generic [ref=e138]: you
+        - generic [ref=e139]: Bunny is yours, and we won't let anyone take him forever. But you have to use your words and say 'no, thank you'. Can you try saying that?
+      - generic [ref=e140]:
+        - generic [ref=e141]: Aurora
+        - generic [ref=e142]: (Shakes head violently, buries face against parent's arm) Nooo. Can't. The words won't come out. (Peers up cautiously) You... you say it for me? Please?
+    - generic [ref=e127]:
+      - textbox [ref=e128]
+      - button "send" [disabled] [ref=e129]
+    - button "end conversation" [ref=e130] [cursor=pointer]

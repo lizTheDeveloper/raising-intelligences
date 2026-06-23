@@ -1,0 +1,48 @@
+<!-- @dsCard group="Layout" -->
+<!DOCTYPE html>
+<html><head>
+<link rel="stylesheet" href="../../../styles.css">
+<style>
+  body { padding: 0; }
+  .demo-outline { border: 1px dashed rgba(136,136,136,0.2); }
+  .demo-label { font-size: 10px; color: var(--fg-dim); letter-spacing: 2px; text-transform: uppercase; margin-bottom: 8px; }
+  .demo-section { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+</style>
+</head><body>
+<div class="demo-section">
+  <div class="demo-label">app shell — 600px centered column, full viewport height</div>
+  <div class="app demo-outline" style="min-height: 300px; padding: 16px;">
+    <div style="text-align:center; color:var(--fg-dim); font-size:11px; letter-spacing:2px; margin-top:auto; margin-bottom:auto;">
+      content area<br>
+      <span style="font-size:10px; opacity:0.5;">max-width: 600px · centered · flex column</span>
+    </div>
+  </div>
+</div>
+
+<div class="demo-section">
+  <div class="demo-label">centered screen pattern — 80dvh min, vertically centered</div>
+  <div class="app demo-outline" style="min-height: 300px; padding: 16px;">
+    <div class="start-screen demo-outline" style="min-height: 260px;">
+      <p class="dim" style="font-size:11px;">vertically + horizontally centered</p>
+      <p class="dim" style="font-size:10px; opacity:0.5;">used by: start, event-intro, debrief, lobby</p>
+    </div>
+  </div>
+</div>
+
+<div class="demo-section">
+  <div class="demo-label">chat screen pattern — fills height, sticky input</div>
+  <div class="app demo-outline" style="height: 300px; padding: 16px;">
+    <div class="chat" style="flex:1;">
+      <div class="message-list demo-outline" style="flex:1;">
+        <p class="dim" style="font-size:10px; text-align:center; margin-top:auto; margin-bottom:auto;">scrollable messages</p>
+      </div>
+      <div class="message-input-wrap">
+        <div class="message-input">
+          <input type="text" placeholder="sticky input at bottom" style="flex:1; background:transparent; border:none; color:var(--fg); font-family:var(--font); font-size:15px; outline:none;">
+          <button style="background:transparent; border:1px solid #333; color:var(--fg-dim); font-family:var(--font); font-size:12px; padding:6px 16px;">send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body></html>

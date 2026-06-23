@@ -1,0 +1,20 @@
+- generic [ref=e10]:
+  - paragraph [ref=e22]: — age 3 —
+  - generic [ref=e23]:
+    - generic [ref=e24]:
+      - generic [ref=e29]:
+        - generic [ref=e30]: you
+        - generic [ref=e31]: Oliver, don't worry. I'm right here with you. Let's take a deep breath together.
+      - generic [ref=e32]:
+        - generic [ref=e33]: Oliver
+        - generic [ref=e34]: (sobbing and clinging tighter) No! I don't wanna go inside! I wanna stay with you! Please don't leave me!
+      - generic [ref=e36]:
+        - generic [ref=e37]: you
+        - generic [ref=e38]: I hear you, Oliver. Preschool is new and can feel scary. How about we look at that cool toy fire truck over there together before I go?
+      - generic [ref=e39]:
+        - generic [ref=e40]: Oliver
+        - generic [ref=e41]: (wiping nose on sleeve, peeking at fire truck) Is it... is it real fire truck? Does it go wee-woo? (sniffles) I wanna see it but I still want you hold me
+    - generic [ref=e25]:
+      - textbox "10 messages left" [ref=e42]
+      - button "send" [disabled] [ref=e27]
+    - button "end conversation" [ref=e28] [cursor=pointer]

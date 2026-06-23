@@ -1,0 +1,20 @@
+- generic [ref=e14]:
+  - paragraph [ref=e98]: — age 4 —
+  - generic [ref=e99]:
+    - generic [ref=e100]:
+      - generic [ref=e119]:
+        - generic [ref=e120]: you
+        - generic [ref=e121]: Oh sweetheart, I'm so sorry your drawing got wet. It's really hard when something we worked so hard on gets ruined. Daddy doesn't have real magic, but we can dry the paper together or trace the lines on a new sheet to make another one.
+      - generic [ref=e122]:
+        - generic [ref=e123]: Ada
+        - generic [ref=e124]: (face scrunching up again, fresh tears) No! I want MY drawing! The one I colored! (grabs the wet paper, then drops it with a cry) See? It's all sad and drippy now. (looks desperately toward the door) Daddy! DADDY! Where's my daddy? He can make it not wet!
+      - generic [ref=e125]:
+        - generic [ref=e126]: you
+        - generic [ref=e127]: I know, sweetie. It's really sad when our hard work gets drippy. Let's hang it up on the fridge to dry out. Even if it's a little wrinkly, it shows how much love and effort you put into it.
+      - generic [ref=e128]:
+        - generic [ref=e129]: Ada
+        - generic [ref=e130]: (shaking head vigorously, bottom lip trembling) No! Fridge doesn't fix it! (crosses arms) It's not the same. It's never gonna be the same. (voice getting quieter, more sad) I want my daddy. He knows magic. Mommy, call him pleeeease?
+    - generic [ref=e115]:
+      - textbox [ref=e116]
+      - button "send" [disabled] [ref=e117]
+    - button "end conversation" [ref=e118] [cursor=pointer]

@@ -1,0 +1,38 @@
+<!-- @dsCard group="Core" -->
+<!DOCTYPE html>
+<html><head>
+<link rel="stylesheet" href="../../../styles.css">
+<style>
+  body { padding: 32px; display: flex; flex-direction: column; gap: 24px; align-items: flex-start; }
+  .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .label { font-size: 10px; color: var(--fg-dim); letter-spacing: 2px; text-transform: uppercase; margin-bottom: 4px; }
+</style>
+</head><body>
+  <div>
+    <div class="label">primary</div>
+    <div class="row">
+      <button class="btn">enter</button>
+      <button class="btn">continue</button>
+      <button class="btn">next event</button>
+    </div>
+  </div>
+  <div>
+    <div class="label">primary — hover state</div>
+    <div class="row">
+      <button class="btn" style="border-color: var(--kid); color: var(--kid); background: rgba(255,255,255,0.02);">hovered</button>
+    </div>
+  </div>
+  <div>
+    <div class="label">primary — disabled</div>
+    <div class="row">
+      <button class="btn" disabled>waiting...</button>
+    </div>
+  </div>
+  <div>
+    <div class="label">secondary</div>
+    <div class="row">
+      <button class="btn btn-secondary">play solo</button>
+      <button class="btn btn-secondary">end conversation</button>
+    </div>
+  </div>
+</body></html>

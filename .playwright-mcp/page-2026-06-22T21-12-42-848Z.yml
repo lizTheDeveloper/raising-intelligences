@@ -1,0 +1,13 @@
+- generic [ref=e58]:
+  - heading "raising intelligences" [level=1] [ref=e59]
+  - paragraph [ref=e60]: name your child
+  - generic [ref=e61]:
+    - textbox [active] [ref=e62]
+    - paragraph [ref=e63]: your relationship
+    - combobox [ref=e64] [cursor=pointer]:
+      - option "romantic partners" [selected]
+      - option "friends"
+      - option "siblings"
+      - option "ex-partners"
+      - option "co-parents who were never together"
+    - button "begin" [disabled] [ref=e65]
