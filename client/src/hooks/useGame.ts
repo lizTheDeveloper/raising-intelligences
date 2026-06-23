@@ -36,6 +36,11 @@ export function useGame() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ childName: name, relationshipType }),
       });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        setError(`Failed to create game: ${res.status}${body ? ` — ${body}` : ""}`);
+        return;
+      }
       const data = await res.json();
       setGameId(data.gameId);
       setChildName(name);
@@ -45,10 +50,11 @@ export function useGame() {
     []
   );
 
-  const nextEvent = useCallback(async () => {
-    if (!gameId) return;
+  const nextEvent = useCallback(async (id?: string) => {
+    const gid = id ?? gameId;
+    if (!gid) return;
     setError(null);
-    const res = await fetch(`${API}/game/${gameId}/next-event`, {
+    const res = await fetch(`${API}/game/${gid}/next-event`, {
       method: "POST",
     });
     if (!res.ok) {

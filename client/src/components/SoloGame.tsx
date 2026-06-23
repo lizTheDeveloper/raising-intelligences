@@ -37,11 +37,12 @@ export function SoloGame() {
 
   const handleStart = async () => {
     if (!nameInput.trim()) return;
-    await createGame(nameInput.trim());
+    const id = await createGame(nameInput.trim());
+    if (!id) return;
     // Show guardian screen immediately, generate first event in the background
     setShowGuardian(true);
     setLoadingEvent(true);
-    await nextEvent();
+    await nextEvent(id);
     setLoadingEvent(false);
   };
 
