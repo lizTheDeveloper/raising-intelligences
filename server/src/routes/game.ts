@@ -5,6 +5,7 @@ import { createGame } from "../game/state-machine.js";
 import type { GameState, Sender } from "../types.js";
 import type { GameRepository } from "../db/repository.js";
 import { generateFirstPortrait, generateNextPortrait } from "../portrait-gen.js";
+import { logger } from "../logger.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -90,7 +91,7 @@ export function createGameRoutes(
         await repo.saveGame(next);
         res.json({ event: next.currentEvent, phase: next.phase });
       } catch (err) {
-        console.error("[game] next-event (prefetched) error:", err);
+        logger.error("next_event_prefetch_error", { gameId, error: String(err) });
         res.status(500).json({ error: "An internal error occurred" });
       }
       return;
@@ -109,8 +110,7 @@ export function createGameRoutes(
       await repo.saveGame(next);
       res.json({ event: next.currentEvent, phase: next.phase });
     } catch (err) {
-      console.error("[game] next-event error:", err);
-      const e = err instanceof Error ? err : new Error(String(err));
+      logger.error("next_event_error", { gameId, error: String(err) });
       res.status(500).json({ error: "An internal error occurred" });
     }
   });
@@ -169,7 +169,7 @@ export function createGameRoutes(
         );
         res.end();
       } catch (err) {
-        console.error("[game] message error:", err);
+        logger.error("message_error", { gameId: req.params.id, error: String(err) });
         res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
         res.end();
       }
@@ -205,7 +205,7 @@ export function createGameRoutes(
         res.write(`data: ${JSON.stringify({ type: "done", phase: next.phase })}\n\n`);
         res.end();
       } catch (err) {
-        console.error("[game] end-chat error:", err);
+        logger.error("end_chat_error", { gameId: req.params.id, error: String(err) });
         res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
         res.end();
       }

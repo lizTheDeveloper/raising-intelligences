@@ -1,5 +1,6 @@
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from "fs";
 import path from "path";
+import { logger } from "./logger.js";
 
 export const PORTRAITS_DIR =
   process.env.PORTRAITS_DIR ?? path.join(process.cwd(), "portraits");
@@ -145,7 +146,7 @@ async function generateWithReference(
 function apiKey(): string | null {
   if (process.env.DISABLE_PORTRAITS === "1") return null;
   const key = process.env.OPENAI_API_KEY;
-  if (!key) console.warn("[portraits] OPENAI_API_KEY not set — skipping portrait generation");
+  if (!key) logger.warn("portrait_skipped", { reason: "OPENAI_API_KEY not set" });
   return key ?? null;
 }
 
@@ -167,10 +168,10 @@ async function generateWithRetry(
       } else {
         await generateWithReference(figure, hair, clothing, outPath, prevPath, key);
       }
-      console.log(`[portraits] ${gameId}/${slug} ready`);
+      logger.info("portrait_ready", { gameId, slug });
     } catch (e) {
       attempt++;
-      console.error(`[portraits] ${gameId}/${slug} attempt ${attempt} failed:`, (e as Error).message);
+      logger.error("portrait_attempt_failed", { gameId, slug, attempt, error: (e as Error).message });
       await new Promise((r) => setTimeout(r, 2000 * attempt));
     }
   }

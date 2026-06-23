@@ -15,7 +15,7 @@ const REQUIRED_ENV_VARS = ["OPENROUTER_API_KEY"];
 function validateConfig(): void {
   const missing = REQUIRED_ENV_VARS.filter((k) => !process.env[k]);
   if (missing.length) {
-    console.error(`Missing required environment variables: ${missing.join(", ")}`);
+    logger.error("missing_env_vars", { missing });
     process.exit(1);
   }
 }

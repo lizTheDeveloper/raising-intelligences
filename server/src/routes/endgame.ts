@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import { EndgameEngine } from "../game/endgame-engine.js";
 import type { GameRepository } from "../db/repository.js";
 import type { GameState } from "../types.js";
+import { logger } from "../logger.js";
 
 /**
  * Endgame HTTP routes. The factory takes the shared in-memory games Map so it
@@ -53,7 +54,7 @@ export function createEndgameRoutes(
         );
         res.end();
       } catch (err) {
-        console.error("[endgame] epilogue error:", err);
+        logger.error("epilogue_error", { gameId: req.params.id, error: String(err) });
         res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
         res.end();
       }
@@ -77,7 +78,7 @@ export function createEndgameRoutes(
       await repo.saveGame(next);
       res.json({ phase: next.phase, event: next.currentEvent });
     } catch (err) {
-      console.error("[endgame] adult-chat error:", err);
+      logger.error("adult_chat_error", { gameId: req.params.id, error: String(err) });
       res.status(500).json({ error: "An internal error occurred" });
     }
   });
@@ -112,7 +113,7 @@ export function createEndgameRoutes(
         );
         res.end();
       } catch (err) {
-        console.error("[endgame] report-card error:", err);
+        logger.error("report_card_error", { gameId: req.params.id, error: String(err) });
         res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
         res.end();
       }
