@@ -53,6 +53,16 @@ export function SoloGame() {
     setLoadingEvent(false);
   };
 
+  // After debrief the server resets to event_intro with no current event.
+  // Automatically kick off the next event load so the player sees the spinner
+  // rather than a bare "begin" button (fixes #21 double-begin flow).
+  const handleDebrief = async () => {
+    setLoadingEvent(true);
+    await endDebrief();
+    await nextEvent();
+    setLoadingEvent(false);
+  };
+
   if (phase === "start") {
     return (
       <div className="app">
@@ -141,7 +151,7 @@ export function SoloGame() {
   if (phase === "debrief") {
     return (
       <div className="app">
-        <Debrief onContinue={endDebrief} />
+        <Debrief onContinue={handleDebrief} />
         <div className="debrief">
           <button onClick={generateEpilogue} className="btn btn-secondary">
             end childhood → epilogue

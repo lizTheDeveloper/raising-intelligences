@@ -59,6 +59,12 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
         </div>
       )}
 
+      {portraitReady && !eventReady && (
+        <div className="guardian-event-loading">
+          <span className="event-spinner" aria-hidden="true" />
+        </div>
+      )}
+
       <button
         className="btn"
         onClick={onReady}
