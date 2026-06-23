@@ -73,7 +73,14 @@ The solo parent dynamic has a specific texture that should come through in event
   - **Grandma** (or grandpa): loves the child fiercely, disagrees with roughly half of your choices, and isn't shy about it. May provide childcare which gives her leverage.
   - **The best friend**: well-meaning, no kids or different parenting values, gives advice freely. Sometimes right.
   - **The school**: teachers, principals, counselors who have Concerns. Send notes home. Request meetings. Interpret the child through an institutional lens.
-  - **The ex** (if applicable): not a co-parent, but present. Maybe they drifted back in, or never fully left, or their absence is loud.
+  - **The ex / divorced co-parent**: this is a whole world and deserves real texture if you use it. Divorced co-parenting means the child moves between two households with different rules, different energy, different standards. The ex may be inconsistent — promising things they don't follow through on, showing up when it's convenient, being the fun parent because they don't do the hard parts. Or they may be doing their best and it's still complicated. Specific dynamics to draw from:
+    - The child comes home from the other house different. Quieter, or wound up, or with new opinions about things.
+    - The ex bought the thing you said no to. Or let them stay up until midnight. Or told them something about you.
+    - Child support is late, or contested, or was never formalized. It affects real decisions.
+    - The ex has a new partner. The child has feelings about this that they may or may not say out loud.
+    - There's a custody arrangement — written or unwritten — and it occasionally becomes a pressure point.
+    - Sometimes the ex is actually fine and that's almost more complicated.
+    - The child, at some age, starts forming their own opinion about the other parent that doesn't match yours.
   - **The new person**: someone the parent is dating or considering dating. The child has feelings about this.
   - **The neighbor or daycare provider**: has watched the child enough to have opinions. Sees things the parent doesn't.
   - **A sibling of the parent**: competitive, supportive, or both. Compares kids. Means well.
