@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pool } from "./pool.js";
+import { logger } from "../logger.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = join(__dirname, "migrations");
@@ -43,7 +44,7 @@ export async function migrate(): Promise<string[]> {
       ]);
       await client.query("COMMIT");
       newlyApplied.push(name);
-      console.log(`applied migration: ${name}`);
+      logger.info("migration_applied", { name });
     } catch (err) {
       await client.query("ROLLBACK");
       throw new Error(`migration failed (${name}): ${String(err)}`);
@@ -53,7 +54,7 @@ export async function migrate(): Promise<string[]> {
   }
 
   if (newlyApplied.length === 0) {
-    console.log("no pending migrations");
+    logger.info("migrations_up_to_date");
   }
 
   return newlyApplied;
@@ -68,7 +69,7 @@ if (invokedDirectly) {
     .then(() => pool.end())
     .then(() => process.exit(0))
     .catch((err) => {
-      console.error(err);
+      logger.error("migration_failed", { error: String(err) });
       return pool.end().finally(() => process.exit(1));
     });
 }

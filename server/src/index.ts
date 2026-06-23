@@ -8,6 +8,7 @@ import {
   PgGameRepository,
 } from "./db/repository.js";
 import { buildServer } from "./app.js";
+import { logger } from "./logger.js";
 
 const REQUIRED_ENV_VARS = ["OPENROUTER_API_KEY"];
 
@@ -28,9 +29,13 @@ async function main() {
   // Langfuse tracer wraps it transparently — a pass-through when no keys are set.
   const tier: ModelTier = process.env.MODEL_TIER === "premium" ? "premium" : "standard";
   const onUsage = (u: LLMUsage) => {
-    console.log(
-      `[llm] role=${u.role} model=${u.model} in=${u.inputTokens} out=${u.outputTokens} cost=$${u.costUsd.toFixed(5)}`
-    );
+    logger.info("llm_usage", {
+      role: u.role,
+      model: u.model,
+      inputTokens: u.inputTokens,
+      outputTokens: u.outputTokens,
+      costUsd: Number(u.costUsd.toFixed(5)),
+    });
   };
   // A fixed LLM_SEED forwards a deterministic seed to OpenRouter (reproducible
   // output + prompt-cache hits); omit it in production for variety.
@@ -47,13 +52,13 @@ async function main() {
     const { migrate } = await import("./db/migrate.js");
     await migrate();
     repo = new PgGameRepository();
-    console.log("Persistence: Postgres (write-through)");
+    logger.info("persistence_mode", { mode: "postgres" });
   } else {
     repo = new InMemoryGameRepository();
-    console.log("Persistence: in-memory (set DATABASE_URL to enable Postgres)");
+    logger.info("persistence_mode", { mode: "in-memory", hint: "set DATABASE_URL to enable Postgres" });
   }
 
-  console.log(`Observability: Langfuse ${isLangfuseEnabled() ? "enabled" : "disabled"}`);
+  logger.info("observability", { langfuse: isLangfuseEnabled() });
 
   // In production the app is deployed under the /raising-intelligences subpath,
   // so socket.io must be served there too — the client dials the matching path
@@ -85,7 +90,7 @@ async function main() {
 
   const PORT = process.env.PORT || 3000;
   httpServer.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    logger.info("server_started", { port: Number(PORT) });
   });
 
   const shutdown = async () => {
@@ -98,6 +103,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("Fatal startup error:", err);
+  logger.error("fatal_startup_error", { error: String(err) });
   process.exit(1);
 });
