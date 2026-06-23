@@ -183,8 +183,15 @@ export function createGameRoutes(
         return;
       }
       try {
-        const next = await engine.endFamilyChat(state, (chunk) => {
-          res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
+        // Kick off next-event prefetch immediately — runs in parallel with the
+        // psychologist so the event is ready before the player finishes reading debrief.
+        // Uses the current identity doc (one conversation behind) which is fine;
+        // the world manager relies more on the events list than the identity snapshot.
+        if (state.currentEventNumber < state.totalEvents) {
+          prefetchedEvents.set(state.id, engine.prefetchNextEvent(state));
+        }
+        const next = await engine.endFamilyChat(state, () => {
+          // Psychologist output is internal — not surfaced to the player.
         });
         games.set(next.id, next);
         const latestSnapshot = next.identitySnapshots[next.identitySnapshots.length - 1];
@@ -192,11 +199,6 @@ export function createGameRoutes(
         await repo.saveGame(next);
         res.write(`data: ${JSON.stringify({ type: "done", phase: next.phase })}\n\n`);
         res.end();
-        // Prefetch next event while player reads debrief — eliminates the loading
-        // screen between debrief and the next scenario.
-        if (next.currentEventNumber < next.totalEvents) {
-          prefetchedEvents.set(next.id, engine.prefetchNextEvent(next));
-        }
       } catch (err) {
         logger.error("end_chat_error", { gameId: req.params.id, error: String(err) });
         res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);

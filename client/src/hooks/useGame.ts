@@ -218,12 +218,8 @@ export function useGame() {
         setStreamingDocText("");
         return;
       }
-      let docText = "";
-      const data = await consumeSSE<{ phase: string }>(res, (text) => {
-        docText += text;
-        setStreamingDocText(docText);
-      });
-      setStreamingDocText("");
+      // Psychologist output is internal — fragments show on processing screen instead.
+      const data = await consumeSSE<{ phase: string }>(res, () => {});
       setPhase(data.phase);
     } catch (err) {
       setTrackedError(`Failed to end chat: ${err instanceof Error ? err.message : String(err)}`, "end_chat");

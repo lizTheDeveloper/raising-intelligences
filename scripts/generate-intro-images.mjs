@@ -1,124 +1,104 @@
 /**
- * Generate a pool of lo-fi intro images using the Scenario API.
+ * Generate a pool of lo-fi intro images using gpt-image-2 via OpenRouter.
  * Creates 6 variants each for ages 0, 1, and 2. The client picks
  * a random variant per playthrough so "first steps" feels different.
  *
+ * The same generic child is depicted across all images — consistent hair,
+ * build, and clothing — seen from behind, growing from newborn to toddler.
+ *
  * Usage:
- *   SCENARIO_API_KEY=... SCENARIO_API_SECRET=... node scripts/generate-intro-images.mjs
+ *   OPENROUTER_API_KEY=... node scripts/generate-intro-images.mjs
  *
  * Images are saved to client/public/portraits/intro/age-{N}-{V}.jpg
  */
 import { writeFileSync, mkdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { execSync } from "child_process";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = join(__dir, "../client/public/portraits/intro");
 mkdirSync(OUT_DIR, { recursive: true });
 
-const API_KEY = process.env.SCENARIO_API_KEY;
-const API_SECRET = process.env.SCENARIO_API_SECRET;
-if (!API_KEY || !API_SECRET) {
-  console.error("SCENARIO_API_KEY and SCENARIO_API_SECRET required");
+const API_KEY = process.env.OPENAI_API_KEY;
+if (!API_KEY) {
+  console.error("OPENAI_API_KEY required");
   process.exit(1);
 }
 
-const AUTH = "Basic " + Buffer.from(`${API_KEY}:${API_SECRET}`).toString("base64");
-const MODEL_ID = "model_3M8y65dexCzgcHYc8KJ8dXGJ";
 const VARIANTS_PER_AGE = 6;
+
+// Fixed character look so every image is recognizably the same child.
+const KID = "dark brown fluffy hair, wearing a soft cream onesie";
+const TODDLER_KID = "dark brown fluffy hair, wearing a dusty blue oversized sweater";
+
+const STYLE = [
+  "Lo-fi anime illustration style, flat illustration, clean lines.",
+  "Muted warm palette, soft film grain, slightly desaturated,",
+  "gentle nostalgic mood, lo-fi music aesthetic.",
+  "Child seen from behind, no face visible, no text, no watermark.",
+  "Square composition 1:1.",
+].join(" ");
 
 const AGE_PROMPTS = [
   {
     age: 0,
     scenes: [
-      "newborn baby bundled in a soft blanket in a wooden crib, seen from above, tiny round head barely visible. Dark cozy nursery, warm amber nightlight glow, soft mobile hanging above",
-      "newborn baby sleeping in a bassinet wrapped in a cream swaddle, seen from above. Dark bedroom, warm amber lamplight on nightstand, curtains drawn",
-      "tiny newborn held against a shoulder, seen from behind, small blanket draped. Dark living room at night, warm lamp glow, rain on window",
-      "newborn in a soft nest of blankets on a bed, curled up tiny, seen from above. Cozy dark room, warm amber light from a bedside lamp, night outside",
-      "baby asleep in a car seat, tiny and bundled, seen from the side. Dark interior, warm streetlight glow through rain-streaked window",
-      "newborn cradled in arms, seen from behind the holder, tiny head resting on shoulder. Dark hallway, warm light spilling from nursery doorway",
+      `Tiny newborn with ${KID}, bundled in a blanket in a wooden crib, seen from above. Dark cozy nursery, warm amber nightlight glow, soft mobile hanging above, rain on window.`,
+      `Tiny newborn with ${KID}, sleeping in a bassinet, seen from above. Dark bedroom, warm amber lamplight on nightstand, curtains drawn, nighttime.`,
+      `Tiny newborn with ${KID}, held against a parent's shoulder, seen from behind the parent. Dark living room at night, warm lamp glow, rain on window.`,
+      `Tiny newborn with ${KID}, curled up in a nest of blankets on a bed, seen from above. Cozy dark room, warm amber bedside lamp, night outside window.`,
+      `Tiny newborn with ${KID}, cradled in arms, seen from behind the holder, tiny head resting on shoulder. Dark hallway, warm light spilling from nursery doorway.`,
+      `Tiny newborn with ${KID}, sleeping in a soft blanket on a couch, seen from above. Dark living room, warm amber lamp, rain streaking the window at night.`,
     ],
   },
   {
     age: 1,
     scenes: [
-      "baby crawling on a wooden floor, seen from behind, small round head, wearing a soft cream onesie. Dark cozy bedroom, warm amber lamplight, rain on window at night, bookshelf in background",
-      "baby sitting on a rug reaching for a stuffed animal, seen from behind. Dark living room, warm lamp glow, houseplant silhouette, rain on window",
-      "baby pulling themselves up on a coffee table, seen from behind, wearing a soft grey onesie. Dark cozy room, warm amber light, nighttime",
-      "baby crawling toward a glowing screen on the floor, seen from behind. Dark bedroom, warm amber desk lamp, bookshelves, rain outside",
-      "baby sitting in a highchair looking out a rain-streaked window, seen from behind, small silhouette against the glass. Dark kitchen, warm pendant light",
-      "baby reaching up from the floor toward a bookshelf, seen from behind, wearing a dusty blue onesie. Dark cozy room, warm lamplight, night",
+      `Baby with ${KID}, crawling on a wooden floor, seen from behind. Dark cozy bedroom, warm amber lamplight, rain on window at night, bookshelf in background.`,
+      `Baby with ${KID}, sitting on a rug reaching for a stuffed animal, seen from behind. Dark living room, warm lamp glow, houseplant silhouette, rain on window.`,
+      `Baby with ${KID}, pulling themselves up on a coffee table, seen from behind. Dark cozy room, warm amber light, nighttime.`,
+      `Baby with ${KID}, crawling toward a softly glowing screen on the floor, seen from behind. Dark bedroom, warm amber desk lamp, bookshelves, rain outside.`,
+      `Baby with ${KID}, sitting looking out a rain-streaked window, seen from behind, small silhouette against the glass. Dark room, warm pendant light above.`,
+      `Baby with ${KID}, reaching up from the floor toward a bookshelf, seen from behind. Dark cozy room, warm lamplight, night.`,
     ],
   },
   {
     age: 2,
     scenes: [
-      "tiny toddler taking first steps in a hallway, seen from behind, arms slightly out for balance, wearing a dusty blue oversized sweater. Dark cozy home, warm amber lamplight, rain on window at night",
-      "small toddler standing at a window watching rain, seen from behind, hands pressed against glass. Dark bedroom, warm light behind them, night",
-      "toddler walking unsteadily toward an open door with light spilling through, seen from behind. Dark hallway, warm amber glow, cozy home",
-      "toddler reaching for a doorknob, standing on tiptoes, seen from behind, wearing a soft cream sweater. Dark cozy home, warm lamplight, rain outside",
-      "small toddler toddling across a wooden floor carrying a stuffed animal, seen from behind. Dark living room, warm amber lamp, rain on windows",
-      "toddler standing at the top of stairs looking down, seen from behind, holding onto the rail. Dark cozy home, warm light from below, nighttime",
+      `Tiny toddler with ${TODDLER_KID}, taking first steps in a hallway, arms slightly out for balance, seen from behind. Dark cozy home, warm amber lamplight, rain on window at night.`,
+      `Small toddler with ${TODDLER_KID}, standing at a window watching rain, hands pressed against glass, seen from behind. Dark bedroom, warm light behind them, night.`,
+      `Toddler with ${TODDLER_KID}, walking unsteadily toward an open door with warm light spilling through, seen from behind. Dark hallway, cozy home.`,
+      `Toddler with ${TODDLER_KID}, reaching for a doorknob on tiptoes, seen from behind. Dark cozy home, warm lamplight, rain outside window.`,
+      `Small toddler with ${TODDLER_KID}, toddling across a wooden floor carrying a stuffed animal, seen from behind. Dark living room, warm amber lamp, rain on windows.`,
+      `Toddler with ${TODDLER_KID}, standing at the bottom of stairs looking up, seen from behind. Dark cozy home, warm light from above, nighttime.`,
     ],
   },
 ];
 
-const STYLE_SUFFIX =
-  "Muted warm palette, soft film grain, slightly desaturated, gentle nostalgic mood, lo-fi anime illustration style. No face visible, no text, no watermark. Square 1:1.";
-const NEGATIVE = "face, eyes, looking at camera, bright colors, daylight, outdoor, vibrant, saturated, realistic photo";
-
 async function generate(prompt) {
-  const res = await fetch(
-    `https://api.cloud.scenario.com/v1/models/${MODEL_ID}/inferences`,
-    {
-      method: "POST",
-      headers: { Authorization: AUTH, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        parameters: {
-          type: "txt2img",
-          prompt: `${prompt} ${STYLE_SUFFIX}`,
-          negativePrompt: NEGATIVE,
-          negativePromptStrength: 0.7,
-          numSamples: 1,
-          width: 512,
-          height: 512,
-        },
-      }),
-    }
-  );
+  const fullPrompt = `${prompt} ${STYLE}`;
+  console.log(`    Prompt: ${fullPrompt.slice(0, 80)}...`);
+
+  const res = await fetch("https://api.openai.com/v1/images/generations", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-image-2",
+      prompt: fullPrompt,
+      n: 1,
+      size: "1024x1024",
+      output_format: "png",
+    }),
+  });
+
   const data = await res.json();
-  if (!data.job) throw new Error(JSON.stringify(data));
-  return { jobId: data.job.jobId, inferenceId: data.inference.id };
-}
-
-async function pollJob(jobId) {
-  while (true) {
-    const res = await fetch(`https://api.cloud.scenario.com/v1/jobs/${jobId}`, {
-      headers: { Authorization: AUTH },
-    });
-    const data = await res.json();
-    if (data.job.status === "success") return;
-    if (data.job.status === "failed") throw new Error(`Job ${jobId} failed`);
-    await new Promise((r) => setTimeout(r, 3000));
-  }
-}
-
-async function getImageUrl(inferenceId) {
-  const res = await fetch(
-    `https://api.cloud.scenario.com/v1/models/${MODEL_ID}/inferences/${inferenceId}`,
-    { headers: { Authorization: AUTH } }
-  );
-  const data = await res.json();
-  return data.inference.images[0]?.url;
-}
-
-async function downloadImage(url, outPath) {
-  execSync(`curl -sL -o "${outPath}" "${url}"`);
-  const { size } = await import("fs").then((fs) =>
-    fs.promises.stat(outPath)
-  );
-  return size;
+  if (data.error) throw new Error(data.error.message);
+  const b64 = data.data?.[0]?.b64_json;
+  if (!b64) throw new Error("No image returned");
+  return Buffer.from(b64, "base64");
 }
 
 console.log(`Generating intro images into ${OUT_DIR}\n`);
@@ -139,18 +119,15 @@ for (const { age, scenes } of AGE_PROMPTS) {
     console.log(`  Generating ${filename}...`);
 
     try {
-      const { jobId, inferenceId } = await generate(scene);
-      console.log(`    Job ${jobId} started, polling...`);
-      await pollJob(jobId);
-      const url = await getImageUrl(inferenceId);
-      if (!url) throw new Error("No image URL in result");
-      const bytes = await downloadImage(url, outPath);
-      console.log(`    ✓ Saved (${Math.round(bytes / 1024)}KB)`);
+      const buf = await generate(scene);
+      writeFileSync(outPath, buf);
+      console.log(`    Done (${Math.round(buf.length / 1024)}KB)`);
     } catch (e) {
-      console.error(`    ✗ Failed: ${e.message}`);
+      console.error(`    Failed: ${e.message}`);
     }
 
-    await new Promise((r) => setTimeout(r, 1000));
+    // Small delay between requests
+    await new Promise((r) => setTimeout(r, 500));
   }
 }
 
