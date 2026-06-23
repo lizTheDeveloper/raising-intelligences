@@ -42,7 +42,7 @@ export function getLangfuseClient(): Langfuse | null {
 
   const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
   const secretKey = process.env.LANGFUSE_SECRET_KEY;
-  const baseUrl = process.env.LANGFUSE_BASEURL;
+  const baseUrl = process.env.LANGFUSE_BASEURL ?? process.env.LANGFUSE_HOST;
 
   if (!publicKey || !secretKey) {
     cachedClient = null;
