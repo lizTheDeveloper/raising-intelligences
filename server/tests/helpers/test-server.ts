@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 import { buildServer, type BuiltServer } from "../../src/app.js";
 import { OpenRouterLLMClient } from "../../src/llm/openrouter.js";
 import { InMemoryGameRepository } from "../../src/db/repository.js";
+import { InMemoryAdminQueries } from "../../src/db/admin-queries.js";
 import { CassetteLLMClient, type CassetteMode } from "./cassette.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -24,6 +25,8 @@ export interface TestServer extends BuiltServer {
   baseUrl: string;
   /** The in-memory repository, for asserting persistence directly. */
   memRepo: InMemoryGameRepository;
+  /** In-memory admin queries, for seeding test data directly. */
+  adminQueries: InMemoryAdminQueries;
   /** Calls served from / written to the cassette during this test. */
   cassette: CassetteLLMClient;
   stop: () => Promise<void>;
@@ -67,9 +70,11 @@ export async function createTestServer(cassetteName: string): Promise<TestServer
   });
 
   const memRepo = new InMemoryGameRepository();
+  const adminQueries = new InMemoryAdminQueries();
   const built = buildServer({
     llm: cassette,
     repo: memRepo,
+    adminQueries,
     enableEviction: false,
     allowedOrigin: "*",
     // The test socket client dials the default path; pin it so the harness is
@@ -87,5 +92,5 @@ export async function createTestServer(cassetteName: string): Promise<TestServer
     await built.close();
   };
 
-  return { ...built, baseUrl, memRepo, cassette, stop };
+  return { ...built, baseUrl, memRepo, adminQueries, cassette, stop };
 }

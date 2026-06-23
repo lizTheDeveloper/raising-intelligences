@@ -7,6 +7,8 @@ import {
   InMemoryGameRepository,
   PgGameRepository,
 } from "./db/repository.js";
+import type { AdminQueries } from "./db/admin-queries.js";
+import { PgAdminQueries } from "./db/admin-queries.js";
 import { buildServer } from "./app.js";
 import { logger } from "./logger.js";
 
@@ -52,11 +54,13 @@ async function main() {
   // Use Postgres when DATABASE_URL is configured; otherwise an in-memory
   // repository so the server runs with no external dependencies.
   let repo: GameRepository;
+  let adminQueries: AdminQueries | undefined;
   const usingPostgres = !!process.env.DATABASE_URL;
   if (usingPostgres) {
     const { migrate } = await import("./db/migrate.js");
     await migrate();
     repo = new PgGameRepository();
+    adminQueries = new PgAdminQueries();
     logger.info("persistence_mode", { mode: "postgres" });
   } else {
     repo = new InMemoryGameRepository();
@@ -77,6 +81,7 @@ async function main() {
   const { httpServer, close } = buildServer({
     llm,
     repo,
+    adminQueries,
     serveStatic: process.env.NODE_ENV === "production",
     dbLabel: usingPostgres ? "postgres" : "in-memory",
     socketPath,
