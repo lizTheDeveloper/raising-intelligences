@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useMultiplayer, clearResume } from "../hooks/useMultiplayer";
+import { track } from "../analytics";
 import { Lobby } from "./Lobby";
 import { MessageList } from "./MessageList";
 import { MessageInput } from "./MessageInput";
@@ -203,7 +204,7 @@ export function MultiplayerGame({ joinGameId }: Props) {
           />
           <div className="chat-controls">
             {state.phase === "family_chat" && !sidebarActive && mySlot && !state.sidebarUsed[mySlot] && (
-              <button className="btn btn-secondary" onClick={mp.startSidebar} disabled={mp.isStreaming}>
+              <button className="btn btn-secondary" onClick={() => { track("sidebar_used", { game_id: mp.gameId ?? "" }); mp.startSidebar(); }} disabled={mp.isStreaming}>
                 talk privately
               </button>
             )}
