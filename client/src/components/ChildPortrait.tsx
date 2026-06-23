@@ -23,8 +23,9 @@ export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
     if (!gameId) return;
 
     const slug = ageSlug(age);
-    const url = `/portraits/${gameId}/${slug}.png`;
-    const fallbackUrl = `/portraits/${slug}.png`;
+    const base = import.meta.env.BASE_URL;
+    const url = `${base}portraits/${gameId}/${slug}.png`;
+    const fallbackUrl = `${base}portraits/${slug}.png`;
     let mounted = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
     // Guard against double-firing onLoad if both the fallback and the custom

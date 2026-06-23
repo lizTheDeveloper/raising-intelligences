@@ -14,7 +14,7 @@ interface Message {
   chatType: string;
 }
 
-const API = "/api";
+const API = import.meta.env.BASE_URL + "api";
 
 export function useGame() {
   const [gameId, setGameId] = useState<string | null>(null);
