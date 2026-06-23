@@ -1,10 +1,12 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
+import { existsSync } from "fs";
+import path from "path";
 import { ConversationEngine } from "../game/conversation-engine.js";
 import { createGame } from "../game/state-machine.js";
 import type { GameState, Sender } from "../types.js";
 import type { GameRepository } from "../db/repository.js";
-import { generateFirstPortrait, generateNextPortrait } from "../portrait-gen.js";
+import { generateFirstPortrait, generateNextPortrait, PORTRAITS_DIR } from "../portrait-gen.js";
 import { logger } from "../logger.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
@@ -229,6 +231,37 @@ export function createGameRoutes(
     }
     res.json({ ok: true });
     generateNextPortrait(state.id).catch(() => {});
+  });
+
+  // Long-poll until the portrait file for this game+slug appears on disk.
+  // The client calls this ONCE and waits — no retry loop, no polling.
+  // Responds with { url } when ready, 408 if it takes longer than 5 minutes.
+  router.get("/game/:id/portraits/:slug/await", async (req: Request, res: Response) => {
+    const { id, slug } = req.params as { id: string; slug: string };
+    if (!/^age-\d+$/.test(slug)) {
+      res.status(400).json({ error: "Invalid slug" });
+      return;
+    }
+    const filePath = path.join(PORTRAITS_DIR, id, `${slug}.png`);
+    const TIMEOUT_MS = 5 * 60 * 1000;
+    const CHECK_INTERVAL_MS = 1000;
+    const deadline = Date.now() + TIMEOUT_MS;
+
+    const check = () => {
+      if (res.writableEnded) return;
+      if (existsSync(filePath)) {
+        res.json({ url: `portraits/${id}/${slug}.png` });
+        return;
+      }
+      if (Date.now() >= deadline) {
+        res.status(408).json({ error: "Portrait not ready in time" });
+        return;
+      }
+      setTimeout(check, CHECK_INTERVAL_MS);
+    };
+
+    res.on("close", () => { /* client disconnected — check() will bail on res.writableEnded */ });
+    check();
   });
 
   return router;

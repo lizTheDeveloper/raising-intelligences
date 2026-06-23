@@ -25,73 +25,40 @@ export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
 
     const slug = ageSlug(age);
     const base = import.meta.env.BASE_URL;
-    const url = `${base}portraits/${gameId}/${slug}.png`;
-    const fallbackUrl = `${base}portraits/${slug}.png`;
     let mounted = true;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    // Guard against double-firing onLoad if both the fallback and the custom
-    // portrait eventually succeed (fallback fires immediately on first 404,
-    // custom portrait may still succeed on a later retry).
-    let onLoadFired = false;
-
-    const fireOnLoad = () => {
-      if (!onLoadFired) {
-        onLoadFired = true;
-        onLoad?.();
-      }
-    };
-
-    const tryLoadFallback = () => {
-      if (!mounted) return;
-      const img = new Image();
-      img.onload = () => {
-        if (!mounted) return;
-        // State updater must be pure — no side-effects inside it.
-        setSrc((currentSrc) => {
-          if (currentSrc === url) return currentSrc; // custom portrait already won the race
-          return fallbackUrl;
-        });
-        fireOnLoad();
-      };
-      img.onerror = () => {
-        // Even if the fallback is missing, unblock the UI.
-        if (mounted) fireOnLoad();
-      };
-      img.src = fallbackUrl;
-    };
-
-    const tryLoad = (attempts = 0) => {
-      if (!mounted) return;
-      const img = new Image();
-      img.onload = () => {
-        if (mounted) {
-          setSrc(url);
-          track("portrait_loaded", { ageBucket: slug, attempts });
-          fireOnLoad();
-        }
-      };
-      img.onerror = () => {
-        if (!mounted) return;
-
-        if (attempts === 0) {
-          tryLoadFallback();
-        }
-
-        if (attempts < 12) {
-          timer = setTimeout(() => tryLoad(attempts + 1), 2000);
-        } else {
-          track("portrait_failed", { ageBucket: slug });
-        }
-      };
-      img.src = url;
-    };
+    const controller = new AbortController();
 
     setSrc(null);
-    tryLoad();
+
+    // One request — server holds it open until the file exists, then responds.
+    fetch(`${base}api/game/${gameId}/portraits/${slug}/await`, { signal: controller.signal })
+      .then((res) => {
+        if (!mounted || !res.ok) return;
+        return res.json();
+      })
+      .then((data: { url?: string } | undefined) => {
+        if (!mounted || !data?.url) return;
+        const url = `${base}${data.url}`;
+        const img = new Image();
+        img.onload = () => {
+          if (mounted) {
+            setSrc(url);
+            track("portrait_loaded", { ageBucket: slug, attempts: 0 });
+            onLoad?.();
+          }
+        };
+        img.onerror = () => {
+          if (mounted) track("portrait_failed", { ageBucket: slug });
+        };
+        img.src = url;
+      })
+      .catch(() => {
+        if (mounted) track("portrait_failed", { ageBucket: slug });
+      });
 
     return () => {
       mounted = false;
-      if (timer) clearTimeout(timer);
+      controller.abort();
     };
   }, [gameId, age]);
 
