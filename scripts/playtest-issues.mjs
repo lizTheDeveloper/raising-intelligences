@@ -225,10 +225,9 @@ async function run() {
     await page.click(".debrief-enhanced button.btn");
     await page.waitForSelector(".event-intro", { timeout: 10_000 });
 
-    // After endDebrief, currentEvent is null — EventIntro shows "begin" button.
-    // Click it to trigger the event fetch, then wait for the description to appear.
-    await page.waitForSelector(".event-intro button.btn", { timeout: 10_000 });
-    await page.click(".event-intro button.btn");
+    // handleDebrief calls nextEvent() automatically, so EventIntro goes straight
+    // from waiting (spinner) to event-loaded (description + "enter" button).
+    // Just wait for the description — no "begin" click needed.
     await page.waitForSelector(".event-description", { timeout: LLM_TIMEOUT });
 
     const eventDesc2 = await page.$eval(".event-description", (el) => el.textContent).catch(() => "");
@@ -267,9 +266,7 @@ async function run() {
 
     // Click "end childhood → epilogue"
     console.log("\n[9] Triggering epilogue");
-    // The epilogue button is in .debrief (sibling of .debrief-enhanced), text "end childhood → epilogue"
-    const epiButton = await page.locator('.debrief button.btn-secondary').first();
-    await epiButton.click();
+    await page.click('[data-testid="btn-epilogue"]');
 
     console.log("  Waiting for epilogue generation...");
     await page.waitForSelector(".endgame", { timeout: LLM_TIMEOUT }).catch(async () => {
