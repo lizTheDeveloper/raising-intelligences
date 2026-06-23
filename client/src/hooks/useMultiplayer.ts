@@ -75,7 +75,9 @@ export function useMultiplayer() {
 
   const ensureSocket = useCallback((): Socket => {
     if (socketRef.current) return socketRef.current;
-    const socketPath = import.meta.env.PROD ? "/raising-intelligences/socket.io" : "/socket.io";
+    // Socket.io path: Traefik strips /raising-intelligences before forwarding
+    // to the backend (see ri-strip middleware), so both dev and prod use /socket.io.
+    const socketPath = "/socket.io";
     const socket = io({ autoConnect: true, path: socketPath });
     socket.on("connect", () => setConnected(true));
     socket.on("disconnect", () => setConnected(false));
