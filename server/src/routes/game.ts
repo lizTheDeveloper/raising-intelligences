@@ -14,24 +14,22 @@ const MAX_CHILD_NAME_LENGTH = 50;
 const MAX_MESSAGE_LENGTH = 2000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-interface GameRouteLimiters {
+interface GameRouteOptions {
   llmRateLimit?: RequestHandler;
   gameCreateLimit?: RequestHandler;
+  /** Shared lock map — pass the same instance to endgame routes and socket
+   * handlers so cross-module operations on the same game are serialized. */
+  gameLocks?: Map<string, Promise<void>>;
 }
 
 export function createGameRoutes(
   engine: ConversationEngine,
   games: Map<string, GameState>,
   repo: GameRepository,
-  limiters: GameRouteLimiters = {}
+  options: GameRouteOptions = {}
 ): Router {
-  const { llmRateLimit, gameCreateLimit } = limiters;
+  const { llmRateLimit, gameCreateLimit, gameLocks = new Map<string, Promise<void>>() } = options;
   const router = Router();
-
-  // Per-game operation queue — serializes write operations so concurrent HTTP
-  // requests on the same gameId can't read the same snapshot, run their LLM
-  // calls in parallel, and then overwrite each other on write-back.
-  const gameLocks = new Map<string, Promise<void>>();
 
   // Prefetched event promises — kicked off at game creation (event 1) and after
   // every end-chat (events 2+), so next-event returns instantly instead of waiting.
@@ -40,7 +38,9 @@ export function createGameRoutes(
   function withGameLock<T>(gameId: string, fn: () => Promise<T>): Promise<T> {
     const prev = gameLocks.get(gameId) ?? Promise.resolve();
     const next = prev.catch(() => {}).then(fn);
-    gameLocks.set(gameId, next.then(() => {}, () => {}));
+    const settled = next.then(() => {}, () => {});
+    settled.then(() => { if (gameLocks.get(gameId) === settled) gameLocks.delete(gameId); });
+    gameLocks.set(gameId, settled);
     return next;
   }
 

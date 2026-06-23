@@ -100,8 +100,12 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   const llmRateLimit = rateLimit({ windowMs: 60_000, max: 10, standardHeaders: true, legacyHeaders: false });
   const gameCreateLimit = rateLimit({ windowMs: 60_000, max: 5, standardHeaders: true, legacyHeaders: false });
 
-  app.use("/api", createGameRoutes(conversationEngine, games, repo, { llmRateLimit, gameCreateLimit }));
-  app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit }));
+  // Single shared lock map — prevents cross-module races between game.ts,
+  // endgame.ts, and socket handlers operating on the same game concurrently.
+  const gameLocks = new Map<string, Promise<void>>();
+
+  app.use("/api", createGameRoutes(conversationEngine, games, repo, { llmRateLimit, gameCreateLimit, gameLocks }));
+  app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit, gameLocks }));
   app.use("/api", createUserRoutes());
 
   app.get(
@@ -134,6 +138,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     conversationEngine,
     endgameEngine,
     repo,
+    gameLocks,
   });
 
   let evictionTimer: NodeJS.Timeout | undefined;
