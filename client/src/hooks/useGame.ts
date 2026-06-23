@@ -185,6 +185,7 @@ export function useGame() {
       setStreamingMessage("");
       setError(null);
 
+      let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
       try {
         const res = await fetch(`${API}/game/${gameId}/message`, {
           method: "POST",
@@ -198,7 +199,7 @@ export function useGame() {
           return;
         }
 
-        const reader = res.body.getReader();
+        reader = res.body.getReader();
         const decoder = new TextDecoder();
         let kidMessage = "";
         let lineBuffer = "";
@@ -239,7 +240,7 @@ export function useGame() {
       } catch (err) {
         setTrackedError(`Message failed: ${err instanceof Error ? err.message : String(err)}`, "send_message");
       } finally {
-        // Always clear streaming state, even if an error occurred mid-stream
+        reader?.cancel().catch(() => {});
         setIsStreaming(false);
         setStreamingMessage("");
       }
