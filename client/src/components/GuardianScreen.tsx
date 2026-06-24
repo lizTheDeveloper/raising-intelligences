@@ -140,8 +140,9 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
   const [seedSubmitting, setSeedSubmitting] = useState(false);
   const [showMessage, setShowMessage] = useState(false);
 
-  // Thought bubble
-  const [thoughtIdx, setThoughtIdx] = useState(0);
+  // Fragment list — accumulates up to 10, fade-in + append style
+  const [visibleFragments, setVisibleFragments] = useState<string[]>([]);
+  const fragmentPoolUsed = useRef(new Set<number>());
 
   const variant = useMemo(pickVariant, []);
   const base = import.meta.env.BASE_URL;
@@ -154,23 +155,39 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
   // ---------- Weighted fragment pool ----------
   const weightedFragments = useMemo(() => getWeightedFragments(oceanAnswers), [oceanAnswers]);
 
-  // Cycle thought bubble
+  // Append a new fragment every few seconds, up to 10 visible
   useEffect(() => {
     if (weightedFragments.length === 0) return;
-    // Pick initial random index
-    setThoughtIdx(Math.floor(Math.random() * weightedFragments.length));
+
+    const pickNext = () => {
+      const available = weightedFragments
+        .map((f, i) => ({ text: f.text, idx: i }))
+        .filter((f) => !fragmentPoolUsed.current.has(f.idx));
+      if (available.length === 0) {
+        fragmentPoolUsed.current.clear();
+        return weightedFragments[Math.floor(Math.random() * weightedFragments.length)];
+      }
+      const pick = available[Math.floor(Math.random() * available.length)];
+      fragmentPoolUsed.current.add(pick.idx);
+      return pick;
+    };
+
+    // Seed with one fragment immediately
+    if (visibleFragments.length === 0) {
+      const first = pickNext();
+      setVisibleFragments([first.text]);
+    }
+
     const id = setInterval(() => {
-      setThoughtIdx((prev) => {
-        if (weightedFragments.length <= 1) return 0;
-        let next = Math.floor(Math.random() * weightedFragments.length);
-        if (next === prev) next = (next + 1) % weightedFragments.length;
-        return next;
+      setVisibleFragments((prev) => {
+        const next = pickNext();
+        const updated = [...prev, next.text];
+        if (updated.length > 10) return updated.slice(-10);
+        return updated;
       });
-    }, 7000);
+    }, 3000);
     return () => clearInterval(id);
   }, [weightedFragments]);
-
-  const currentThought = weightedFragments[thoughtIdx % weightedFragments.length]?.text ?? "";
 
   // ---------- Current display age for intro images ----------
   const displayAge = useMemo(() => {
@@ -409,16 +426,18 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
         </div>
       )}
 
-      {/* Thought bubble — visible during quiz, reveal, confessional, and waiting */}
+      {/* Child fragments — fade in and accumulate, up to 10 */}
       {(currentStep.kind === "quiz" ||
         currentStep.kind === "reveal" ||
         currentStep.kind === "confessional" ||
         currentStep.kind === "waiting") &&
-        currentThought && (
+        visibleFragments.length > 0 && (
           <div className="guardian-thoughts">
-            <span key={thoughtIdx} className="guardian-thought">
-              {currentThought}
-            </span>
+            {visibleFragments.map((text, i) => (
+              <span key={`${text}-${i}`} className="guardian-thought">
+                {text}
+              </span>
+            ))}
           </div>
         )}
 
