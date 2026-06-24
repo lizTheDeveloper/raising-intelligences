@@ -1,0 +1,19 @@
+- generic [ref=e27]:
+  - heading "Zara" [level=2] [ref=e28]
+  - img [ref=e50]
+  - generic [ref=e35]:
+    - paragraph [ref=e36]: born on a quiet night.
+    - paragraph [ref=e37]: so small you were afraid to breathe.
+    - paragraph [ref=e48]: they reached for everything.
+    - paragraph [ref=e51]: they said something that almost sounded like your name.
+    - paragraph [ref=e61]: they took their first steps.
+    - paragraph [ref=e62]: they fell. they got back up.
+    - paragraph [ref=e72]: three years old.
+  - generic [ref=e82]:
+    - paragraph [ref=e83]: "You send a text to a close friend and they don’t respond for two days. You:"
+    - generic [ref=e84]:
+      - button "Assume they’re busy. Check in if you don’t hear back by the weekend." [ref=e85] [cursor=pointer]
+      - button "Notice it, but figure they’ll get back to you when they can." [ref=e86] [cursor=pointer]
+      - button "Scroll back through your last few messages wondering if you said something weird." [ref=e87] [cursor=pointer]
+      - button "Replay the conversation in your head at 2am. Definitely said something wrong." [ref=e88] [cursor=pointer]
+  - generic [ref=e89]: stay here.

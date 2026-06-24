@@ -1,0 +1,14 @@
+- generic [ref=e26]:
+  - heading "Luna" [level=2] [ref=e27]
+  - img [ref=e30]
+  - generic [ref=e34]:
+    - paragraph [ref=e35]: born on a quiet night.
+    - paragraph [ref=e36]: so small you were afraid to breathe.
+  - generic [ref=e37]:
+    - paragraph [ref=e38]: "You find out a friend is really into something you’ve never heard of — fermentation, birdwatching, speedcubing, whatever. You:"
+    - generic [ref=e39]:
+      - button "Smile and nod. You’re happy for them but you’ll stick to what you know." [ref=e40] [cursor=pointer]
+      - button "Ask a couple questions to be polite, but you probably won’t look into it." [ref=e41] [cursor=pointer]
+      - button "Go down a rabbit hole that night reading about it." [ref=e42] [cursor=pointer]
+      - button "Show up next weekend with your own starter kit." [ref=e43] [cursor=pointer]
+  - generic [ref=e45]: cross my heart.

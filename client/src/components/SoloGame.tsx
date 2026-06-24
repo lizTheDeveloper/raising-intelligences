@@ -77,10 +77,13 @@ export function SoloGame() {
 
   const handleStart = async () => {
     if (!nameInput.trim()) return;
-    const id = await createGame(nameInput.trim());
-    if (!id) return;
-    if (matrixUser) syncKidsToServer(matrixUser);
     setShowGuardian(true);
+    const id = await createGame(nameInput.trim());
+    if (!id) {
+      setShowGuardian(false);
+      return;
+    }
+    if (matrixUser) syncKidsToServer(matrixUser);
     setLoadingEvent(true);
     await nextEvent(id);
     setLoadingEvent(false);

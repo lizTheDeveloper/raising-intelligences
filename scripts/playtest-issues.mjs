@@ -103,10 +103,33 @@ async function run() {
       console.log("  ✓ Child name shown correctly");
     }
 
-    // Wait for the ready button to become enabled (portrait + event both loaded)
+    // Complete the OCEAN personality quiz (5 questions, interleaved with narrative auto-advance steps).
+    // Quiz answer buttons use class 'guardian-quiz-option', not 'btn' — the playtest must click each.
+    console.log("  Completing OCEAN quiz (5 questions)...");
+    for (let q = 0; q < 5; q++) {
+      // Wait for a quiz option to appear (narrative steps auto-advance on timers)
+      await page.waitForSelector('.guardian-quiz-option', { timeout: 60_000 });
+      // Click the first option (value 1 — conservative choice, always valid)
+      const opts = await page.$$('.guardian-quiz-option');
+      if (opts.length === 0) {
+        logIssue("OCEAN quiz option not found", `No .guardian-quiz-option buttons found for question ${q + 1}`);
+        break;
+      }
+      await opts[0].click();
+      console.log(`  ✓ Answered quiz question ${q + 1}`);
+      // Brief pause for the answer handler's 400ms delay + step advance
+      await page.waitForTimeout(600);
+    }
+
+    // Confessional step — fill textareas (optional) and click submit
+    await page.waitForSelector('.guardian-confessional-submit', { timeout: 30_000 });
+    console.log("  Submitting confessional...");
+    await page.click('.guardian-confessional-submit');
+
+    // Wait for the ready button to become enabled (seed generated + event loaded + portrait revealed)
     console.log("  Waiting for guardian ready button...");
-    await page.waitForSelector('.guardian-screen button.btn:not([disabled])', { timeout: LLM_TIMEOUT });
-    const readyText = await page.$eval('.guardian-screen button.btn', (el) => el.textContent?.trim());
+    await page.waitForSelector('[data-testid="btn-guardian-ready"]:not([disabled])', { timeout: LLM_TIMEOUT });
+    const readyText = await page.$eval('[data-testid="btn-guardian-ready"]', (el) => el.textContent?.trim());
     console.log(`  ✓ Ready button enabled: "${readyText}"`);
 
     if (readyText !== "I'm ready") {
@@ -116,7 +139,7 @@ async function run() {
     await page.screenshot({ path: "/Users/annhoward/src/raising_intelligences/playtest-guardian-ready.png" });
 
     // Click ready
-    await page.click('.guardian-screen button.btn');
+    await page.click('[data-testid="btn-guardian-ready"]');
 
     // Guardian screen should transition away
     console.log("  Waiting for guardian screen to dismiss...");

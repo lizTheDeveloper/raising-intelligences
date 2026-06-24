@@ -435,6 +435,14 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         return fail("ocean must be an array of 5 integers each between 1 and 4");
       }
 
+      const MAX_CONFESSIONAL_LENGTH = 500;
+      if (
+        (confessional1 !== undefined && (typeof confessional1 !== "string" || confessional1.length > MAX_CONFESSIONAL_LENGTH)) ||
+        (confessional2 !== undefined && (typeof confessional2 !== "string" || confessional2.length > MAX_CONFESSIONAL_LENGTH))
+      ) {
+        return fail("confessionals must be strings of at most 500 characters");
+      }
+
       const personality: ParentPersonality = {
         ocean: ocean as [number, number, number, number, number],
         confessional1: confessional1 ?? "",
