@@ -257,6 +257,15 @@ export function createGameRoutes(
       return;
     }
 
+    const MAX_CONFESSIONAL_LENGTH = 500;
+    if (
+      (confessional1 !== undefined && (typeof confessional1 !== "string" || confessional1.length > MAX_CONFESSIONAL_LENGTH)) ||
+      (confessional2 !== undefined && (typeof confessional2 !== "string" || confessional2.length > MAX_CONFESSIONAL_LENGTH))
+    ) {
+      res.status(400).json({ error: "confessionals must be strings of at most 500 characters" });
+      return;
+    }
+
     const parentSlot: "parent1" | "parent2" =
       slot === "parent2" ? "parent2" : "parent1";
 
@@ -266,49 +275,53 @@ export function createGameRoutes(
       confessional2: confessional2 ?? "",
     };
 
-    await withGameLock(gameId, async () => {
-      const current = await resolveGame(gameId);
-      if (!current) {
-        res.status(404).json({ error: "Game not found" });
-        return;
-      }
+    try {
+      await withGameLock(gameId, async () => {
+        const current = await resolveGame(gameId);
+        if (!current) {
+          res.status(404).json({ error: "Game not found" });
+          return;
+        }
 
-      const updatedState: GameState = {
-        ...current,
-        parentPersonalities: {
-          ...current.parentPersonalities,
-          [parentSlot]: personality,
-        },
-      };
-      games.set(gameId, updatedState);
+        const updatedState: GameState = {
+          ...current,
+          parentPersonalities: {
+            ...current.parentPersonalities,
+            [parentSlot]: personality,
+          },
+        };
+        games.set(gameId, updatedState);
 
-      // Determine if we have enough personalities to generate the seed.
-      // Solo games need only parent1; multiplayer needs both.
-      const isSolo =
-        updatedState.relationshipType === "solo parent" ||
-        updatedState.relationshipType === "solo";
+        // Determine if we have enough personalities to generate the seed.
+        // Solo games need only parent1; multiplayer needs both.
+        const isSolo =
+          updatedState.relationshipType === "solo parent" ||
+          updatedState.relationshipType === "solo";
 
-      const parent1 = updatedState.parentPersonalities.parent1;
-      const parent2 = updatedState.parentPersonalities.parent2;
+        const parent1 = updatedState.parentPersonalities.parent1;
+        const parent2 = updatedState.parentPersonalities.parent2;
 
-      const allReady = isSolo ? !!parent1 : !!(parent1 && parent2);
+        const allReady = isSolo ? !!parent1 : !!(parent1 && parent2);
 
-      if (allReady && parent1) {
-        const seed = await generatePersonalitySeed(
-          engine.llm,
-          updatedState.childName,
-          parent1,
-          isSolo ? undefined : parent2
-        );
-        const withSeed: GameState = { ...updatedState, personalitySeed: seed };
-        games.set(gameId, withSeed);
-        await repo.saveGame(withSeed);
-        res.json({ ready: true });
-      } else {
-        await repo.saveGame(updatedState);
-        res.json({ ready: false });
-      }
-    });
+        if (allReady && parent1) {
+          const seed = await generatePersonalitySeed(
+            engine.llm,
+            updatedState.childName,
+            parent1,
+            isSolo ? undefined : parent2
+          );
+          const withSeed: GameState = { ...updatedState, personalitySeed: seed };
+          games.set(gameId, withSeed);
+          await repo.saveGame(withSeed);
+          res.json({ ready: true });
+        } else {
+          await repo.saveGame(updatedState);
+          res.json({ ready: false });
+        }
+      });
+    } catch {
+      res.status(500).json({ error: "Failed to process personality submission" });
+    }
   });
 
   // Kick off generation of the next portrait in the chain — called by the client

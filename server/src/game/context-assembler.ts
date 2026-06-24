@@ -102,7 +102,7 @@ export function buildKidContext(state: GameState): {
     ? `Your inner world (this is who you are — act from this, don't recite it):\n${state.identityDocument}`
     : "This is your earliest memory with your parents. You don't have much history yet — you're just a little kid.";
 
-  const system = getAgeSpecificPrompt(String(state.currentEvent?.age ?? 4)) + `\n\n${identitySection}\n\nThe current situation: ${state.currentEvent?.description ?? ""}`;
+  const system = getAgeSpecificPrompt(String(state.currentEvent?.age ?? 4), { childName: state.childName }) + `\n\n${identitySection}\n\nThe current situation: ${state.currentEvent?.description ?? ""}`;
 
   const eventMessages = currentEventMessages(state);
   const isInSidebar = state.phase === "sidebar";

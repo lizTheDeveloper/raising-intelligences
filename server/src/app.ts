@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import path from "path";
 import rateLimit from "express-rate-limit";
-import type { RequestHandler } from "express";
+import type { RequestHandler, ErrorRequestHandler } from "express";
 import { createServer, type Server as HttpServer } from "http";
 import { Server as SocketServer } from "socket.io";
 import { createGameRoutes } from "./routes/game.js";
@@ -134,6 +134,13 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
       res.sendFile(path.join(clientDist, "index.html"));
     });
   }
+
+  // Global error handler — must have 4 params so Express recognises it as an
+  // error-handling middleware. Never emits err.stack to clients.
+  const errorHandler: ErrorRequestHandler = (_err, _req, res, _next) => {
+    res.status(500).json({ error: "An internal error occurred" });
+  };
+  app.use(errorHandler);
 
   const httpServer = createServer(app);
   const io = new SocketServer(httpServer, {
