@@ -1,11 +1,11 @@
 import type { GameState, Message } from "../types.js";
 import {
-  KID_SYSTEM_PROMPT,
   PSYCHOLOGIST_SYSTEM_PROMPT,
   WORLD_MANAGER_SYSTEM_PROMPT,
   EPILOGUE_SYSTEM_PROMPT,
   REPORT_CARD_SYSTEM_PROMPT,
 } from "../llm/prompts.js";
+import { getAgeSpecificPrompt } from "../llm/kid-prompts-by-age.js";
 
 function fillTemplate(template: string, vars: Record<string, string>): string {
   let result = template;
@@ -102,13 +102,7 @@ export function buildKidContext(state: GameState): {
     ? `Your inner world (this is who you are — act from this, don't recite it):\n${state.identityDocument}`
     : "This is your earliest memory with your parents. You don't have much history yet — you're just a little kid.";
 
-  const system = fillTemplate(KID_SYSTEM_PROMPT, {
-    childName: state.childName,
-    age: String(state.currentEvent?.age ?? 4),
-    personalitySeed: state.personalitySeed,
-    identitySection,
-    eventDescription: state.currentEvent?.description ?? "",
-  });
+  const system = getAgeSpecificPrompt(String(state.currentEvent?.age ?? 4), { childName: state.childName }) + `\n\n${identitySection}\n\nThe current situation: ${state.currentEvent?.description ?? ""}`;
 
   const eventMessages = currentEventMessages(state);
   const isInSidebar = state.phase === "sidebar";
