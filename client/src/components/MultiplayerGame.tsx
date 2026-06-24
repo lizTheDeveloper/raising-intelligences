@@ -27,9 +27,8 @@ export function MultiplayerGame({ joinGameId }: Props) {
   const [childInput, setChildInput] = useState("");
   const [relationship, setRelationship] = useState(RELATIONSHIP_OPTIONS[0]);
   const [gateReady, setGateReady] = useState(false);
-  const [showGuardian, setShowGuardian] = useState(false);
+  const [guardianDismissed, setGuardianDismissed] = useState(false);
   const autoResumeAttempted = useRef(false);
-  const wasInLobbyRef = useRef(true);
 
   // On mount, if we have resume data in localStorage, connect the socket
   // to trigger auto-rejoin (the connect handler in useMultiplayer does the rest).
@@ -48,16 +47,15 @@ export function MultiplayerGame({ joinGameId }: Props) {
   const inMySidebar = sidebarActive !== null && sidebarActive === mySlot;
   const inOtherSidebar = sidebarActive !== null && sidebarActive !== mySlot;
 
-  // Detect the falling edge of the lobby predicate to trigger the guardian screen.
-  // When the lobby view transitions out (state arrives with currentEventNumber > 0),
-  // show the guardian personality quiz before the first event begins.
+  // Guardian screen: show on the first event intro (eventNumber === 1, event loaded).
+  // Derived from state so reconnects to later phases skip it correctly.
   const inLobbyView = !state || (state.phase === "event_intro" && state.currentEventNumber === 0);
-  useEffect(() => {
-    if (wasInLobbyRef.current && !inLobbyView) {
-      setShowGuardian(true);
-    }
-    wasInLobbyRef.current = inLobbyView;
-  }, [inLobbyView]);
+  const showGuardian =
+    !guardianDismissed &&
+    !!state &&
+    state.phase === "event_intro" &&
+    state.currentEventNumber === 1 &&
+    state.currentEvent !== null;
 
   const prevEventNumberRef = useRef(state?.currentEventNumber ?? 0);
   useEffect(() => {
@@ -164,7 +162,7 @@ export function MultiplayerGame({ joinGameId }: Props) {
           childName={state.childName}
           gameId={mp.gameId}
           eventReady={state.currentEvent !== null}
-          onReady={() => setShowGuardian(false)}
+          onReady={() => setGuardianDismissed(true)}
           onSubmitPersonality={mp.submitPersonality}
           seedReadyProp={mp.seedReady}
         />
