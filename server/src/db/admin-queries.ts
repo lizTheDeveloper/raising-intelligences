@@ -1,0 +1,470 @@
+import { query } from "./pool.js";
+
+const ABANDONED_THRESHOLD_DAYS = 7;
+
+export interface OverviewStats {
+  totalGames: number;
+  activeGames: number;
+  completedGames: number;
+  abandonedGames: number;
+}
+
+export interface GameSummary {
+  id: string;
+  childName: string;
+  phase: string;
+  currentEventNumber: number;
+  totalEvents: number;
+  createdAt: string;
+  updatedAt: string;
+  hasEndgame: boolean;
+  players: { slot: string; displayName: string | null }[];
+}
+
+export interface ListGamesOptions {
+  status?: "active" | "completed" | "abandoned";
+  limit?: number;
+  offset?: number;
+}
+
+export interface EventDetail {
+  eventNumber: number;
+  age: number;
+  description: string;
+  setting: string;
+  trigger: string;
+  createdAt: string;
+}
+
+export interface MessageCounts {
+  eventNumber: number;
+  parent1: number;
+  parent2: number;
+  kid: number;
+}
+
+export interface GameDetail extends GameSummary {
+  relationshipType: string;
+  identityDocument: string;
+  events: EventDetail[];
+  messageCounts: MessageCounts[];
+  identitySnapshots: { eventNumber: number; document: string }[];
+  sidebarUsed: { parent1: boolean; parent2: boolean };
+  endgame: { epilogue: string; reportCard: string } | null;
+}
+
+export interface AdminQueries {
+  getOverview(abandonedThresholdDays?: number): Promise<OverviewStats>;
+  listGames(opts?: ListGamesOptions): Promise<{ games: GameSummary[]; total: number }>;
+  getGameDetail(gameId: string): Promise<GameDetail | null>;
+}
+
+// ── In-Memory Implementation (tests / no-DB mode) ──────────────────────
+
+interface StoredGame {
+  id: string;
+  childName: string;
+  phase: string;
+  currentEventNumber: number;
+  totalEvents: number;
+  relationshipType: string;
+  identityDocument: string;
+  sidebarUsedParent1: boolean;
+  sidebarUsedParent2: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface StoredPlayer {
+  slot: string;
+  displayName: string | null;
+}
+
+interface StoredEvent {
+  eventNumber: number;
+  age: number;
+  description: string;
+  setting: string;
+  trigger: string;
+  createdAt: Date;
+}
+
+interface StoredMessage {
+  sender: string;
+  eventNumber: number;
+}
+
+export class InMemoryAdminQueries implements AdminQueries {
+  private games = new Map<string, StoredGame>();
+  private players = new Map<string, StoredPlayer[]>();
+  private events = new Map<string, StoredEvent[]>();
+  private messages = new Map<string, StoredMessage[]>();
+  private snapshots = new Map<string, { eventNumber: number; document: string }[]>();
+  private endgames = new Map<string, { epilogue: string; reportCard: string }>();
+
+  addGame(game: StoredGame): void {
+    this.games.set(game.id, game);
+  }
+
+  addPlayer(gameId: string, player: StoredPlayer): void {
+    const list = this.players.get(gameId) ?? [];
+    list.push(player);
+    this.players.set(gameId, list);
+  }
+
+  addEvent(gameId: string, event: StoredEvent): void {
+    const list = this.events.get(gameId) ?? [];
+    list.push(event);
+    this.events.set(gameId, list);
+  }
+
+  addMessage(gameId: string, msg: StoredMessage): void {
+    const list = this.messages.get(gameId) ?? [];
+    list.push(msg);
+    this.messages.set(gameId, list);
+  }
+
+  addSnapshot(gameId: string, snapshot: { eventNumber: number; document: string }): void {
+    const list = this.snapshots.get(gameId) ?? [];
+    list.push(snapshot);
+    this.snapshots.set(gameId, list);
+  }
+
+  addEndgame(gameId: string, endgame: { epilogue: string; reportCard: string }): void {
+    this.endgames.set(gameId, endgame);
+  }
+
+  async getOverview(abandonedThresholdDays = ABANDONED_THRESHOLD_DAYS): Promise<OverviewStats> {
+    const now = Date.now();
+    const threshold = abandonedThresholdDays * 24 * 60 * 60 * 1000;
+    let active = 0;
+    let completed = 0;
+    let abandoned = 0;
+
+    for (const [id, game] of this.games) {
+      if (this.endgames.has(id)) {
+        completed++;
+      } else if (now - game.updatedAt.getTime() > threshold) {
+        abandoned++;
+      } else {
+        active++;
+      }
+    }
+
+    return {
+      totalGames: this.games.size,
+      activeGames: active,
+      completedGames: completed,
+      abandonedGames: abandoned,
+    };
+  }
+
+  async listGames(opts: ListGamesOptions = {}): Promise<{ games: GameSummary[]; total: number }> {
+    const { status, limit = 50, offset = 0 } = opts;
+    const now = Date.now();
+    const threshold = ABANDONED_THRESHOLD_DAYS * 24 * 60 * 60 * 1000;
+
+    let entries = [...this.games.values()];
+
+    if (status) {
+      entries = entries.filter((g) => {
+        const hasEndgame = this.endgames.has(g.id);
+        const isOld = now - g.updatedAt.getTime() > threshold;
+        if (status === "completed") return hasEndgame;
+        if (status === "abandoned") return !hasEndgame && isOld;
+        return !hasEndgame && !isOld;
+      });
+    }
+
+    entries.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+    const total = entries.length;
+    const page = entries.slice(offset, offset + limit);
+
+    return {
+      total,
+      games: page.map((g) => ({
+        id: g.id,
+        childName: g.childName,
+        phase: g.phase,
+        currentEventNumber: g.currentEventNumber,
+        totalEvents: g.totalEvents,
+        createdAt: g.createdAt.toISOString(),
+        updatedAt: g.updatedAt.toISOString(),
+        hasEndgame: this.endgames.has(g.id),
+        players: this.players.get(g.id) ?? [],
+      })),
+    };
+  }
+
+  async getGameDetail(gameId: string): Promise<GameDetail | null> {
+    const game = this.games.get(gameId);
+    if (!game) return null;
+
+    const events = (this.events.get(gameId) ?? [])
+      .sort((a, b) => a.eventNumber - b.eventNumber)
+      .map((e) => ({
+        eventNumber: e.eventNumber,
+        age: e.age,
+        description: e.description,
+        setting: e.setting,
+        trigger: e.trigger,
+        createdAt: e.createdAt.toISOString(),
+      }));
+
+    const msgs = this.messages.get(gameId) ?? [];
+    const countsByEvent = new Map<number, { parent1: number; parent2: number; kid: number }>();
+    for (const m of msgs) {
+      const c = countsByEvent.get(m.eventNumber) ?? { parent1: 0, parent2: 0, kid: 0 };
+      if (m.sender === "parent1") c.parent1++;
+      else if (m.sender === "parent2") c.parent2++;
+      else if (m.sender === "kid") c.kid++;
+      countsByEvent.set(m.eventNumber, c);
+    }
+    const messageCounts = [...countsByEvent.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([eventNumber, counts]) => ({ eventNumber, ...counts }));
+
+    return {
+      id: game.id,
+      childName: game.childName,
+      phase: game.phase,
+      currentEventNumber: game.currentEventNumber,
+      totalEvents: game.totalEvents,
+      createdAt: game.createdAt.toISOString(),
+      updatedAt: game.updatedAt.toISOString(),
+      hasEndgame: this.endgames.has(gameId),
+      players: this.players.get(gameId) ?? [],
+      relationshipType: game.relationshipType,
+      identityDocument: game.identityDocument,
+      events,
+      messageCounts,
+      identitySnapshots: (this.snapshots.get(gameId) ?? []).sort(
+        (a, b) => a.eventNumber - b.eventNumber
+      ),
+      sidebarUsed: {
+        parent1: game.sidebarUsedParent1,
+        parent2: game.sidebarUsedParent2,
+      },
+      endgame: this.endgames.get(gameId) ?? null,
+    };
+  }
+}
+
+// ── Postgres Implementation ────────────────────────────────────────────
+
+export class PgAdminQueries implements AdminQueries {
+  async getOverview(abandonedThresholdDays = ABANDONED_THRESHOLD_DAYS): Promise<OverviewStats> {
+    const res = await query<{
+      total: string;
+      active: string;
+      completed: string;
+      abandoned: string;
+    }>(
+      `SELECT
+         COUNT(*)::text AS total,
+         COUNT(*) FILTER (
+           WHERE e.game_id IS NULL
+             AND g.updated_at >= now() - make_interval(days => $1)
+         )::text AS active,
+         COUNT(*) FILTER (WHERE e.game_id IS NOT NULL)::text AS completed,
+         COUNT(*) FILTER (
+           WHERE e.game_id IS NULL
+             AND g.updated_at < now() - make_interval(days => $1)
+         )::text AS abandoned
+       FROM games g
+       LEFT JOIN endgames e ON e.game_id = g.id`,
+      [abandonedThresholdDays]
+    );
+    const row = res.rows[0];
+    return {
+      totalGames: parseInt(row.total, 10),
+      activeGames: parseInt(row.active, 10),
+      completedGames: parseInt(row.completed, 10),
+      abandonedGames: parseInt(row.abandoned, 10),
+    };
+  }
+
+  async listGames(opts: ListGamesOptions = {}): Promise<{ games: GameSummary[]; total: number }> {
+    const { status, limit = 50, offset = 0 } = opts;
+
+    let whereClause = "";
+
+    if (status === "completed") {
+      whereClause = "WHERE e.game_id IS NOT NULL";
+    } else if (status === "abandoned") {
+      whereClause = `WHERE e.game_id IS NULL AND g.updated_at < now() - interval '${ABANDONED_THRESHOLD_DAYS} days'`;
+    } else if (status === "active") {
+      whereClause = `WHERE e.game_id IS NULL AND g.updated_at >= now() - interval '${ABANDONED_THRESHOLD_DAYS} days'`;
+    }
+
+    const countRes = await query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+       FROM games g LEFT JOIN endgames e ON e.game_id = g.id
+       ${whereClause}`
+    );
+    const total = parseInt(countRes.rows[0].count, 10);
+
+    const gamesRes = await query<{
+      id: string;
+      child_name: string;
+      phase: string;
+      current_event_number: number;
+      total_events: number;
+      created_at: Date;
+      updated_at: Date;
+      has_endgame: boolean;
+    }>(
+      `SELECT
+         g.id,
+         g.child_name,
+         g.phase,
+         g.current_event_number,
+         g.total_events,
+         g.created_at,
+         g.updated_at,
+         (e.game_id IS NOT NULL) AS has_endgame
+       FROM games g
+       LEFT JOIN endgames e ON e.game_id = g.id
+       ${whereClause}
+       ORDER BY g.updated_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+
+    const gameIds = gamesRes.rows.map((r) => r.id);
+    const playersByGame = new Map<string, { slot: string; displayName: string | null }[]>();
+    if (gameIds.length > 0) {
+      const playersRes = await query<{
+        game_id: string;
+        slot: string;
+        display_name: string | null;
+      }>(
+        `SELECT game_id, slot, display_name
+         FROM players WHERE game_id = ANY($1)`,
+        [gameIds]
+      );
+      for (const p of playersRes.rows) {
+        const list = playersByGame.get(p.game_id) ?? [];
+        list.push({ slot: p.slot, displayName: p.display_name });
+        playersByGame.set(p.game_id, list);
+      }
+    }
+
+    return {
+      total,
+      games: gamesRes.rows.map((r) => ({
+        id: r.id,
+        childName: r.child_name,
+        phase: r.phase,
+        currentEventNumber: r.current_event_number,
+        totalEvents: r.total_events,
+        createdAt: r.created_at.toISOString(),
+        updatedAt: r.updated_at.toISOString(),
+        hasEndgame: r.has_endgame,
+        players: playersByGame.get(r.id) ?? [],
+      })),
+    };
+  }
+
+  async getGameDetail(gameId: string): Promise<GameDetail | null> {
+    const gameRes = await query<{
+      id: string;
+      child_name: string;
+      relationship_type: string;
+      phase: string;
+      current_event_number: number;
+      total_events: number;
+      identity_document: string;
+      sidebar_used_parent1: boolean;
+      sidebar_used_parent2: boolean;
+      created_at: Date;
+      updated_at: Date;
+    }>(
+      `SELECT id, child_name, relationship_type, phase,
+              current_event_number, total_events, identity_document,
+              COALESCE(sidebar_used_parent1, false) AS sidebar_used_parent1,
+              COALESCE(sidebar_used_parent2, false) AS sidebar_used_parent2,
+              created_at, updated_at
+       FROM games WHERE id = $1`,
+      [gameId]
+    );
+    if (gameRes.rows.length === 0) return null;
+    const g = gameRes.rows[0];
+
+    const [playersRes, eventsRes, msgsRes, snapshotsRes, endgameRes] = await Promise.all([
+      query<{ slot: string; display_name: string | null }>(
+        `SELECT slot, display_name FROM players WHERE game_id = $1`,
+        [gameId]
+      ),
+      query<{
+        event_number: number; age: number; description: string;
+        setting: string; trigger: string; created_at: Date;
+      }>(
+        `SELECT event_number, age, description, setting, trigger, created_at
+         FROM events WHERE game_id = $1 ORDER BY event_number`,
+        [gameId]
+      ),
+      query<{ event_number: number; sender: string }>(
+        `SELECT COALESCE(event_number, 0) AS event_number, sender
+         FROM messages WHERE game_id = $1`,
+        [gameId]
+      ),
+      query<{ event_number: number; document: string }>(
+        `SELECT event_number, document
+         FROM identity_snapshots WHERE game_id = $1 ORDER BY event_number`,
+        [gameId]
+      ),
+      query<{ epilogue: string; report_card: string }>(
+        `SELECT epilogue, report_card FROM endgames WHERE game_id = $1`,
+        [gameId]
+      ),
+    ]);
+
+    const countsByEvent = new Map<number, { parent1: number; parent2: number; kid: number }>();
+    for (const m of msgsRes.rows) {
+      const c = countsByEvent.get(m.event_number) ?? { parent1: 0, parent2: 0, kid: 0 };
+      if (m.sender === "parent1") c.parent1++;
+      else if (m.sender === "parent2") c.parent2++;
+      else if (m.sender === "kid") c.kid++;
+      countsByEvent.set(m.event_number, c);
+    }
+
+    const endgameRow = endgameRes.rows[0];
+
+    return {
+      id: g.id,
+      childName: g.child_name,
+      phase: g.phase,
+      currentEventNumber: g.current_event_number,
+      totalEvents: g.total_events,
+      createdAt: g.created_at.toISOString(),
+      updatedAt: g.updated_at.toISOString(),
+      hasEndgame: !!endgameRow,
+      players: playersRes.rows.map((p) => ({ slot: p.slot, displayName: p.display_name })),
+      relationshipType: g.relationship_type,
+      identityDocument: g.identity_document,
+      events: eventsRes.rows.map((e) => ({
+        eventNumber: e.event_number,
+        age: e.age,
+        description: e.description,
+        setting: e.setting,
+        trigger: e.trigger,
+        createdAt: e.created_at.toISOString(),
+      })),
+      messageCounts: [...countsByEvent.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([eventNumber, counts]) => ({ eventNumber, ...counts })),
+      identitySnapshots: snapshotsRes.rows.map((s) => ({
+        eventNumber: s.event_number,
+        document: s.document,
+      })),
+      sidebarUsed: {
+        parent1: g.sidebar_used_parent1,
+        parent2: g.sidebar_used_parent2,
+      },
+      endgame: endgameRow
+        ? { epilogue: endgameRow.epilogue, reportCard: endgameRow.report_card }
+        : null,
+    };
+  }
+}
