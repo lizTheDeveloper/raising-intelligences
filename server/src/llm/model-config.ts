@@ -21,7 +21,8 @@ export type LLMRole =
   | "world_manager"
   | "psychologist"
   | "epilogue"
-  | "report_card";
+  | "report_card"
+  | "personality_seed";
 
 export type ModelTier = "standard" | "cerebras" | "premium";
 
@@ -39,6 +40,7 @@ export const STANDARD_MODELS: ModelConfig = {
   psychologist: "qwen/qwen3.7-max",
   epilogue: "qwen/qwen3.7-max",
   report_card: "qwen/qwen3.7-max",
+  personality_seed: "qwen/qwen3.7-max",
 };
 
 /**
@@ -55,6 +57,7 @@ export const CEREBRAS_MODELS: ModelConfig = {
   psychologist:    "cerebras:gpt-oss-120b",
   epilogue:        "cerebras:gpt-oss-120b",
   report_card:     "cerebras:gpt-oss-120b",
+  personality_seed: "cerebras:gpt-oss-120b",
 };
 
 /** Premium tier: Qwen Max + Gemini 2.5 Flash + Claude Opus 4.8 for the keepsake artifacts. */
@@ -66,6 +69,7 @@ export const PREMIUM_MODELS: ModelConfig = {
   psychologist: "google/gemini-2.5-flash",
   epilogue: "anthropic/claude-opus-4-8",
   report_card: "anthropic/claude-opus-4-8",
+  personality_seed: "google/gemini-2.5-flash",
 };
 
 export const MODELS_BY_TIER: Record<ModelTier, ModelConfig> = {

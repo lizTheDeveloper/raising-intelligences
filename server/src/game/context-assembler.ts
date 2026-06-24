@@ -105,7 +105,7 @@ export function buildKidContext(state: GameState): {
   const system = fillTemplate(KID_SYSTEM_PROMPT, {
     childName: state.childName,
     age: String(state.currentEvent?.age ?? 4),
-    temperament: state.personalitySeed,
+    personalitySeed: state.personalitySeed,
     identitySection,
     eventDescription: state.currentEvent?.description ?? "",
   });
@@ -171,6 +171,32 @@ export function buildPsychologistContext(state: GameState): {
   return { system, userMessage };
 }
 
+/**
+ * Build the landmine section for the world manager prompt from parent confessionals.
+ * Returns an empty string when no confessionals are present.
+ */
+function buildLandmineSection(state: GameState): string {
+  const entries: string[] = [];
+
+  const p1 = state.parentPersonalities?.parent1;
+  const p2 = state.parentPersonalities?.parent2;
+
+  if (p1?.confessional1) entries.push(`- Parent 1 confessed: "${p1.confessional1}"`);
+  if (p1?.confessional2) entries.push(`- Parent 1 confessed: "${p1.confessional2}"`);
+  if (p2?.confessional1) entries.push(`- Parent 2 confessed: "${p2.confessional1}"`);
+  if (p2?.confessional2) entries.push(`- Parent 2 confessed: "${p2.confessional2}"`);
+
+  if (entries.length === 0) return "";
+
+  return `## Emotional landmines
+
+The parents have revealed things about themselves — fears, wounds, patterns they know are there. These are the places where rational parenting breaks down. Use them to create situations that hit these specific pressure points.
+
+${entries.join("\n")}
+
+Let these surface naturally. Don't announce them. Create events that quietly activate these patterns and watch what the parents do.`;
+}
+
 export function buildWorldManagerContext(state: GameState): {
   system: string;
   userMessage: string;
@@ -180,11 +206,14 @@ export function buildWorldManagerContext(state: GameState): {
       ? state.events.map((e) => `- Age ${e.age}: ${e.description}`).join("\n")
       : "No events yet — this is the beginning of the story.";
 
+  const landmineSection = buildLandmineSection(state);
+
   const system = fillTemplate(WORLD_MANAGER_SYSTEM_PROMPT, {
     childName: state.childName,
-    childTemperament: state.personalitySeed,
+    personalitySeed: state.personalitySeed,
     previousEvents,
     familyStructure: familyStructureText(state.relationshipType),
+    landmineSection,
   });
 
   let userMessage = `Generate the next event (event #${state.currentEventNumber + 1}).`;

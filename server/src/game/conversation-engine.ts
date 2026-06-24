@@ -16,7 +16,7 @@ function kidRoleForPhase(phase: GamePhase): LLMRole {
 }
 
 export class ConversationEngine {
-  constructor(private llm: LLMClient) {}
+  constructor(public readonly llm: LLMClient) {}
 
   async startEvent(state: GameState): Promise<GameState> {
     const ctx = buildWorldManagerContext(state);

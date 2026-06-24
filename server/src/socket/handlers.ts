@@ -1,5 +1,5 @@
 import type { Server, Socket } from "socket.io";
-import type { GameState, Sender } from "../types.js";
+import type { GameState, Sender, ParentPersonality } from "../types.js";
 import type { ConversationEngine } from "../game/conversation-engine.js";
 import type { EndgameEngine } from "../game/endgame-engine.js";
 import type { GameRepository } from "../db/repository.js";
@@ -25,9 +25,11 @@ import {
   type ReadyPayload,
   type ParentMessagePayload,
   type AdultChatPayload,
+  type PersonalityPayload,
   type LobbyState,
   type ViewerState,
 } from "./protocol.js";
+import { generatePersonalitySeed } from "../game/personality.js";
 
 export interface SocketDeps {
   io: Server;
@@ -414,6 +416,71 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       } catch (err) {
         fail(String(err));
       }
+    });
+
+    // ---- SUBMIT_PERSONALITY ----
+    socket.on(E.SUBMIT_PERSONALITY, (payload: PersonalityPayload) => {
+      const gameId = data.gameId;
+      const slot = data.slot;
+      if (!gameId || !slot || slot === "kid") return fail("Not in a game");
+
+      const { ocean, confessional1, confessional2 } = payload ?? {};
+
+      // Validate ocean
+      if (
+        !Array.isArray(ocean) ||
+        ocean.length !== 5 ||
+        !ocean.every((v: unknown) => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 4)
+      ) {
+        return fail("ocean must be an array of 5 integers each between 1 and 4");
+      }
+
+      const personality: ParentPersonality = {
+        ocean: ocean as [number, number, number, number, number],
+        confessional1: confessional1 ?? "",
+        confessional2: confessional2 ?? "",
+      };
+
+      withGameLock(gameId, async () => {
+        const state = currentState();
+        if (!state) { fail("Not in a game"); return; }
+
+        const updatedState: GameState = {
+          ...state,
+          parentPersonalities: {
+            ...state.parentPersonalities,
+            [slot]: personality,
+          },
+        };
+        games.set(gameId, updatedState);
+
+        // Broadcast that this slot has submitted
+        io.to(gameId).emit(E.PERSONALITY_SUBMITTED, { slot });
+
+        // Determine readiness: solo needs only parent1; multiplayer needs both
+        const isSolo =
+          updatedState.relationshipType === "solo parent" ||
+          updatedState.relationshipType === "solo";
+
+        const parent1 = updatedState.parentPersonalities.parent1;
+        const parent2 = updatedState.parentPersonalities.parent2;
+        const allPersonalitiesReady = isSolo ? !!parent1 : !!(parent1 && parent2);
+
+        if (allPersonalitiesReady && parent1) {
+          const seed = await generatePersonalitySeed(
+            conversationEngine.llm,
+            updatedState.childName,
+            parent1,
+            isSolo ? undefined : parent2
+          );
+          const withSeed: GameState = { ...updatedState, personalitySeed: seed };
+          games.set(gameId, withSeed);
+          await repo.saveGame(withSeed);
+          io.to(gameId).emit(E.PERSONALITY_SEED_READY, { personalitySeed: seed });
+        } else {
+          await repo.saveGame(updatedState);
+        }
+      }).catch((err) => fail(String(err)));
     });
 
     // ---- DISCONNECT: mark disconnected, don't remove ----

@@ -4,10 +4,11 @@ import { existsSync } from "fs";
 import path from "path";
 import { ConversationEngine } from "../game/conversation-engine.js";
 import { createGame } from "../game/state-machine.js";
-import type { GameState, Sender } from "../types.js";
+import type { GameState, Sender, ParentPersonality } from "../types.js";
 import type { GameRepository } from "../db/repository.js";
 import { generateFirstPortrait, generateNextPortrait, PORTRAITS_DIR } from "../portrait-gen.js";
 import { logger } from "../logger.js";
+import { generatePersonalitySeed } from "../game/personality.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -227,6 +228,87 @@ export function createGameRoutes(
     games.set(next.id, next);
     await repo.saveGame(next);
     res.json({ phase: next.phase });
+  });
+
+  // Submit a parent's personality (OCEAN scores + confessionals). When all
+  // required parents have submitted, generates and stores the personality seed.
+  router.post("/game/:id/personality", ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
+    const gameId = req.params.id as string;
+    const state = await resolveGame(gameId);
+    if (!state) {
+      res.status(404).json({ error: "Game not found" });
+      return;
+    }
+
+    const { ocean, confessional1, confessional2, slot } = req.body as {
+      ocean: unknown;
+      confessional1?: string;
+      confessional2?: string;
+      slot?: string;
+    };
+
+    // Validate ocean: must be an array of 5 integers each 1-4
+    if (
+      !Array.isArray(ocean) ||
+      ocean.length !== 5 ||
+      !ocean.every((v) => Number.isInteger(v) && v >= 1 && v <= 4)
+    ) {
+      res.status(400).json({ error: "ocean must be an array of 5 integers each between 1 and 4" });
+      return;
+    }
+
+    const parentSlot: "parent1" | "parent2" =
+      slot === "parent2" ? "parent2" : "parent1";
+
+    const personality: ParentPersonality = {
+      ocean: ocean as [number, number, number, number, number],
+      confessional1: confessional1 ?? "",
+      confessional2: confessional2 ?? "",
+    };
+
+    await withGameLock(gameId, async () => {
+      const current = await resolveGame(gameId);
+      if (!current) {
+        res.status(404).json({ error: "Game not found" });
+        return;
+      }
+
+      const updatedState: GameState = {
+        ...current,
+        parentPersonalities: {
+          ...current.parentPersonalities,
+          [parentSlot]: personality,
+        },
+      };
+      games.set(gameId, updatedState);
+
+      // Determine if we have enough personalities to generate the seed.
+      // Solo games need only parent1; multiplayer needs both.
+      const isSolo =
+        updatedState.relationshipType === "solo parent" ||
+        updatedState.relationshipType === "solo";
+
+      const parent1 = updatedState.parentPersonalities.parent1;
+      const parent2 = updatedState.parentPersonalities.parent2;
+
+      const allReady = isSolo ? !!parent1 : !!(parent1 && parent2);
+
+      if (allReady && parent1) {
+        const seed = await generatePersonalitySeed(
+          engine.llm,
+          updatedState.childName,
+          parent1,
+          isSolo ? undefined : parent2
+        );
+        const withSeed: GameState = { ...updatedState, personalitySeed: seed };
+        games.set(gameId, withSeed);
+        await repo.saveGame(withSeed);
+        res.json({ ready: true });
+      } else {
+        await repo.saveGame(updatedState);
+        res.json({ ready: false });
+      }
+    });
   });
 
   // Kick off generation of the next portrait in the chain — called by the client

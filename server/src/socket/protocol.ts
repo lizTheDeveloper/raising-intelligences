@@ -26,6 +26,11 @@ export interface ParentMessagePayload {
 export interface AdultChatPayload {
   scenario: string;
 }
+export interface PersonalityPayload {
+  ocean: [number, number, number, number, number];
+  confessional1?: string;
+  confessional2?: string;
+}
 
 // ---- Server → Client ----
 export interface PublicPlayer {
@@ -69,6 +74,7 @@ export const SOCKET_EVENTS = {
   START_EPILOGUE: "start_epilogue",
   ADULT_CHAT: "adult_chat",
   REPORT_CARD: "report_card",
+  SUBMIT_PERSONALITY: "submit_personality",
   // server → client
   JOINED: "joined",
   LOBBY: "lobby",
@@ -82,4 +88,6 @@ export const SOCKET_EVENTS = {
   EPILOGUE: "epilogue",
   REPORT_CARD_READY: "report_card_ready",
   ERROR: "error",
+  PERSONALITY_SUBMITTED: "personality_submitted",
+  PERSONALITY_SEED_READY: "personality_seed_ready",
 } as const;

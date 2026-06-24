@@ -2,9 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   buildKidContext,
   buildPsychologistContext,
+  buildWorldManagerContext,
 } from "../src/game/context-assembler.js";
 import { createGame, transition } from "../src/game/state-machine.js";
-import type { GameEvent } from "../src/types.js";
+import type { GameEvent, ParentPersonality } from "../src/types.js";
 
 const testEvent: GameEvent = {
   eventNumber: 1,
@@ -96,5 +97,86 @@ describe("buildPsychologistContext", () => {
     state = transition(state, { type: "END_FAMILY_CHAT" });
     const ctx = buildPsychologistContext(state);
     expect(ctx.userMessage).toContain("Core beliefs: the world is safe.");
+  });
+});
+
+describe("buildKidContext - personalitySeed", () => {
+  it("uses personalitySeed (not temperament) in the kid system prompt", () => {
+    let state = createGame("Luna");
+    state.personalitySeed = "She arrived in the world already vibrating.";
+    state = transition(state, { type: "START_EVENT", event: testEvent });
+    const ctx = buildKidContext(state);
+    expect(ctx.system).toContain("She arrived in the world already vibrating.");
+    expect(ctx.system).not.toContain("{personalitySeed}");
+    expect(ctx.system).not.toContain("{temperament}");
+  });
+});
+
+describe("buildWorldManagerContext - personalitySeed and landmine section", () => {
+  it("uses personalitySeed in the world manager prompt", () => {
+    let state = createGame("Luna");
+    state.personalitySeed = "Restless from day one.";
+    state = transition(state, { type: "START_EVENT", event: testEvent });
+    const ctx = buildWorldManagerContext(state);
+    expect(ctx.system).toContain("Restless from day one.");
+    expect(ctx.system).not.toContain("{personalitySeed}");
+    expect(ctx.system).not.toContain("{childTemperament}");
+  });
+
+  it("includes landmine section when parent1 has confessionals", () => {
+    let state = createGame("Luna");
+    const personality: ParentPersonality = {
+      ocean: [2, 2, 2, 2, 2],
+      confessional1: "I have a terrible temper.",
+      confessional2: "I never felt good enough.",
+    };
+    state.parentPersonalities = { parent1: personality };
+    state = transition(state, { type: "START_EVENT", event: testEvent });
+    const ctx = buildWorldManagerContext(state);
+    expect(ctx.system).toContain("I have a terrible temper.");
+    expect(ctx.system).toContain("I never felt good enough.");
+    expect(ctx.system).toContain("Emotional landmines");
+  });
+
+  it("includes confessionals from both parents in landmine section", () => {
+    let state = createGame("Luna");
+    const p1: ParentPersonality = {
+      ocean: [2, 2, 2, 2, 2],
+      confessional1: "I grew up in chaos.",
+      confessional2: "",
+    };
+    const p2: ParentPersonality = {
+      ocean: [3, 3, 3, 3, 3],
+      confessional1: "I was emotionally unavailable.",
+      confessional2: "",
+    };
+    state.parentPersonalities = { parent1: p1, parent2: p2 };
+    state = transition(state, { type: "START_EVENT", event: testEvent });
+    const ctx = buildWorldManagerContext(state);
+    expect(ctx.system).toContain("I grew up in chaos.");
+    expect(ctx.system).toContain("I was emotionally unavailable.");
+  });
+
+  it("omits landmine section when no confessionals are present", () => {
+    let state = createGame("Luna");
+    const personality: ParentPersonality = {
+      ocean: [2, 2, 2, 2, 2],
+      confessional1: "",
+      confessional2: "",
+    };
+    state.parentPersonalities = { parent1: personality };
+    state = transition(state, { type: "START_EVENT", event: testEvent });
+    const ctx = buildWorldManagerContext(state);
+    expect(ctx.system).not.toContain("Emotional landmines");
+    expect(ctx.system).not.toContain("{landmineSection}");
+  });
+
+  it("omits landmine section when parentPersonalities is empty", () => {
+    let state = createGame("Luna");
+    state.parentPersonalities = {};
+    state = transition(state, { type: "START_EVENT", event: testEvent });
+    const ctx = buildWorldManagerContext(state);
+    expect(ctx.system).not.toContain("Emotional landmines");
+    expect(ctx.system).not.toContain("{landmineSection}");
   });
 });
