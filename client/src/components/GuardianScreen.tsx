@@ -117,6 +117,10 @@ interface Props {
   gameId: string | null;
   eventReady: boolean;
   onReady: () => void;
+  /** Multiplayer: emit personality via socket instead of REST POST. */
+  onSubmitPersonality?: (payload: { ocean: number[]; confessional1?: string; confessional2?: string }) => void;
+  /** Multiplayer: combined seed is ready (from socket event). */
+  seedReadyProp?: boolean;
 }
 
 function pickVariant(): number {
@@ -124,7 +128,7 @@ function pickVariant(): number {
 }
 
 // ---------- Component ----------
-export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props) {
+export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmitPersonality, seedReadyProp }: Props) {
   const [stepIndex, setStepIndex] = useState(0);
   const [narrativeLines, setNarrativeLines] = useState<string[]>([]);
   const [oceanAnswers, setOceanAnswers] = useState<number[]>([]);
@@ -231,6 +235,16 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
     setSeedSubmitting(true);
     setSeedError(null);
 
+    // Multiplayer path: emit via socket, seed arrives via PERSONALITY_SEED_READY event
+    if (onSubmitPersonality) {
+      onSubmitPersonality({ ocean: oceanAnswers, confessional1, confessional2 });
+      setSeedSubmitting(false);
+      track("personality_submitted", { mode: "multiplayer" });
+      setStepIndex((i) => i + 1);
+      return;
+    }
+
+    // Solo path: REST POST
     try {
       const res = await fetch(`${base}api/game/${gameId}/personality`, {
         method: "POST",
@@ -262,7 +276,7 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
 
     // Advance to waiting step
     setStepIndex((i) => i + 1);
-  }, [gameId, oceanAnswers, confessional1, confessional2, base]);
+  }, [gameId, oceanAnswers, confessional1, confessional2, base, onSubmitPersonality]);
 
   // ---------- Retry personality on error ----------
   const handleRetry = useCallback(() => {
@@ -277,7 +291,9 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
     setShowMessage(true);
   };
 
-  const canBegin = eventReady && seedReady && portraitRevealed;
+  // In multiplayer, seedReady comes from the prop (socket event); in solo, from internal state (REST response)
+  const effectiveSeedReady = onSubmitPersonality ? !!seedReadyProp : seedReady;
+  const canBegin = eventReady && effectiveSeedReady && portraitRevealed;
 
   // ---------- Render ----------
   return (

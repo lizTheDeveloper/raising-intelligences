@@ -12,6 +12,9 @@ const E = {
   START_EPILOGUE: "start_epilogue",
   ADULT_CHAT: "adult_chat",
   REPORT_CARD: "report_card",
+  SUBMIT_PERSONALITY: "submit_personality",
+  PERSONALITY_SUBMITTED: "personality_submitted",
+  PERSONALITY_SEED_READY: "personality_seed_ready",
   JOINED: "joined",
   LOBBY: "lobby",
   STATE: "state",
@@ -98,6 +101,7 @@ export function useMultiplayer() {
   const [reportCard, setReportCard] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [inLobby, setInLobby] = useState(false);
+  const [seedReady, setSeedReady] = useState(false);
   const playerTokenRef = useRef<string | null>(null);
 
   const ensureSocket = useCallback((): Socket => {
@@ -156,6 +160,12 @@ export function useMultiplayer() {
       setStreamingDocText("");
       setReportCard(d.reportCard);
     });
+    socket.on(E.PERSONALITY_SUBMITTED, () => {
+      // Other parent submitted — informational only
+    });
+    socket.on(E.PERSONALITY_SEED_READY, () => {
+      setSeedReady(true);
+    });
     socket.on(E.ERROR, (d: { error: string }) => setError(d.error));
     socketRef.current = socket;
     return socket;
@@ -212,6 +222,10 @@ export function useMultiplayer() {
     socketRef.current?.emit(E.REPORT_CARD, { epilogue });
   }, [epilogue]);
 
+  const submitPersonality = useCallback((payload: { ocean: number[]; confessional1?: string; confessional2?: string }) => {
+    socketRef.current?.emit(E.SUBMIT_PERSONALITY, payload);
+  }, []);
+
   const leaveGame = useCallback(() => {
     clearResume();
     setGameId(null);
@@ -231,6 +245,7 @@ export function useMultiplayer() {
     players,
     state,
     inLobby,
+    seedReady,
     streamingMessage,
     streamingDocText,
     isStreaming,
@@ -241,6 +256,7 @@ export function useMultiplayer() {
     joinGame,
     ready,
     sendMessage,
+    submitPersonality,
     startSidebar,
     endSidebar,
     endChat,
