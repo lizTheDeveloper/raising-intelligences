@@ -1,258 +1,117 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { ChildPortrait } from "./ChildPortrait";
 import { track } from "../analytics";
+import { getWeightedFragments } from "../data/child-fragments";
 
 const INTRO_VARIANTS = 6;
 
-interface IntroStage {
-  age: number;
-  lines: string[];
+// ---------- OCEAN quiz data ----------
+interface QuizOption {
+  text: string;
+  value: number;
 }
 
-const INTRO_STAGES: IntroStage[] = [
+interface QuizQuestion {
+  prompt: string;
+  options: QuizOption[];
+}
+
+const QUIZ_QUESTIONS: QuizQuestion[] = [
   {
-    age: 0,
-    lines: [
-      "born on a quiet night.",
-      "so small you were afraid to breathe.",
+    prompt:
+      "You find out a friend is really into something you’ve never heard of — fermentation, birdwatching, speedcubing, whatever. You:",
+    options: [
+      { text: "Smile and nod. You’re happy for them but you’ll stick to what you know.", value: 1 },
+      { text: "Ask a couple questions to be polite, but you probably won’t look into it.", value: 2 },
+      { text: "Go down a rabbit hole that night reading about it.", value: 3 },
+      { text: "Show up next weekend with your own starter kit.", value: 4 },
     ],
   },
   {
-    age: 1,
-    lines: [
-      "they reached for everything.",
-      "they said something that almost sounded like your name.",
+    prompt: "You’ve got a free Saturday with nothing planned. You:",
+    options: [
+      { text: "Wake up whenever, see where the day takes you.", value: 1 },
+      { text: "Have a loose idea — maybe errands, maybe not.", value: 2 },
+      { text: "Knock out your to-do list in the morning so you can relax later.", value: 3 },
+      { text: "Already blocked it out on Thursday. Groceries, gym, that thing you’ve been putting off.", value: 4 },
     ],
   },
   {
-    age: 2,
-    lines: [
-      "they took their first steps.",
-      "they fell. they got back up.",
+    prompt: "You’re at a party where you only know the host. You:",
+    options: [
+      { text: "Find the dog or the bookshelf. Leave early. Recharge for three days.", value: 1 },
+      { text: "Stick near the host, have a couple conversations, leave at a reasonable hour.", value: 2 },
+      { text: "End up in a good conversation with a stranger, stay later than planned.", value: 3 },
+      { text: "Leave with four new phone numbers and plans for next weekend.", value: 4 },
+    ],
+  },
+  {
+    prompt: "Your coworker takes credit for an idea you pitched last week. You:",
+    options: [
+      { text: "Call it out in the next meeting. Credit matters and they know what they did.", value: 1 },
+      { text: "Mention it to them privately — firm but not aggressive.", value: 2 },
+      { text: "Let it go this time but keep an eye on it. Not worth the conflict.", value: 3 },
+      { text: "Honestly, you’re just glad the idea is moving forward. Who cares who gets credit.", value: 4 },
+    ],
+  },
+  {
+    prompt: "You send a text to a close friend and they don’t respond for two days. You:",
+    options: [
+      { text: "Assume they’re busy. Check in if you don’t hear back by the weekend.", value: 1 },
+      { text: "Notice it, but figure they’ll get back to you when they can.", value: 2 },
+      { text: "Scroll back through your last few messages wondering if you said something weird.", value: 3 },
+      { text: "Replay the conversation in your head at 2am. Definitely said something wrong.", value: 4 },
     ],
   },
 ];
 
-const CHILD_THOUGHTS = [
-  "why is the sky so big?",
-  "can i have juice?",
-  "where did the moon go?",
-  "i'm not tired.",
-  "what's that sound?",
-  "i made a friend today.",
-  "i don't like carrots but i like cake.",
-  "why do you have to leave?",
-  "is that a bug or a dot?",
-  "i want to stay up later.",
-  "can we go to the park?",
-  "i found a rock.",
-  "why can't i eat the crayons?",
-  "look at my drawing!",
-  "i'm hungry again.",
-  "where does the water go?",
-  "it's too loud.",
-  "i love you more.",
-  "i don't want to nap.",
-  "what's my name again?",
-  "why is that man so tall?",
-  "i lost my sock.",
-  "the sky is crying.",
-  "i want to go home.",
-  "why do dogs bark?",
-  "i can do it myself.",
-  "that's too heavy.",
-  "i forgot what i wanted.",
-  "the sun went to sleep.",
-  "can i touch that?",
-  "i have an idea.",
-  "why are leaves green?",
-  "i found a stick.",
-  "this is too hot.",
-  "the water is cold.",
-  "i want to fly.",
-  "where's my other shoe?",
-  "i'm bored.",
-  "look at the airplane!",
-  "i don't like this.",
-  "the floor is lava.",
-  "i want that toy.",
-  "why does it hurt?",
-  "i made a mistake.",
-  "it's not fair.",
-  "i'll be more careful.",
-  "can we get a cat?",
-  "i'm scared of the dark.",
-  "who made the stars?",
-  "i don't understand.",
-  "that tickles.",
-  "i want to show you something.",
-  "the ice cream melted.",
-  "i miss my blanket.",
-  "why is the grass so tall?",
-  "i like this song.",
-  "i'm almost done.",
-  "i'm coming!",
-  "i found a penny.",
-  "can i help?",
-  "i want to go faster.",
-  "that's my favorite.",
-  "i don't remember.",
-  "it's too far away.",
-  "i think it's broken.",
-  "i'm sorry.",
-  "i love you most.",
-  "why can't i reach it?",
-  "i built a tower.",
-  "can we go back?",
-  "i'm thirsty.",
-  "that smells funny.",
-  "i want to see it again.",
-  "it's all gone.",
-  "i found a hole.",
-  "i don't want to.",
-  "i'm ready now.",
-  "the cat is sleeping.",
-  "i have a secret.",
-  "i wish i could.",
-  "i think i know.",
-  "that's not how it works.",
-  "i like the way it feels.",
-  "i want to try again.",
-  "i'm not done yet.",
-  "can i have more?",
-  "i'm a superhero.",
-  "i'm a dinosaur.",
-  "watch me jump.",
-  "watch me run.",
-  "i'm fast.",
-  "i'm strong.",
-  "i can do anything.",
-  "i forgot the word.",
-  "the dog is my friend.",
-  "i drew a picture of us.",
-  "i want to stay here forever.",
-  "i want to go somewhere new.",
-  "what happens if i press this?",
-  "i heard my name.",
-  "i saw something cool.",
-  "i don't want to go to bed.",
-  "can you read to me?",
-  "one more story?",
-  "the stars are blinking.",
-  "i think the moon follows us.",
-  "i want to be big.",
-  "when i grow up.",
-  "i love my shoes.",
-  "i don't like this shirt.",
-  "i want to wear the red one.",
-  "i'm the boss.",
-  "you can't catch me.",
-  "i'm hiding.",
-  "find me if you can.",
-  "i'm still here.",
-  "i'm waiting.",
-  "where are you going?",
-  "don't leave.",
-  "stay here.",
-  "i'm right here.",
-  "are you there?",
-  "i can hear you.",
-  "i saw a bird.",
-  "it was blue.",
-  "i know a lot of things.",
-  "i learned something new.",
-  "i'm teaching you.",
-  "this is mine.",
-  "i like sharing.",
-  "we can play together.",
-  "i'm being good.",
-  "i tried my best.",
-  "it didn't work.",
-  "i'll try again.",
-  "i'm almost there.",
-  "just a little more.",
-  "i need help.",
-  "i did it by myself.",
-  "look what i made.",
-  "i'm proud of this.",
-  "i want to go home now.",
-  "my feet hurt.",
-  "i want to be carried.",
-  "pick me up.",
-  "i changed my mind.",
-  "i don't know.",
-  "maybe tomorrow.",
-  "i'll think about it.",
-  "this or that?",
-  "i pick both.",
-  "can we have pizza?",
-  "i want pancakes.",
-  "i love ice cream.",
-  "i want dessert first.",
-  "not that straw.",
-  "i need a new spoon.",
-  "this chair is mine.",
-  "i saw a truck.",
-  "i saw a train.",
-  "they go fast.",
-  "beep beep.",
-  "all aboard.",
-  "i'm coming through.",
-  "excuse me.",
-  "i'm still little.",
-  "but i'm big too.",
-  "sometimes.",
-  "when i want to be.",
-  "i'm brave today.",
-  "i'm not scared.",
-  "okay maybe a little.",
-  "i can handle it.",
-  "i'm strong enough.",
-  "i'm smart enough.",
-  "i know that word.",
-  "i forgot what it means.",
-  "i'll learn it again.",
-  "i'm practicing.",
-  "i'm getting better.",
-  "watch me.",
-  "this is important.",
-  "listen to me.",
-  "i have something to say.",
-  "are you listening?",
-  "i promise.",
-  "cross my heart.",
-  "i can count to ten.",
-  "one, two...",
-  "i lost my place.",
-  "start over?",
-  "numbers are hard.",
-  "letters too.",
-  "but i'm learning.",
-  "i like school.",
-  "i don't like school.",
-  "sometimes i like it.",
-  "it depends.",
-  "i made a snowball.",
-  "where did he go?",
-  "he melted.",
-  "that's okay.",
-  "everything goes somewhere.",
-  "i know that now.",
-  "i'm older.",
-  "i turned three.",
-  "that's a big number.",
-  "i'm bigger now.",
-  "i'm learning how to use the toilet.",
-  "sometimes i forget.",
-  "but i'm getting there.",
-  "flush!",
-  "did you hear?",
-  "i'm almost done.",
-  "almost a big kid.",
-  "not yet though.",
-  "soon.",
+// ---------- Step sequence ----------
+// Narrative lines auto-advance on a timer; quiz/confessional/reveal steps
+// advance only on user action.
+
+type StepKind = "narrative" | "quiz" | "transition" | "reveal" | "confessional" | "waiting";
+
+interface Step {
+  kind: StepKind;
+  /** For narrative: the text to display. */
+  text?: string;
+  /** For narrative: which intro age (0/1/2) — drives the background image. */
+  age?: number;
+  /** For quiz: the quiz index (0-4). */
+  quizIndex?: number;
+}
+
+const STEPS: Step[] = [
+  // Beat 1 (age 0)
+  { kind: "narrative", text: "born on a quiet night.", age: 0 },
+  { kind: "narrative", text: "so small you were afraid to breathe.", age: 0 },
+  // Q1 Openness
+  { kind: "quiz", quizIndex: 0 },
+  // Beat 2 (age 1)
+  { kind: "narrative", text: "they reached for everything.", age: 1 },
+  { kind: "narrative", text: "they said something that almost sounded like your name.", age: 1 },
+  // Q2 Conscientiousness
+  { kind: "quiz", quizIndex: 1 },
+  // Beat 3 (age 2)
+  { kind: "narrative", text: "they took their first steps.", age: 2 },
+  { kind: "narrative", text: "they fell. they got back up.", age: 2 },
+  // Q3 Extraversion
+  { kind: "quiz", quizIndex: 2 },
+  // Transition
+  { kind: "transition", text: "three years old." },
+  // Q4 Agreeableness
+  { kind: "quiz", quizIndex: 3 },
+  // Q5 Neuroticism
+  { kind: "quiz", quizIndex: 4 },
+  // Portrait reveal
+  { kind: "reveal" },
+  // Confessional prompts
+  { kind: "confessional" },
+  // Waiting for seed + event
+  { kind: "waiting" },
 ];
 
+// ---------- Props ----------
 interface Props {
   childName: string;
   gameId: string | null;
@@ -264,107 +123,189 @@ function pickVariant(): number {
   return Math.floor(Math.random() * INTRO_VARIANTS);
 }
 
+// ---------- Component ----------
 export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props) {
-  const [lineCount, setLineCount] = useState(0);
+  const [stepIndex, setStepIndex] = useState(0);
+  const [narrativeLines, setNarrativeLines] = useState<string[]>([]);
+  const [oceanAnswers, setOceanAnswers] = useState<number[]>([]);
+  const [confessional1, setConfessional1] = useState("");
+  const [confessional2, setConfessional2] = useState("");
   const [portraitReady, setPortraitReady] = useState(false);
-  const [showFinalText, setShowFinalText] = useState(false);
-  const [thoughtIdx, setThoughtIdx] = useState(() =>
-    Math.floor(Math.random() * CHILD_THOUGHTS.length)
-  );
+  const [seedReady, setSeedReady] = useState(false);
+  const [seedError, setSeedError] = useState<string | null>(null);
+  const [seedSubmitting, setSeedSubmitting] = useState(false);
   const [showMessage, setShowMessage] = useState(false);
+
+  // Thought bubble
+  const [thoughtIdx, setThoughtIdx] = useState(0);
 
   const variant = useMemo(pickVariant, []);
   const base = import.meta.env.BASE_URL;
 
-  const allIntroLines = useMemo(
-    () => INTRO_STAGES.flatMap((s) => s.lines),
-    []
-  );
-  const totalIntroLines = allIntroLines.length;
-  const introComplete = lineCount >= totalIntroLines;
+  // Guard against double-firing the personality POST (React strict mode)
+  const personalitySubmitted = useRef(false);
 
-  // Compute current stage from lineCount
-  const currentStage = useMemo(() => {
-    let count = 0;
-    for (let i = 0; i < INTRO_STAGES.length; i++) {
-      count += INTRO_STAGES[i].lines.length;
-      if (lineCount < count) return i;
-    }
-    return INTRO_STAGES.length - 1;
-  }, [lineCount]);
+  const currentStep = STEPS[stepIndex] ?? STEPS[STEPS.length - 1];
 
-  // Compute whether this lineCount is the first line of a new stage
-  const isFirstLineOfStage = useMemo(() => {
-    let count = 0;
-    for (const stage of INTRO_STAGES) {
-      if (lineCount === count) return true;
-      count += stage.lines.length;
-    }
-    return false;
-  }, [lineCount]);
+  // ---------- Weighted fragment pool ----------
+  const weightedFragments = useMemo(() => getWeightedFragments(oceanAnswers), [oceanAnswers]);
 
-  // Advance line counter on a timer
+  // Cycle thought bubble
   useEffect(() => {
-    if (lineCount >= totalIntroLines) return;
-    const delay = lineCount === 0 ? 1200 : isFirstLineOfStage ? 2400 : 1600;
-    const timer = setTimeout(() => setLineCount((c) => c + 1), delay);
-    return () => clearTimeout(timer);
-  }, [lineCount, totalIntroLines, isFirstLineOfStage]);
-
-  // Show final text once intro is done and portrait is ready
-  useEffect(() => {
-    if (!introComplete || !portraitReady) return;
-    const t = setTimeout(() => setShowFinalText(true), 800);
-    return () => clearTimeout(t);
-  }, [introComplete, portraitReady]);
-
-  useEffect(() => {
-    if (!showFinalText || eventReady) return;
+    if (weightedFragments.length === 0) return;
+    // Pick initial random index
+    setThoughtIdx(Math.floor(Math.random() * weightedFragments.length));
     const id = setInterval(() => {
       setThoughtIdx((prev) => {
-        const next = Math.floor(Math.random() * CHILD_THOUGHTS.length);
-        if (next === prev && CHILD_THOUGHTS.length > 1) {
-          return (next + 1) % CHILD_THOUGHTS.length;
-        }
+        if (weightedFragments.length <= 1) return 0;
+        let next = Math.floor(Math.random() * weightedFragments.length);
+        if (next === prev) next = (next + 1) % weightedFragments.length;
         return next;
       });
     }, 7000);
     return () => clearInterval(id);
-  }, [showFinalText, eventReady]);
+  }, [weightedFragments]);
 
+  const currentThought = weightedFragments[thoughtIdx % weightedFragments.length]?.text ?? "";
+
+  // ---------- Current display age for intro images ----------
+  const displayAge = useMemo(() => {
+    // Walk backwards from current step to find the most recent age
+    for (let i = stepIndex; i >= 0; i--) {
+      if (STEPS[i].age !== undefined) return STEPS[i].age!;
+    }
+    return 0;
+  }, [stepIndex]);
+
+  const portraitRevealed = currentStep.kind === "reveal" ||
+    currentStep.kind === "confessional" ||
+    currentStep.kind === "waiting";
+
+  // ---------- Auto-advance narrative, transition, and reveal steps ----------
+  useEffect(() => {
+    if (
+      currentStep.kind !== "narrative" &&
+      currentStep.kind !== "transition" &&
+      currentStep.kind !== "reveal"
+    ) return;
+
+    // Reveal step: just pause to let the portrait land, then advance
+    if (currentStep.kind === "reveal") {
+      const timer = setTimeout(() => setStepIndex((i) => i + 1), 2500);
+      return () => clearTimeout(timer);
+    }
+
+    // Add the line to the narrative display
+    if (currentStep.text) {
+      setNarrativeLines((prev) => {
+        if (prev[prev.length - 1] === currentStep.text) return prev;
+        return [...prev, currentStep.text!];
+      });
+    }
+
+    // Auto-advance after a delay
+    const isFirst = stepIndex === 0;
+    const isNewAge = stepIndex > 0 && currentStep.age !== undefined &&
+      STEPS[stepIndex - 1]?.age !== currentStep.age;
+    const delay = isFirst ? 1200 : isNewAge ? 2400 : 1600;
+
+    const timer = setTimeout(() => setStepIndex((i) => i + 1), delay);
+    return () => clearTimeout(timer);
+  }, [stepIndex, currentStep]);
+
+  // ---------- Quiz answer handler ----------
+  const handleQuizAnswer = useCallback((quizIndex: number, value: number) => {
+    setOceanAnswers((prev) => {
+      const next = [...prev];
+      next[quizIndex] = value;
+      return next;
+    });
+    // Brief pause then advance
+    setTimeout(() => setStepIndex((i) => i + 1), 400);
+  }, []);
+
+  // ---------- Confessional submit ----------
+  const handleConfessionalSubmit = useCallback(async () => {
+    if (!gameId || personalitySubmitted.current) return;
+    personalitySubmitted.current = true;
+    setSeedSubmitting(true);
+    setSeedError(null);
+
+    try {
+      const res = await fetch(`${base}api/game/${gameId}/personality`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ocean: oceanAnswers,
+          confessional1,
+          confessional2,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`${res.status}${body ? ` — ${body}` : ""}`);
+      }
+
+      const data = await res.json();
+      if (data.ready) {
+        setSeedReady(true);
+        track("personality_submitted", { seedReady: true });
+      }
+    } catch (err) {
+      personalitySubmitted.current = false;
+      setSeedError(err instanceof Error ? err.message : String(err));
+      track("personality_error");
+    } finally {
+      setSeedSubmitting(false);
+    }
+
+    // Advance to waiting step
+    setStepIndex((i) => i + 1);
+  }, [gameId, oceanAnswers, confessional1, confessional2, base]);
+
+  // ---------- Retry personality on error ----------
+  const handleRetry = useCallback(() => {
+    setSeedError(null);
+    personalitySubmitted.current = false;
+    handleConfessionalSubmit();
+  }, [handleConfessionalSubmit]);
+
+  // ---------- Ready handler ----------
   const handleNotReady = () => {
     track("guardian_not_ready");
     setShowMessage(true);
   };
 
-  const canBegin = eventReady && showFinalText;
+  const canBegin = eventReady && seedReady && portraitRevealed;
 
+  // ---------- Render ----------
   return (
     <div className="guardian-screen">
       <h2 className="guardian-name">{childName}</h2>
 
       <div className="guardian-figure">
-        {INTRO_STAGES.map((stage, i) => (
+        {[0, 1, 2].map((age) => (
           <div
-            key={stage.age}
+            key={age}
             className={`guardian-intro-image${
-              !introComplete && currentStage === i
-                ? " guardian-intro-visible"
-                : ""
+              !portraitRevealed && displayAge === age ? " guardian-intro-visible" : ""
             }`}
           >
             <img
-              src={`${base}portraits/intro/age-${stage.age}-${variant}.jpg`}
+              src={`${base}portraits/intro/age-${age}-${variant}.jpg`}
               alt=""
               aria-hidden="true"
-              onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }}
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+              }}
             />
           </div>
         ))}
 
         <div
           className={`guardian-portrait-wrap${
-            introComplete && portraitReady ? " guardian-portrait-revealed" : ""
+            portraitRevealed && portraitReady ? " guardian-portrait-revealed" : ""
           }`}
         >
           <ChildPortrait
@@ -376,55 +317,150 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady }: Props
         </div>
       </div>
 
+      {/* Accumulated narrative lines */}
       <div className="guardian-loading-lines">
-        {allIntroLines.slice(0, lineCount).map((line, i) => (
+        {narrativeLines.map((line, i) => (
           <p key={i} className="guardian-line">
             {line}
           </p>
         ))}
-        {showFinalText && (
-          <>
-            <p className="guardian-line">three years old.</p>
-            <p className="guardian-line">they need you.</p>
-          </>
-        )}
       </div>
 
-      {showFinalText && !eventReady && (
-        <div className="guardian-thoughts">
-          <span key={thoughtIdx} className="guardian-thought">
-            {CHILD_THOUGHTS[thoughtIdx]}
-          </span>
+      {/* Quiz question */}
+      {currentStep.kind === "quiz" && currentStep.quizIndex !== undefined && (
+        <div className="guardian-quiz" key={`quiz-${currentStep.quizIndex}`}>
+          <p className="guardian-quiz-prompt">
+            {QUIZ_QUESTIONS[currentStep.quizIndex].prompt}
+          </p>
+          <div className="guardian-quiz-options">
+            {QUIZ_QUESTIONS[currentStep.quizIndex].options.map((opt, i) => (
+              <button
+                key={i}
+                className={`guardian-quiz-option${
+                  oceanAnswers[currentStep.quizIndex!] === opt.value
+                    ? " guardian-quiz-selected"
+                    : ""
+                }`}
+                onClick={() => handleQuizAnswer(currentStep.quizIndex!, opt.value)}
+              >
+                {opt.text}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
-      {canBegin && (
-        <div className="guardian-buttons">
+      {/* Confessional prompts — kid portrait visible */}
+      {currentStep.kind === "confessional" && (
+        <div className="guardian-confessional">
+          <div className="guardian-confessional-field">
+            <label className="guardian-confessional-label">
+              What&rsquo;s the most evil thing you did as a kid (ages 3-7)?
+            </label>
+            <textarea
+              className="guardian-confessional-input"
+              placeholder="I told my sister her hamster ran away. It didn't run away."
+              maxLength={500}
+              value={confessional1}
+              onChange={(e) => setConfessional1(e.target.value)}
+              rows={3}
+            />
+            <span className="guardian-char-count">{confessional1.length}/500</span>
+          </div>
+
+          <div className="guardian-confessional-field">
+            <label className="guardian-confessional-label">
+              What&rsquo;s one thing you never told your parents?
+            </label>
+            <textarea
+              className="guardian-confessional-input"
+              placeholder="I failed a class sophomore year and forged the report card."
+              maxLength={500}
+              value={confessional2}
+              onChange={(e) => setConfessional2(e.target.value)}
+              rows={3}
+            />
+            <span className="guardian-char-count">{confessional2.length}/500</span>
+          </div>
+
           <button
-            className="btn"
-            data-testid="btn-guardian-ready"
-            onClick={() => {
-              track("guardian_accepted");
-              onReady();
-            }}
+            className="btn guardian-confessional-submit"
+            onClick={handleConfessionalSubmit}
+            disabled={seedSubmitting}
           >
-            I'm ready
+            {seedSubmitting ? "generating..." : "submit"}
           </button>
-          {!showMessage && (
-            <button className="btn dim" data-testid="btn-guardian-not-ready" onClick={handleNotReady}>
-              I'm not ready
-            </button>
-          )}
         </div>
       )}
 
-      {showMessage && (
-        <div className="guardian-not-ready-block">
-          <p className="guardian-not-ready-message">most people aren't</p>
-          {!eventReady && (
+      {/* Thought bubble — visible during quiz, reveal, confessional, and waiting */}
+      {(currentStep.kind === "quiz" ||
+        currentStep.kind === "reveal" ||
+        currentStep.kind === "confessional" ||
+        currentStep.kind === "waiting") &&
+        currentThought && (
+          <div className="guardian-thoughts">
+            <span key={thoughtIdx} className="guardian-thought">
+              {currentThought}
+            </span>
+          </div>
+        )}
+
+      {/* Waiting state — seed generation and/or event loading */}
+      {currentStep.kind === "waiting" && (
+        <>
+          {seedError && (
+            <div className="guardian-seed-error">
+              <p className="dim">something went wrong generating their personality.</p>
+              <button className="btn dim" onClick={handleRetry}>
+                try again
+              </button>
+            </div>
+          )}
+
+          {seedSubmitting && (
+            <p className="guardian-loading-hint">shaping who they'll become...</p>
+          )}
+
+          {canBegin && (
+            <div className="guardian-buttons">
+              <button
+                className="btn"
+                data-testid="btn-guardian-ready"
+                onClick={() => {
+                  track("guardian_accepted");
+                  onReady();
+                }}
+              >
+                I'm ready
+              </button>
+              {!showMessage && (
+                <button
+                  className="btn dim"
+                  data-testid="btn-guardian-not-ready"
+                  onClick={handleNotReady}
+                >
+                  I'm not ready
+                </button>
+              )}
+            </div>
+          )}
+
+          {!canBegin && !seedError && !seedSubmitting && (
             <p className="guardian-loading-hint">take your time. we're getting your story ready.</p>
           )}
-        </div>
+
+          {showMessage && (
+            <div className="guardian-not-ready-block">
+              <p className="guardian-not-ready-message">most people aren't</p>
+              {(!eventReady || !seedReady) && (
+                <p className="guardian-loading-hint">
+                  take your time. we're getting your story ready.
+                </p>
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
