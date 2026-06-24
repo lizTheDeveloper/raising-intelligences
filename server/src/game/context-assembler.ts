@@ -1,11 +1,12 @@
 import type { GameState, Message } from "../types.js";
 import {
-  KID_SYSTEM_PROMPT,
   PSYCHOLOGIST_SYSTEM_PROMPT,
   WORLD_MANAGER_SYSTEM_PROMPT,
   EPILOGUE_SYSTEM_PROMPT,
   REPORT_CARD_SYSTEM_PROMPT,
 } from "../llm/prompts.js";
+import { getAgeSpecificPrompt } from "../llm/kid-prompts-by-age.js";
+import { PARENT_MESSAGE_CAP } from "./state-machine.js";
 
 function fillTemplate(template: string, vars: Record<string, string>): string {
   let result = template;
@@ -102,13 +103,23 @@ export function buildKidContext(state: GameState): {
     ? `Your inner world (this is who you are — act from this, don't recite it):\n${state.identityDocument}`
     : "This is your earliest memory with your parents. You don't have much history yet — you're just a little kid.";
 
-  const system = fillTemplate(KID_SYSTEM_PROMPT, {
-    childName: state.childName,
-    age: String(state.currentEvent?.age ?? 4),
-    personalitySeed: state.personalitySeed,
-    identitySection,
-    eventDescription: state.currentEvent?.description ?? "",
-  });
+  const scenePacing = `## Scene pacing
+
+You are playing a specific moment, not an entire day. The scene has a natural arc:
+- It starts with a trigger (the event description)
+- The parent(s) respond to what's happening
+- You react authentically based on who you are
+- The moment either resolves, escalates, or stalls
+
+When the moment has reached its natural conclusion — you've accepted what they said, you've stormed off, you've shut down, the situation has played out — end your response with a physical action that closes the scene. Walk away, go to your room, go back to what you were doing, reach for their hand. Then append the exact token [SCENE_END] at the very end of your response (after your dialogue/action).
+
+Don't drag scenes out. Real parenting moments are short. 3-6 exchanges is a full scene. If the parent keeps pushing after you've made your feelings clear, you can close the scene: "okay" and walk away. If they keep lecturing after you've already accepted, you zone out.
+
+The parents have sent ${state.parentMessageCount} of ${PARENT_MESSAGE_CAP} messages. If this is near the limit (within 2 messages of the cap), start winding the scene down naturally. If you're at the last message, end the scene definitively.
+
+Not every response should end the scene. Only end it when the moment has genuinely resolved, escalated to a natural stopping point, or stalled. Early in the conversation (messages 1-3), the scene is usually still developing.`;
+
+  const system = getAgeSpecificPrompt(String(state.currentEvent?.age ?? 4), { childName: state.childName }) + `\n\n${scenePacing}\n\n${identitySection}\n\nThe current situation: ${state.currentEvent?.description ?? ""}`;
 
   const eventMessages = currentEventMessages(state);
   const isInSidebar = state.phase === "sidebar";

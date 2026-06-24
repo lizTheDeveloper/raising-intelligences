@@ -24,6 +24,7 @@ const E = {
   DOC_DONE: "doc_done",
   EPILOGUE: "epilogue",
   REPORT_CARD_READY: "report_card_ready",
+  SCENE_ENDED: "scene_ended",
   ERROR: "error",
 } as const;
 
@@ -102,6 +103,7 @@ export function useMultiplayer() {
   const [error, setError] = useState<string | null>(null);
   const [inLobby, setInLobby] = useState(false);
   const [seedReady, setSeedReady] = useState(false);
+  const [sceneEnding, setSceneEnding] = useState(false);
   const playerTokenRef = useRef<string | null>(null);
 
   const ensureSocket = useCallback((): Socket => {
@@ -137,7 +139,9 @@ export function useMultiplayer() {
     socket.on(E.STATE, (s: ViewerState) => {
       setState(s);
       if (s.phase !== "event_intro") setInLobby(false);
+      if (s.phase !== "family_chat" && s.phase !== "sidebar") setSceneEnding(false);
     });
+    socket.on(E.SCENE_ENDED, () => setSceneEnding(true));
     socket.on(E.KID_CHUNK, (d: { text: string }) => {
       setIsStreaming(true);
       setStreamingMessage((prev) => prev + d.text);
@@ -246,6 +250,7 @@ export function useMultiplayer() {
     state,
     inLobby,
     seedReady,
+    sceneEnding,
     streamingMessage,
     streamingDocText,
     isStreaming,
