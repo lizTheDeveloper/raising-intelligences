@@ -200,7 +200,7 @@ export function MultiplayerGame({ joinGameId }: Props) {
 
   // ---- Family chat / sidebar / adult chat ----
   if (state.phase === "family_chat" || state.phase === "sidebar" || state.phase === "adult_chat") {
-    const inputDisabled = mp.isStreaming || inOtherSidebar;
+    const inputDisabled = mp.isStreaming || inOtherSidebar || mp.sceneEnding;
     return (
       <div className="app fade-in">
         <p className="age-marker">
@@ -230,20 +230,18 @@ export function MultiplayerGame({ joinGameId }: Props) {
             disabled={inputDisabled}
             messagesRemaining={state.messagesRemaining}
           />
+          {mp.sceneEnding && (
+            <p className="dim scene-ending">the moment passes...</p>
+          )}
           <div className="chat-controls">
-            {state.phase === "family_chat" && !sidebarActive && mySlot && !state.sidebarUsed[mySlot] && (
-              <button className="btn btn-secondary" onClick={() => { track("sidebar_used", { game_id: mp.gameId ?? "" }); mp.startSidebar(); }} disabled={mp.isStreaming}>
-                talk privately
-              </button>
-            )}
             {inMySidebar && (
               <button className="btn btn-secondary" onClick={mp.endSidebar} disabled={mp.isStreaming}>
                 rejoin family
               </button>
             )}
-            {!sidebarActive && (
+            {!sidebarActive && !mp.sceneEnding && (
               <button className="btn btn-secondary" onClick={mp.endChat} disabled={mp.isStreaming}>
-                {state.phase === "adult_chat" ? "finish → report card" : "end conversation"}
+                {state.phase === "adult_chat" ? "finish → report card" : "walk away"}
               </button>
             )}
           </div>
