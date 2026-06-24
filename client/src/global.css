@@ -265,7 +265,7 @@ body::after {
 .guardian-portrait-wrap {
   width: 200px;
   height: 200px;
-  opacity: 0;
+  opacity: 0.4;
   transition: opacity 1.4s ease;
   position: relative;
   z-index: 1;

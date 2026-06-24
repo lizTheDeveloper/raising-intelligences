@@ -181,11 +181,9 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
     const id = setInterval(() => {
       setVisibleFragments((prev) => {
         const next = pickNext();
-        const updated = [...prev, next.text];
-        if (updated.length > 10) return updated.slice(-10);
-        return updated;
+        return [...prev, next.text];
       });
-    }, 3000);
+    }, 8000);
     return () => clearInterval(id);
   }, [weightedFragments]);
 
