@@ -118,6 +118,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     const state = games.get(gameId);
     const session = sessions.get(gameId);
     if (!state || !session) return;
+    if (state.phase !== "family_chat") return;
     const emitChunk = (chunk: string) => {
       io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
     };
@@ -319,10 +320,12 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
         const inSidebar = state.phase === "sidebar";
         const emitChunk = (chunk: string) => {
+          const filtered = chunk.replace(/\[SCENE_END\]/g, "");
+          if (!filtered) return;
           if (inSidebar) {
-            socket.emit(E.KID_CHUNK, { text: chunk });
+            socket.emit(E.KID_CHUNK, { text: filtered });
           } else {
-            io.to(gameId).emit(E.KID_CHUNK, { text: chunk });
+            io.to(gameId).emit(E.KID_CHUNK, { text: filtered });
           }
         };
 
