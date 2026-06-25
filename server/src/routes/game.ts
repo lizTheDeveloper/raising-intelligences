@@ -8,7 +8,7 @@ import type { GameState, Sender, ParentPersonality } from "../types.js";
 import type { GameRepository } from "../db/repository.js";
 import { generateFirstPortrait, generateNextPortrait, PORTRAITS_DIR } from "../portrait-gen.js";
 import { logger } from "../logger.js";
-import { generatePersonalitySeed } from "../game/personality.js";
+import { generatePersonalitySeed, inferGender } from "../game/personality.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -72,9 +72,15 @@ export function createGameRoutes(
     games.set(state.id, state);
     await repo.saveGame(state);
     res.json({ gameId: state.id });
-    // Kick off portrait and first-event generation in parallel so the
-    // GuardianScreen doesn't have to wait for either.
-    generateFirstPortrait(state.id).catch(() => {});
+    // Kick off gender inference, portrait, and first-event generation in parallel.
+    inferGender(engine.llm, childName).then(async (gender) => {
+      const updated = { ...state, childGender: gender };
+      games.set(state.id, updated);
+      await repo.saveGame(updated);
+      generateFirstPortrait(state.id, gender).catch(() => {});
+    }).catch(() => {
+      generateFirstPortrait(state.id).catch(() => {});
+    });
     prefetchedEvents.set(state.id, engine.prefetchNextEvent(state));
   });
 
@@ -304,12 +310,17 @@ export function createGameRoutes(
         const allReady = isSolo ? !!parent1 : !!(parent1 && parent2);
 
         if (allReady && parent1) {
-          const seed = await generatePersonalitySeed(
-            engine.llm,
-            updatedState.childName,
-            parent1,
-            isSolo ? undefined : parent2
-          );
+          let seed = "";
+          try {
+            seed = await generatePersonalitySeed(
+              engine.llm,
+              updatedState.childName,
+              parent1,
+              isSolo ? undefined : parent2
+            );
+          } catch (err) {
+            logger.warn("personality_seed_failed", { gameId, error: String(err) });
+          }
           const withSeed: GameState = { ...updatedState, personalitySeed: seed };
           games.set(gameId, withSeed);
           await repo.saveGame(withSeed);
@@ -333,7 +344,7 @@ export function createGameRoutes(
       return;
     }
     res.json({ ok: true });
-    generateNextPortrait(state.id).catch(() => {});
+    generateNextPortrait(state.id, state.childGender).catch(() => {});
   });
 
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
