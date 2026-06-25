@@ -20,11 +20,13 @@ const RELATIONSHIP_OPTIONS = [
 interface Props {
   /** Present when the page was opened from an invite link (?game=...). */
   joinGameId?: string;
+  /** Display name from Matrix login, pre-fills the name field. */
+  matrixDisplayName?: string;
 }
 
-export function MultiplayerGame({ joinGameId }: Props) {
+export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   const mp = useMultiplayer();
-  const [nameInput, setNameInput] = useState("");
+  const [nameInput, setNameInput] = useState(matrixDisplayName ?? "");
   const [childInput, setChildInput] = useState("");
   const [relationship, setRelationship] = useState(RELATIONSHIP_OPTIONS[0]);
   const [gateReady, setGateReady] = useState(false);

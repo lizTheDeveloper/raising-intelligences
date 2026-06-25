@@ -4,6 +4,7 @@ import { MultiplayerGame } from "./components/MultiplayerGame";
 import { AdminApp } from "./components/admin/AdminApp";
 import { clearResume } from "./hooks/useMultiplayer";
 import { track } from "./analytics";
+import { useMatrixAuth } from "./hooks/useMatrixAuth";
 
 const TAGLINES = [
   // funny
@@ -156,6 +157,7 @@ export function App() {
   const isSoloResume = joinGameId && params.get("mode") === "solo";
   const [mode, setMode] = useState<Mode>(isSoloResume ? "solo" : joinGameId ? "multiplayer" : "choose");
   const [theme, setTheme] = useState<Theme>("theme-ocean-grunge");
+  const auth = useMatrixAuth();
 
   // Apply theme to body so it persists across all game screens
   useEffect(() => {
@@ -168,7 +170,7 @@ export function App() {
   }, [mode]);
 
   if (mode === "solo") return <SoloGame />;
-  if (mode === "multiplayer") return <MultiplayerGame joinGameId={joinGameId} />;
+  if (mode === "multiplayer") return <MultiplayerGame joinGameId={joinGameId} matrixDisplayName={auth.user?.displayName ?? auth.user?.userId} />;
 
   return (
     <div className="app">
@@ -176,6 +178,16 @@ export function App() {
         <div className="start-glow" aria-hidden="true" />
         <h1>raising intelligences</h1>
         <p className="dim">{TAGLINE}</p>
+        <div className="auth-chip">
+          {auth.loggedIn ? (
+            <>
+              <span className="auth-name">{auth.user?.displayName ?? auth.user?.userId}</span>
+              <button className="auth-link" onClick={() => auth.logout()}>sign out</button>
+            </>
+          ) : (
+            <button className="auth-link" onClick={() => auth.showLoginModal()}>sign in</button>
+          )}
+        </div>
         <div className="mode-choice">
           <button className="btn" onClick={() => { track("mode_selected", { mode: "multiplayer" }); setMode("multiplayer"); }}>
             play with a partner
