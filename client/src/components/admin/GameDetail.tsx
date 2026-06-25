@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import type { GameDetail } from "../../hooks/useAdminApi";
+import { useState, useEffect, useMemo } from "react";
+import type { GameDetail, MessageDetail } from "../../hooks/useAdminApi";
 
 interface Props {
   gameId: string;
@@ -62,10 +62,19 @@ export function GameDetailView({ gameId, fetchGameDetail, onBack }: Props) {
   const isCompleted = detail.hasEndgame;
   const duration = formatDuration(detail.createdAt, detail.updatedAt);
 
-  // Build a map of eventNumber -> messageCounts for easy join
   const msgCountMap = new Map(
     detail.messageCounts.map((mc) => [mc.eventNumber, mc])
   );
+
+  const messagesByEvent = useMemo(() => {
+    const map = new Map<number, MessageDetail[]>();
+    for (const msg of detail.messages ?? []) {
+      const list = map.get(msg.eventNumber) ?? [];
+      list.push(msg);
+      map.set(msg.eventNumber, list);
+    }
+    return map;
+  }, [detail.messages]);
 
   return (
     <div>

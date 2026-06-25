@@ -35,11 +35,20 @@ export interface MessageCounts {
   kid: number;
 }
 
+export interface MessageDetail {
+  eventNumber: number;
+  sender: string;
+  content: string;
+  chatType: string;
+  timestamp: number;
+}
+
 export interface GameDetail extends GameSummary {
   relationshipType: string;
   identityDocument: string;
   events: EventDetail[];
   messageCounts: MessageCounts[];
+  messages: MessageDetail[];
   identitySnapshots: { eventNumber: number; document: string }[];
   sidebarUsed: { parent1: boolean; parent2: boolean };
   endgame: { epilogue: string; reportCard: string } | null;

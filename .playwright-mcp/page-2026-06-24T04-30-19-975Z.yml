@@ -1,0 +1,19 @@
+- generic [ref=e28]:
+  - heading "Rio" [level=2] [ref=e29]
+  - img [ref=e62]
+  - generic [ref=e36]:
+    - paragraph [ref=e37]: born on a quiet night.
+    - paragraph [ref=e38]: so small you were afraid to breathe.
+    - paragraph [ref=e49]: they reached for everything.
+    - paragraph [ref=e50]: they said something that almost sounded like your name.
+    - paragraph [ref=e60]: they took their first steps.
+    - paragraph [ref=e63]: they fell. they got back up.
+    - paragraph [ref=e73]: three years old.
+  - generic [ref=e83]:
+    - paragraph [ref=e84]: "You send a text to a close friend and they don’t respond for two days. You:"
+    - generic [ref=e85]:
+      - button "Assume they’re busy. Check in if you don’t hear back by the weekend." [ref=e86] [cursor=pointer]
+      - button "Notice it, but figure they’ll get back to you when they can." [ref=e87] [cursor=pointer]
+      - button "Scroll back through your last few messages wondering if you said something weird." [ref=e88] [cursor=pointer]
+      - button "Replay the conversation in your head at 2am. Definitely said something wrong." [ref=e89] [cursor=pointer]
+  - generic [ref=e90]: that's my favorite.

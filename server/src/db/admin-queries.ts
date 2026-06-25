@@ -43,11 +43,20 @@ export interface MessageCounts {
   kid: number;
 }
 
+export interface MessageDetail {
+  eventNumber: number;
+  sender: string;
+  content: string;
+  chatType: string;
+  timestamp: number;
+}
+
 export interface GameDetail extends GameSummary {
   relationshipType: string;
   identityDocument: string;
   events: EventDetail[];
   messageCounts: MessageCounts[];
+  messages: MessageDetail[];
   identitySnapshots: { eventNumber: number; document: string }[];
   sidebarUsed: { parent1: boolean; parent2: boolean };
   endgame: { epilogue: string; reportCard: string } | null;
@@ -92,6 +101,9 @@ interface StoredEvent {
 interface StoredMessage {
   sender: string;
   eventNumber: number;
+  content: string;
+  chatType: string;
+  timestamp: number;
 }
 
 export class InMemoryAdminQueries implements AdminQueries {
@@ -224,6 +236,16 @@ export class InMemoryAdminQueries implements AdminQueries {
       .sort(([a], [b]) => a - b)
       .map(([eventNumber, counts]) => ({ eventNumber, ...counts }));
 
+    const messages: MessageDetail[] = msgs
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .map((m) => ({
+        eventNumber: m.eventNumber,
+        sender: m.sender,
+        content: m.content,
+        chatType: m.chatType,
+        timestamp: m.timestamp,
+      }));
+
     return {
       id: game.id,
       childName: game.childName,
@@ -238,6 +260,7 @@ export class InMemoryAdminQueries implements AdminQueries {
       identityDocument: game.identityDocument,
       events,
       messageCounts,
+      messages,
       identitySnapshots: (this.snapshots.get(gameId) ?? []).sort(
         (a, b) => a.eventNumber - b.eventNumber
       ),
@@ -391,7 +414,7 @@ export class PgAdminQueries implements AdminQueries {
     if (gameRes.rows.length === 0) return null;
     const g = gameRes.rows[0];
 
-    const [playersRes, eventsRes, msgsRes, snapshotsRes, endgameRes] = await Promise.all([
+    const [playersRes, eventsRes, msgsRes, fullMsgsRes, snapshotsRes, endgameRes] = await Promise.all([
       query<{ slot: string; display_name: string | null }>(
         `SELECT slot, display_name FROM players WHERE game_id = $1`,
         [gameId]
@@ -407,6 +430,15 @@ export class PgAdminQueries implements AdminQueries {
       query<{ event_number: number; sender: string }>(
         `SELECT COALESCE(event_number, 0) AS event_number, sender
          FROM messages WHERE game_id = $1`,
+        [gameId]
+      ),
+      query<{
+        event_number: number; sender: string; content: string;
+        chat_type: string; timestamp: string;
+      }>(
+        `SELECT COALESCE(event_number, 0) AS event_number, sender, content,
+                COALESCE(chat_type, 'shared') AS chat_type, COALESCE(timestamp, 0)::text AS timestamp
+         FROM messages WHERE game_id = $1 ORDER BY timestamp ASC`,
         [gameId]
       ),
       query<{ event_number: number; document: string }>(
@@ -454,6 +486,13 @@ export class PgAdminQueries implements AdminQueries {
       messageCounts: [...countsByEvent.entries()]
         .sort(([a], [b]) => a - b)
         .map(([eventNumber, counts]) => ({ eventNumber, ...counts })),
+      messages: fullMsgsRes.rows.map((m) => ({
+        eventNumber: m.event_number,
+        sender: m.sender,
+        content: m.content,
+        chatType: m.chat_type,
+        timestamp: parseInt(m.timestamp, 10),
+      })),
       identitySnapshots: snapshotsRes.rows.map((s) => ({
         eventNumber: s.event_number,
         document: s.document,
