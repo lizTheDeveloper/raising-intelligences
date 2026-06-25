@@ -132,44 +132,74 @@ export function GameDetailView({ gameId, fetchGameDetail, onBack }: Props) {
         </div>
       )}
 
-      {/* Events table */}
+      {/* Events + Conversations */}
       <div className="detail-section">
         <h3>Events</h3>
-        <table className="admin-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Age</th>
-              <th>Description</th>
-              <th>P1 Msgs</th>
-              <th>P2 Msgs</th>
-              <th>Kid Msgs</th>
-            </tr>
-          </thead>
-          <tbody>
-            {detail.events.length === 0 ? (
-              <tr>
-                <td colSpan={6} style={{ color: "#555", fontStyle: "italic" }}>
-                  No events yet
-                </td>
-              </tr>
-            ) : (
-              detail.events.map((ev) => {
-                const counts = msgCountMap.get(ev.eventNumber);
-                return (
-                  <tr key={ev.eventNumber}>
-                    <td>{ev.eventNumber}</td>
-                    <td>{ev.age}</td>
-                    <td>{ev.description}</td>
-                    <td>{counts?.parent1 ?? 0}</td>
-                    <td>{counts?.parent2 ?? 0}</td>
-                    <td>{counts?.kid ?? 0}</td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+        {detail.events.length === 0 ? (
+          <div style={{ color: "#555", fontStyle: "italic" }}>No events yet</div>
+        ) : (
+          detail.events.map((ev) => {
+            const counts = msgCountMap.get(ev.eventNumber);
+            const msgs = messagesByEvent.get(ev.eventNumber) ?? [];
+            const totalMsgs = (counts?.parent1 ?? 0) + (counts?.parent2 ?? 0) + (counts?.kid ?? 0);
+            return (
+              <details key={ev.eventNumber} style={{ marginBottom: "0.5rem" }}>
+                <summary
+                  style={{
+                    cursor: "pointer",
+                    padding: "0.5rem 0",
+                    userSelect: "none",
+                    color: "#ccc",
+                    fontSize: "13px",
+                  }}
+                >
+                  <strong>#{ev.eventNumber}</strong> Age {ev.age} — {ev.description}
+                  <span style={{ color: "#666", marginLeft: "0.75rem" }}>
+                    {totalMsgs} messages
+                    {counts?.parent2 ? ` (P1: ${counts.parent1}, P2: ${counts.parent2}, Kid: ${counts.kid})` : ` (Parent: ${counts?.parent1 ?? 0}, Kid: ${counts?.kid ?? 0})`}
+                  </span>
+                </summary>
+                <div style={{ padding: "0.5rem 0 0.5rem 1.5rem" }}>
+                  {msgs.length === 0 ? (
+                    <div style={{ color: "#555", fontStyle: "italic", fontSize: "12px" }}>
+                      No messages recorded
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                      {msgs.map((msg, i) => {
+                        const isKid = msg.sender === "kid";
+                        const isSidebar = msg.chatType === "private";
+                        return (
+                          <div
+                            key={i}
+                            style={{
+                              padding: "0.4rem 0.6rem",
+                              borderRadius: "6px",
+                              fontSize: "13px",
+                              lineHeight: "1.4",
+                              backgroundColor: isKid ? "#1a2a1a" : "#1a1a2a",
+                              borderLeft: `3px solid ${isKid ? "#6bcb77" : "#4d96ff"}`,
+                            }}
+                          >
+                            <div style={{ fontSize: "11px", color: "#888", marginBottom: "0.2rem" }}>
+                              {msg.sender === "kid" ? "Kid" : msg.sender === "parent1" ? "Parent 1" : "Parent 2"}
+                              {isSidebar && (
+                                <span style={{ color: "#c77dff", marginLeft: "0.5rem" }}>
+                                  (sidebar)
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ color: "#ddd", whiteSpace: "pre-wrap" }}>{msg.content}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </details>
+            );
+          })
+        )}
       </div>
 
       {/* Sidebar usage */}
@@ -256,11 +286,18 @@ export function GameDetailView({ gameId, fetchGameDetail, onBack }: Props) {
         </div>
       )}
 
-      {/* LLM Cost — deferred */}
+      {/* LLM Traces */}
       <div className="detail-section">
-        <h3>LLM Cost</h3>
-        <div style={{ color: "#666", fontSize: "13px" }}>
-          Cost tracking coming soon
+        <h3>LLM Traces</h3>
+        <div style={{ fontSize: "13px" }}>
+          <a
+            href={`https://langfuse.multiversegames.ai/traces?filter=tags%3Agame_id%3A${detail.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "#4d96ff" }}
+          >
+            View traces in Langfuse
+          </a>
         </div>
       </div>
     </div>

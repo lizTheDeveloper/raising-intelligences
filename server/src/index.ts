@@ -48,7 +48,9 @@ async function main() {
   };
   const seed = process.env.LLM_SEED ? Number(process.env.LLM_SEED) : undefined;
   const llm = new TracedLLMClient(
-    new RoutingLLMClient(tier, onUsage, "kid_family_chat", seed)
+    new RoutingLLMClient(tier, onUsage, "kid_family_chat", seed),
+    {},
+    tier
   );
 
   // Use Postgres when DATABASE_URL is configured; otherwise an in-memory

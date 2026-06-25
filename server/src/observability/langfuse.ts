@@ -12,7 +12,7 @@
  */
 import { Langfuse } from "langfuse";
 import type { LLMClient } from "../llm/client.js";
-import type { LLMRole } from "../llm/model-config.js";
+import { type LLMRole, type ModelTier, selectModel } from "../llm/model-config.js";
 
 /**
  * Metadata carried by a traced client. Used both for trace tags
@@ -95,7 +95,8 @@ function buildTags(metadata: TraceMetadata): string[] {
 export class TracedLLMClient implements LLMClient {
   constructor(
     private readonly inner: LLMClient,
-    private readonly metadata: TraceMetadata = {}
+    private readonly metadata: TraceMetadata = {},
+    private readonly tier?: ModelTier
   ) {}
 
   /**
@@ -104,7 +105,12 @@ export class TracedLLMClient implements LLMClient {
    * underlying inner client is shared (decorators are cheap and stateless).
    */
   withContext(metadata: TraceMetadata): TracedLLMClient {
-    return new TracedLLMClient(this.inner, { ...this.metadata, ...metadata });
+    return new TracedLLMClient(this.inner, { ...this.metadata, ...metadata }, this.tier);
+  }
+
+  private resolveModel(role?: LLMRole): string | undefined {
+    if (!this.tier || !role) return undefined;
+    try { return selectModel(role, this.tier); } catch { return undefined; }
   }
 
   async streamResponse(
@@ -119,6 +125,7 @@ export class TracedLLMClient implements LLMClient {
       return this.inner.streamResponse(system, messages, onChunk, role);
     }
 
+    const model = this.resolveModel(role);
     const trace = client.trace({
       name: this.traceName("stream", role),
       tags: buildTags(metadata),
@@ -127,6 +134,7 @@ export class TracedLLMClient implements LLMClient {
     const generation = trace.generation({
       name: metadata.role ?? "llm",
       input: { system, messages },
+      ...(model ? { model } : {}),
       metadata: { ...metadata },
     });
 
@@ -153,6 +161,7 @@ export class TracedLLMClient implements LLMClient {
       return this.inner.completeResponse(system, userMessage, maxTokens, role, onChunk);
     }
 
+    const model = this.resolveModel(role);
     const trace = client.trace({
       name: this.traceName("complete", role),
       tags: buildTags(metadata),
@@ -161,6 +170,7 @@ export class TracedLLMClient implements LLMClient {
     const generation = trace.generation({
       name: metadata.role ?? "llm",
       input: { system, userMessage },
+      ...(model ? { model } : {}),
       metadata: { ...metadata, maxTokens },
     });
 
@@ -181,6 +191,7 @@ export class TracedLLMClient implements LLMClient {
       return this.inner.completeJson<T>(system, userMessage, role);
     }
 
+    const model = this.resolveModel(role);
     const trace = client.trace({
       name: this.traceName("complete_json", role),
       tags: buildTags(metadata),
@@ -189,6 +200,7 @@ export class TracedLLMClient implements LLMClient {
     const generation = trace.generation({
       name: metadata.role ?? "llm",
       input: { system, userMessage },
+      ...(model ? { model } : {}),
       metadata: { ...metadata },
     });
 
