@@ -60,6 +60,7 @@ Copy `.env.example` to `.env`. The required keys:
 - `OPENROUTER_API_KEY` — for LLM calls and portrait generation
 - `OPENAI_API_KEY` — optional, only if you want direct OpenAI image generation (portraits use OpenRouter by default)
 - `LANGFUSE_*` — optional, enables LLM call tracing
+- `ADMIN_TOKEN` — optional, enables the admin dashboard at `/raising-intelligences/admin` (requires `DATABASE_URL`)
 
 The server works without any of these, but LLM calls will fail without an API key.
 
@@ -139,9 +140,11 @@ client/src/
     MultiplayerGame.tsx       # multiplayer flow with Socket.IO
     GuardianScreen.tsx         # the "I'm ready" screen
     ChildPortrait.tsx          # SVG portrait component
+    admin/                    # admin dashboard (login, overview, game list, game detail)
   hooks/
     useGame.ts                # solo game state hook
     useMultiplayer.ts          # multiplayer state hook
+    useAdminApi.ts            # admin API client with Bearer auth
 ```
 
 ---
