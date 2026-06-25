@@ -355,8 +355,10 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         broadcastState(gameId);
         io.to(gameId).emit(E.MESSAGE_DONE, {});
 
-        // Auto-end the scene if the kid ended it naturally or the cap is reached
-        if (sceneEnded || result.state.parentMessageCount >= PARENT_MESSAGE_CAP) {
+        // Auto-end the scene if the kid ended it naturally or the cap is reached.
+        // Skip during sidebar: emitting SCENE_ENDED mid-sidebar locks both clients
+        // since the endChat phase guard returns early, leaving no recovery path.
+        if (!inSidebar && (sceneEnded || result.state.parentMessageCount >= PARENT_MESSAGE_CAP)) {
           io.to(gameId).emit(E.SCENE_ENDED, {});
           await endChat(gameId);
         }
