@@ -87,6 +87,7 @@ export const SOCKET_EVENTS = {
   DOC_DONE: "doc_done",
   EPILOGUE: "epilogue",
   REPORT_CARD_READY: "report_card_ready",
+  SCENE_ENDED: "scene_ended",
   ERROR: "error",
   PERSONALITY_SUBMITTED: "personality_submitted",
   PERSONALITY_SEED_READY: "personality_seed_ready",

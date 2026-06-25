@@ -119,11 +119,13 @@ The parents have sent ${state.parentMessageCount} of ${PARENT_MESSAGE_CAP} messa
 
 Not every response should end the scene. Only end it when the moment has genuinely resolved, escalated to a natural stopping point, or stalled. Early in the conversation (messages 1-3), the scene is usually still developing.`;
 
-  const personalitySection = state.personalitySeed
-    ? `\n\nYour personality: ${state.personalitySeed}`
+  const temperamentSection = state.personalitySeed
+    ? `**Your temperament:** ${state.personalitySeed}`
     : "";
 
-  const system = getAgeSpecificPrompt(String(state.currentEvent?.age ?? 4), { childName: state.childName }) + `${personalitySection}\n\n${scenePacing}\n\n${identitySection}\n\nThe current situation: ${state.currentEvent?.description ?? ""}`;
+  const system = getAgeSpecificPrompt(String(state.currentEvent?.age ?? 4), { childName: state.childName })
+    + (temperamentSection ? `\n\n${temperamentSection}` : "")
+    + `\n\n${scenePacing}\n\n${identitySection}\n\nThe current situation: ${state.currentEvent?.description ?? ""}`;
 
   const eventMessages = currentEventMessages(state);
   const isInSidebar = state.phase === "sidebar";

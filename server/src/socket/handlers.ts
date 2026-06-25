@@ -106,6 +106,33 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     io.to(gameId).emit(E.LOBBY, lobbyState(session));
   }
 
+  /**
+   * End-of-chat helper: runs the psychologist / identity-doc flow, saves
+   * snapshot + game, resets ready flags, and broadcasts updated state.
+   *
+   * This function is intentionally lock-free — callers must ensure
+   * serialization themselves (either by calling from within an existing
+   * `withGameLock` block, or wrapping the call in one).
+   */
+  async function endChat(gameId: string): Promise<void> {
+    const state = games.get(gameId);
+    const session = sessions.get(gameId);
+    if (!state || !session) return;
+    if (state.phase !== "family_chat") return;
+    const emitChunk = (chunk: string) => {
+      io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
+    };
+    const next = await conversationEngine.endFamilyChat(state, emitChunk);
+    games.set(next.id, next);
+    const snap = next.identitySnapshots[next.identitySnapshots.length - 1];
+    if (snap) await repo.saveSnapshot(next.id, snap);
+    await repo.saveGame(next);
+    sessions.set(gameId, resetReady(session));
+    io.to(gameId).emit(E.DOC_DONE, { documentType: "identity" });
+    broadcastState(gameId);
+    broadcastLobby(gameId);
+  }
+
   io.on("connection", (socket: Socket) => {
     const data = socket.data as SocketData;
 
@@ -293,10 +320,12 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
         const inSidebar = state.phase === "sidebar";
         const emitChunk = (chunk: string) => {
+          const filtered = chunk.replace(/\[SCENE_END\]/g, "");
+          if (!filtered) return;
           if (inSidebar) {
-            socket.emit(E.KID_CHUNK, { text: chunk });
+            socket.emit(E.KID_CHUNK, { text: filtered });
           } else {
-            io.to(gameId).emit(E.KID_CHUNK, { text: chunk });
+            io.to(gameId).emit(E.KID_CHUNK, { text: filtered });
           }
         };
 
@@ -306,6 +335,18 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           payload.content.trim(),
           emitChunk
         );
+
+        // Detect and strip the [SCENE_END] sentinel before saving/broadcasting
+        const sceneEnded = result.kidResponse.includes("[SCENE_END]");
+        if (sceneEnded) {
+          result.kidResponse = result.kidResponse.replace(/\s*\[SCENE_END\]\s*/g, "").trim();
+          const msgs = result.state.messages;
+          const lastMsg = msgs[msgs.length - 1];
+          if (lastMsg) {
+            lastMsg.content = lastMsg.content.replace(/\s*\[SCENE_END\]\s*/g, "").trim();
+          }
+        }
+
         games.set(result.state.id, result.state);
         const tail = result.state.messages.slice(-2);
         for (const m of tail) await repo.saveMessage(result.state.id, m);
@@ -313,6 +354,12 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
         broadcastState(gameId);
         io.to(gameId).emit(E.MESSAGE_DONE, {});
+
+        // Auto-end the scene if the kid ended it naturally or the cap is reached
+        if (sceneEnded || result.state.parentMessageCount >= PARENT_MESSAGE_CAP) {
+          io.to(gameId).emit(E.SCENE_ENDED, {});
+          await endChat(gameId);
+        }
       }).catch((err) => fail(String(err)));
     });
 
@@ -348,21 +395,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       if (!gameId) return fail("Not in a game");
 
       withGameLock(gameId, async () => {
-        const state = currentState();
-        const session = sessions.get(gameId);
-        if (!state || !session) { fail("Not in a game"); return; }
-        const emitChunk = (chunk: string) => {
-          io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
-        };
-        const next = await conversationEngine.endFamilyChat(state, emitChunk);
-        games.set(next.id, next);
-        const snap = next.identitySnapshots[next.identitySnapshots.length - 1];
-        if (snap) await repo.saveSnapshot(next.id, snap);
-        await repo.saveGame(next);
-        sessions.set(gameId, resetReady(session));
-        io.to(gameId).emit(E.DOC_DONE, { documentType: "identity" });
-        broadcastState(gameId);
-        broadcastLobby(gameId);
+        await endChat(gameId);
       }).catch((err) => fail(String(err)));
     });
 
