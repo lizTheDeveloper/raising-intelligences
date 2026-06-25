@@ -33,6 +33,16 @@ export function GameDetailView({ gameId, fetchGameDetail, onBack }: Props) {
       );
   }, [gameId, fetchGameDetail]);
 
+  const messagesByEvent = useMemo(() => {
+    const map = new Map<number, MessageDetail[]>();
+    for (const msg of detail?.messages ?? []) {
+      const list = map.get(msg.eventNumber) ?? [];
+      list.push(msg);
+      map.set(msg.eventNumber, list);
+    }
+    return map;
+  }, [detail]);
+
   if (error) {
     return (
       <div>
@@ -65,16 +75,6 @@ export function GameDetailView({ gameId, fetchGameDetail, onBack }: Props) {
   const msgCountMap = new Map(
     detail.messageCounts.map((mc) => [mc.eventNumber, mc])
   );
-
-  const messagesByEvent = useMemo(() => {
-    const map = new Map<number, MessageDetail[]>();
-    for (const msg of detail.messages ?? []) {
-      const list = map.get(msg.eventNumber) ?? [];
-      list.push(msg);
-      map.set(msg.eventNumber, list);
-    }
-    return map;
-  }, [detail.messages]);
 
   return (
     <div>
