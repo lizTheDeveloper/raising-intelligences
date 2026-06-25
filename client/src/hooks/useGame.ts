@@ -111,6 +111,7 @@ export function useGame() {
   const [gameId, setGameId] = useState<string | null>(null);
   const [phase, setPhase] = useState<string>("start");
   const [childName, setChildName] = useState("");
+  const [childGender, setChildGender] = useState<"boy" | "girl" | "nonbinary">("nonbinary");
   const [currentEvent, setCurrentEvent] = useState<GameEvent | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [messagesRemaining, setMessagesRemaining] = useState(12);
@@ -133,6 +134,7 @@ export function useGame() {
       const data = await res.json();
       setGameId(data.id);
       setChildName(data.childName);
+      setChildGender(data.childGender ?? "nonbinary");
       setPhase(data.phase);
       setCurrentEvent(data.currentEvent ?? null);
       setMessages(data.messages ?? []);
@@ -388,6 +390,7 @@ export function useGame() {
     gameId,
     phase,
     childName,
+    childGender,
     currentEvent,
     messages,
     messagesRemaining,

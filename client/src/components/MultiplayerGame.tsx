@@ -211,6 +211,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
             age={state.phase === "adult_chat" ? 22 : (state.currentEvent?.age ?? 3)}
             size={64}
             gameId={mp.gameId}
+            gender={state.childGender}
           />
           <p className="age-marker">
             {state.phase === "adult_chat" ? "— adulthood —" : `— age ${state.currentEvent?.age} —`}

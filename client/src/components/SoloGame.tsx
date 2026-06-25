@@ -15,6 +15,7 @@ export function SoloGame() {
     gameId,
     phase,
     childName,
+    childGender,
     currentEvent,
     messages,
     messagesRemaining,
@@ -205,7 +206,7 @@ export function SoloGame() {
       <div className="app">
         {error && <p className="error-banner">{error}</p>}
         <div className="chat-portrait-header">
-          <ChildPortrait age={currentEvent?.age ?? 3} size={64} gameId={gameId} />
+          <ChildPortrait age={currentEvent?.age ?? 3} size={64} gameId={gameId} gender={childGender} />
           <p className="age-marker">— age {currentEvent?.age} —</p>
         </div>
         {currentEvent?.description && (
@@ -261,7 +262,7 @@ export function SoloGame() {
     return (
       <div className="app">
         <div className="chat-portrait-header">
-          <ChildPortrait age={22} size={64} gameId={gameId} />
+          <ChildPortrait age={22} size={64} gameId={gameId} gender={childGender} />
           <p className="age-marker">— adulthood —</p>
         </div>
         <Chat
