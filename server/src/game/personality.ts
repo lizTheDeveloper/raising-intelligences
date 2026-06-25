@@ -1,6 +1,7 @@
-import type { ParentPersonality } from "../types.js";
+import type { ParentPersonality, ChildGender } from "../types.js";
 import type { LLMClient } from "../llm/client.js";
 import { PERSONALITY_SEED_SYSTEM_PROMPT } from "../llm/prompts.js";
+import { logger } from "../logger.js";
 
 export type OceanScores = [number, number, number, number, number];
 
@@ -102,4 +103,29 @@ OCEAN scores: ${formatOceanScores(kidScores)}${confessionalSection}
 Generate the personality seed document for ${childName}.`;
 
   return llm.completeResponse(system, userMessage, undefined, "personality_seed");
+}
+
+/**
+ * Infer a child's likely gender presentation from their name.
+ * Returns "nonbinary" for ambiguous names, errors, or timeouts.
+ */
+export async function inferGender(
+  llm: LLMClient,
+  childName: string,
+): Promise<ChildGender> {
+  try {
+    const system = `You classify names by likely gender. Respond with exactly one word: "boy", "girl", or "nonbinary". If the name is ambiguous, gender-neutral, or you're unsure, respond "nonbinary".`;
+    const raw = await llm.completeResponse(
+      system,
+      `Name: ${childName}`,
+      10,
+      "gender_inference",
+    );
+    const word = raw.trim().toLowerCase().replace(/[^a-z]/g, "");
+    if (word === "boy" || word === "girl") return word;
+    return "nonbinary";
+  } catch (e) {
+    logger.warn("gender_inference_failed", { childName, error: (e as Error).message });
+    return "nonbinary";
+  }
 }

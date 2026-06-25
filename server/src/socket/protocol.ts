@@ -1,4 +1,4 @@
-import type { GamePhase, GameEvent, Message, Sender } from "../types.js";
+import type { ChildGender, GamePhase, GameEvent, Message, Sender } from "../types.js";
 import type { PlayerSlot } from "../game/session-manager.js";
 
 /**
@@ -51,6 +51,7 @@ export interface ViewerState {
   id: string;
   phase: GamePhase;
   childName: string;
+  childGender: ChildGender;
   relationshipType: string;
   currentEvent: GameEvent | null;
   currentEventNumber: number;

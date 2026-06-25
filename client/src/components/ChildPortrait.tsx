@@ -2,10 +2,13 @@ import { useState, useEffect } from "react";
 import { ChildPresence } from "./ChildPresence";
 import { track } from "../analytics";
 
+type ChildGender = "boy" | "girl" | "nonbinary";
+
 interface Props {
   age: number;
   size?: number;
   gameId?: string | null;
+  gender?: ChildGender;
   onLoad?: () => void;
 }
 
@@ -17,10 +20,38 @@ function ageSlug(age: number): string {
   return "age-20";
 }
 
-export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
+function hashCode(str: string): number {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
+
+const STARTER_POOL_SIZE = 30;
+
+function starterUrl(slug: string, gender: ChildGender, gameId: string): string {
+  const base = import.meta.env.BASE_URL;
+  const variant = hashCode(gameId) % STARTER_POOL_SIZE;
+  return `${base}portraits/starters/${gender}/${slug}/${variant}.png`;
+}
+
+export function ChildPortrait({ age, size = 180, gameId, gender = "nonbinary", onLoad }: Props) {
   const [src, setSrc] = useState<string | null>(null);
+  const [starterSrc, setStarterSrc] = useState<string | null>(null);
   const slug = ageSlug(age);
 
+  // Try loading a starter portrait as immediate fallback
+  useEffect(() => {
+    if (!gameId) return;
+    const url = starterUrl(slug, gender, gameId);
+    const img = new Image();
+    img.onload = () => setStarterSrc(url);
+    img.onerror = () => {};
+    img.src = url;
+  }, [gameId, slug, gender]);
+
+  // Long-poll for the AI-generated portrait
   useEffect(() => {
     if (!gameId) return;
 
@@ -30,7 +61,6 @@ export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
 
     setSrc(null);
 
-    // One request — server holds it open until the file exists, then responds.
     fetch(`${base}api/game/${gameId}/portraits/${slug}/await`, { signal: controller.signal })
       .then((res) => {
         if (!mounted) return;
@@ -46,13 +76,11 @@ export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
             setSrc(url);
             track("portrait_loaded", { ageBucket: slug, attempts: 0 });
           }
-          // Always notify parent even if this effect's cleanup already ran
-          // (age-bucket change can cause cleanup before img.onload fires).
           onLoad?.();
         };
         img.onerror = () => {
           track("portrait_failed", { ageBucket: slug });
-          onLoad?.(); // unblock parent even if image load fails
+          onLoad?.();
         };
         img.src = url;
       })
@@ -70,14 +98,16 @@ export function ChildPortrait({ age, size = 180, gameId, onLoad }: Props) {
     };
   }, [gameId, slug]);
 
-  if (!src) {
+  const displaySrc = src ?? starterSrc;
+
+  if (!displaySrc) {
     return <ChildPresence age={age} size={size} />;
   }
 
   return (
     <div className="child-portrait" style={{ width: size, height: size }}>
       <img
-        src={src}
+        src={displaySrc}
         alt=""
         aria-hidden="true"
         style={{ width: "100%", height: "100%", objectFit: "cover" }}

@@ -79,6 +79,7 @@ export interface PublicPlayer {
 interface ViewerState {
   phase: string;
   childName: string;
+  childGender?: "boy" | "girl" | "nonbinary";
   relationshipType: string;
   currentEvent: GameEvent | null;
   currentEventNumber: number;

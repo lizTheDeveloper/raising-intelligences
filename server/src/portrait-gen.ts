@@ -36,13 +36,35 @@ export function childDescriptorFromGameId(gameId: string) {
   };
 }
 
-const AGE_BUCKETS = [
-  { slug: "age-03", figure: "tiny round-headed toddler, maybe 3 years old," },
-  { slug: "age-07", figure: "7-year-old child," },
-  { slug: "age-12", figure: "12-year-old preteen," },
-  { slug: "age-16", figure: "16-year-old teenager with slightly slumped posture," },
-  { slug: "age-20", figure: "person in their mid-twenties," },
-];
+import type { ChildGender } from "./types.js";
+
+const AGE_BUCKETS_BY_GENDER: Record<ChildGender, Array<{ slug: string; figure: string }>> = {
+  nonbinary: [
+    { slug: "age-03", figure: "tiny round-headed toddler, maybe 3 years old," },
+    { slug: "age-07", figure: "7-year-old child," },
+    { slug: "age-12", figure: "12-year-old preteen," },
+    { slug: "age-16", figure: "16-year-old teenager with slightly slumped posture," },
+    { slug: "age-20", figure: "person in their mid-twenties," },
+  ],
+  boy: [
+    { slug: "age-03", figure: "tiny round-headed toddler boy, maybe 3 years old," },
+    { slug: "age-07", figure: "7-year-old boy," },
+    { slug: "age-12", figure: "12-year-old boy," },
+    { slug: "age-16", figure: "16-year-old teenage boy with slightly slumped posture," },
+    { slug: "age-20", figure: "young man in his mid-twenties," },
+  ],
+  girl: [
+    { slug: "age-03", figure: "tiny round-headed toddler girl, maybe 3 years old," },
+    { slug: "age-07", figure: "7-year-old girl," },
+    { slug: "age-12", figure: "12-year-old girl," },
+    { slug: "age-16", figure: "16-year-old teenage girl with slightly slumped posture," },
+    { slug: "age-20", figure: "young woman in her mid-twenties," },
+  ],
+};
+
+function getAgeBuckets(gender: ChildGender = "nonbinary") {
+  return AGE_BUCKETS_BY_GENDER[gender];
+}
 
 function firstPortraitPrompt(figure: string, hair: string, clothing: string): string {
   return [
@@ -176,7 +198,7 @@ async function generateWithRetry(
 
 // Called at game creation — generates only the first portrait (age-03) so the
 // guardian screen has something to show as quickly as possible.
-export async function generateFirstPortrait(gameId: string): Promise<void> {
+export async function generateFirstPortrait(gameId: string, gender: ChildGender = "nonbinary"): Promise<void> {
   if (!UUID_RE.test(gameId)) {
     logger.warn("portrait_invalid_game_id", { gameId });
     return;
@@ -188,7 +210,8 @@ export async function generateFirstPortrait(gameId: string): Promise<void> {
   mkdirSync(dir, { recursive: true });
 
   const { hair, clothing } = childDescriptorFromGameId(gameId);
-  const { slug, figure } = AGE_BUCKETS[0];
+  const buckets = getAgeBuckets(gender);
+  const { slug, figure } = buckets[0];
   const outPath = path.join(dir, `${slug}.png`);
 
   if (existsSync(outPath)) return;
@@ -200,7 +223,7 @@ const inProgress = new Set<string>();
 
 // Called when a conversation begins — generates the next missing portrait in the
 // chain so it's ready by the time the player reaches the following event.
-export async function generateNextPortrait(gameId: string): Promise<void> {
+export async function generateNextPortrait(gameId: string, gender: ChildGender = "nonbinary"): Promise<void> {
   if (!UUID_RE.test(gameId)) {
     logger.warn("portrait_invalid_game_id", { gameId });
     return;
@@ -212,12 +235,13 @@ export async function generateNextPortrait(gameId: string): Promise<void> {
   mkdirSync(dir, { recursive: true });
 
   const { hair, clothing } = childDescriptorFromGameId(gameId);
+  const buckets = getAgeBuckets(gender);
 
   // Find the first missing portrait and the last completed one (used as reference).
   let prevPath: string | null = null;
-  let next: (typeof AGE_BUCKETS)[0] | null = null;
+  let next: (typeof buckets)[0] | null = null;
 
-  for (const bucket of AGE_BUCKETS) {
+  for (const bucket of buckets) {
     const p = path.join(dir, `${bucket.slug}.png`);
     if (existsSync(p)) {
       prevPath = p;

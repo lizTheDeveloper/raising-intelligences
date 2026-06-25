@@ -52,6 +52,7 @@ function viewerState(state: GameState, slot: Sender): ViewerState {
     id: state.id,
     phase: state.phase,
     childName: state.childName,
+    childGender: state.childGender,
     relationshipType: state.relationshipType,
     currentEvent: state.currentEvent,
     currentEventNumber: state.currentEventNumber,

@@ -24,6 +24,7 @@ export function createGame(childName: string, relationshipType = "co-parents"): 
     id: randomUUID(),
     phase: "event_intro",
     childName,
+    childGender: "nonbinary",
     relationshipType,
     personalitySeed: "",
     parentPersonalities: {},

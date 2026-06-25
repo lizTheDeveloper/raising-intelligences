@@ -8,6 +8,7 @@ import { Debrief } from "./Debrief";
 import { Endgame } from "./Endgame";
 import { ReportCard } from "./ReportCard";
 import { ProcessingScreen } from "./ProcessingScreen";
+import { ChildPortrait } from "./ChildPortrait";
 
 export function SoloGame() {
   const {
@@ -203,7 +204,10 @@ export function SoloGame() {
     return (
       <div className="app">
         {error && <p className="error-banner">{error}</p>}
-        <p className="age-marker">— age {currentEvent?.age} —</p>
+        <div className="chat-portrait-header">
+          <ChildPortrait age={currentEvent?.age ?? 3} size={64} gameId={gameId} />
+          <p className="age-marker">— age {currentEvent?.age} —</p>
+        </div>
         {currentEvent?.description && (
           <p className="event-context">{currentEvent.description}</p>
         )}
@@ -256,7 +260,10 @@ export function SoloGame() {
   if (phase === "adult_chat") {
     return (
       <div className="app">
-        <p className="age-marker">— adulthood —</p>
+        <div className="chat-portrait-header">
+          <ChildPortrait age={22} size={64} gameId={gameId} />
+          <p className="age-marker">— adulthood —</p>
+        </div>
         <Chat
           messages={messages}
           streamingMessage={streamingMessage}

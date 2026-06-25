@@ -38,10 +38,13 @@ export interface ParentPersonality {
   confessional2: string;
 }
 
+export type ChildGender = "boy" | "girl" | "nonbinary";
+
 export interface GameState {
   id: string;
   phase: GamePhase;
   childName: string;
+  childGender: ChildGender;
   relationshipType: string;
   personalitySeed: string;
   parentPersonalities: {

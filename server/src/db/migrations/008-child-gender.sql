@@ -1,0 +1,1 @@
+ALTER TABLE games ADD COLUMN IF NOT EXISTS child_gender TEXT NOT NULL DEFAULT 'nonbinary';

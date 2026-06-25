@@ -22,7 +22,8 @@ export type LLMRole =
   | "psychologist"
   | "epilogue"
   | "report_card"
-  | "personality_seed";
+  | "personality_seed"
+  | "gender_inference";
 
 export type ModelTier = "standard" | "cerebras" | "premium";
 
@@ -41,6 +42,7 @@ export const STANDARD_MODELS: ModelConfig = {
   epilogue: "qwen/qwen3.7-max",
   report_card: "qwen/qwen3.7-max",
   personality_seed: "qwen/qwen3.7-max",
+  gender_inference: "deepseek/deepseek-v4-flash",
 };
 
 /**
@@ -58,6 +60,7 @@ export const CEREBRAS_MODELS: ModelConfig = {
   epilogue:        "cerebras:gpt-oss-120b",
   report_card:     "cerebras:gpt-oss-120b",
   personality_seed: "cerebras:gpt-oss-120b",
+  gender_inference: "cerebras:gpt-oss-120b",
 };
 
 /** Premium tier: Qwen Max + Gemini 2.5 Flash + Claude Opus 4.8 for the keepsake artifacts. */
@@ -70,6 +73,7 @@ export const PREMIUM_MODELS: ModelConfig = {
   epilogue: "anthropic/claude-opus-4-8",
   report_card: "anthropic/claude-opus-4-8",
   personality_seed: "google/gemini-2.5-flash",
+  gender_inference: "deepseek/deepseek-v4-flash",
 };
 
 export const MODELS_BY_TIER: Record<ModelTier, ModelConfig> = {

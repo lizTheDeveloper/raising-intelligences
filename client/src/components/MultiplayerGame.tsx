@@ -8,6 +8,7 @@ import { MessageInput } from "./MessageInput";
 import { Endgame } from "./Endgame";
 import { ReportCard } from "./ReportCard";
 import { ProcessingScreen } from "./ProcessingScreen";
+import { ChildPortrait } from "./ChildPortrait";
 
 const RELATIONSHIP_OPTIONS = [
   "romantic partners",
@@ -205,12 +206,19 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     const inputDisabled = mp.isStreaming || inOtherSidebar || mp.sceneEnding;
     return (
       <div className="app fade-in">
-        <p className="age-marker">
-          {state.phase === "adult_chat" ? "— adulthood —" : `— age ${state.currentEvent?.age} —`}
-          {state.currentEventNumber > 0 && state.phase !== "adult_chat" && (
-            <span className="event-count"> · {state.currentEventNumber} of {state.totalEvents}</span>
-          )}
-        </p>
+        <div className="chat-portrait-header">
+          <ChildPortrait
+            age={state.phase === "adult_chat" ? 22 : (state.currentEvent?.age ?? 3)}
+            size={64}
+            gameId={mp.gameId}
+          />
+          <p className="age-marker">
+            {state.phase === "adult_chat" ? "— adulthood —" : `— age ${state.currentEvent?.age} —`}
+            {state.currentEventNumber > 0 && state.phase !== "adult_chat" && (
+              <span className="event-count"> · {state.currentEventNumber} of {state.totalEvents}</span>
+            )}
+          </p>
+        </div>
 
         {state.currentEvent?.description && state.phase !== "adult_chat" && (
           <p className="event-context">{state.currentEvent.description}</p>

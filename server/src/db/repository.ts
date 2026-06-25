@@ -1,4 +1,5 @@
 import type {
+  ChildGender,
   GameEvent,
   GamePhase,
   GameState,
@@ -53,6 +54,7 @@ function reconstructState(input: {
   id: string;
   phase: GamePhase;
   childName: string;
+  childGender?: ChildGender;
   relationshipType: string;
   personalitySeed?: string;
   parentPersonalities?: { parent1?: ParentPersonality; parent2?: ParentPersonality };
@@ -86,6 +88,7 @@ function reconstructState(input: {
     id: input.id,
     phase: input.phase,
     childName: input.childName,
+    childGender: input.childGender ?? "nonbinary",
     relationshipType: input.relationshipType,
     personalitySeed: input.personalitySeed ?? "",
     parentPersonalities: input.parentPersonalities ?? {},
@@ -109,12 +112,13 @@ export class PgGameRepository implements GameRepository {
   async saveGame(state: GameState): Promise<void> {
     await this.db.query(
       `INSERT INTO games
-         (id, child_name, relationship_type, phase, current_event_number,
+         (id, child_name, child_gender, relationship_type, phase, current_event_number,
           total_events, identity_document, personality_seed, parent_personalities,
           sidebar_used_parent1, sidebar_used_parent2, sidebar_active, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, now())
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, now())
        ON CONFLICT (id) DO UPDATE SET
          child_name            = EXCLUDED.child_name,
+         child_gender          = EXCLUDED.child_gender,
          relationship_type     = EXCLUDED.relationship_type,
          phase                 = EXCLUDED.phase,
          current_event_number  = EXCLUDED.current_event_number,
@@ -129,6 +133,7 @@ export class PgGameRepository implements GameRepository {
       [
         state.id,
         state.childName,
+        state.childGender,
         state.relationshipType,
         state.phase,
         state.currentEventNumber,
@@ -240,6 +245,7 @@ export class PgGameRepository implements GameRepository {
     const gameRes = await this.db.query<{
       id: string;
       child_name: string;
+      child_gender: ChildGender;
       relationship_type: string;
       phase: GamePhase;
       current_event_number: number;
@@ -251,7 +257,9 @@ export class PgGameRepository implements GameRepository {
       sidebar_used_parent2: boolean;
       sidebar_active: string | null;
     }>(
-      `SELECT id, child_name, relationship_type, phase,
+      `SELECT id, child_name,
+              COALESCE(child_gender, 'nonbinary') AS child_gender,
+              relationship_type, phase,
               current_event_number, total_events, identity_document,
               COALESCE(personality_seed, '') AS personality_seed,
               parent_personalities,
@@ -325,6 +333,7 @@ export class PgGameRepository implements GameRepository {
       id: game.id,
       phase: game.phase,
       childName: game.child_name,
+      childGender: game.child_gender,
       relationshipType: game.relationship_type,
       personalitySeed: game.personality_seed,
       parentPersonalities: game.parent_personalities ?? {},
@@ -353,6 +362,7 @@ export class InMemoryGameRepository implements GameRepository {
     {
       id: string;
       childName: string;
+      childGender: ChildGender;
       relationshipType: string;
       personalitySeed: string;
       parentPersonalities: { parent1?: ParentPersonality; parent2?: ParentPersonality };
@@ -375,6 +385,7 @@ export class InMemoryGameRepository implements GameRepository {
     this.games.set(state.id, {
       id: state.id,
       childName: state.childName,
+      childGender: state.childGender,
       relationshipType: state.relationshipType,
       personalitySeed: state.personalitySeed,
       parentPersonalities: state.parentPersonalities,
@@ -446,6 +457,7 @@ export class InMemoryGameRepository implements GameRepository {
       id: game.id,
       phase: game.phase,
       childName: game.childName,
+      childGender: game.childGender,
       relationshipType: game.relationshipType,
       personalitySeed: game.personalitySeed,
       parentPersonalities: game.parentPersonalities,
