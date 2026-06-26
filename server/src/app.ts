@@ -96,15 +96,15 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'"],
-          // Inline styles used by React component library
-          styleSrc: ["'self'", "'unsafe-inline'"],
+          scriptSrc: ["'self'", "https://analytics.multiversestudios.xyz"],
+          // Inline styles used by React component library; Google Fonts stylesheet
+          styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
           // Portrait images arrive as data URIs and blob: URLs during generation
           imgSrc: ["'self'", "data:", "blob:"],
           // SSE and API calls go back to the same origin; analytics goes to the
           // configured domain if present.
           connectSrc: ["'self'", allowedOrigin, "https://analytics.multiversestudios.xyz"],
-          fontSrc: ["'self'"],
+          fontSrc: ["'self'", "https://fonts.gstatic.com"],
           mediaSrc: ["'self'"],
         },
       },
