@@ -1,10 +1,23 @@
 import type { GameState, GameEvent } from "../types.js";
 import { transition } from "./state-machine.js";
 import {
+  buildAlbumContext,
   buildEpilogueContext,
   buildReportCardContext,
 } from "./context-assembler.js";
 import type { LLMClient } from "../llm/client.js";
+
+export interface AlbumData {
+  partnerName: string;
+  relationshipSummary: string;
+  moments: Array<{
+    age: number;
+    title: string;
+    description: string;
+    momentType: string;
+    visualPrompt: string;
+  }>;
+}
 
 /**
  * Drives the endgame phases: the epilogue narrative, the optional adult
@@ -74,5 +87,19 @@ export class EndgameEngine {
     );
     const next = transition(state, { type: "SHOW_REPORT_CARD", reportCard });
     return { state: next, reportCard };
+  }
+
+  /**
+   * Extract album data (partner info + key moments) from a completed game
+   * using the LLM. Returns structured data for building the family photo album.
+   */
+  async generateAlbumData(
+    state: GameState,
+    epilogue: string,
+    reportCard: string,
+    partnerDisplayName?: string
+  ): Promise<AlbumData> {
+    const ctx = buildAlbumContext(state, epilogue, reportCard, partnerDisplayName);
+    return this.llm.completeJson<AlbumData>(ctx.system, ctx.userMessage, "album");
   }
 }

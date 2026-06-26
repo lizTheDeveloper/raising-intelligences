@@ -74,4 +74,34 @@ describe("EndgameEngine", () => {
     // Epilogue and report card route to their dedicated model roles.
     expect(mock.roleCalls).toEqual(["epilogue", "report_card"]);
   });
+
+  describe("generateAlbumData", () => {
+    it("extracts partner and moments from game state", async () => {
+      const mockAlbumData = {
+        partnerName: "Jordan",
+        relationshipSummary: "A quiet presence who disappeared early.",
+        moments: [
+          { age: 3, title: "The pasta incident", description: "Stars only.", momentType: "funny", visualPrompt: "toddler at kitchen table" },
+          { age: 7, title: "First bike ride", description: "Fell twice, got back on.", momentType: "milestone", visualPrompt: "child on bike in park" },
+          { age: 12, title: "The argument", description: "Slammed the door.", momentType: "conflict", visualPrompt: "preteen in doorway" },
+          { age: 16, title: "The quiet drive", description: "Said nothing for an hour.", momentType: "tender", visualPrompt: "teenager in car" },
+          { age: 18, title: "Graduation day", description: "Looked back once.", momentType: "milestone", visualPrompt: "young adult in cap and gown" },
+        ],
+      };
+
+      const mock = new MockLLMClient();
+      mock.albumData = mockAlbumData;
+      const engine = new EndgameEngine(mock);
+      const state = finishedGame();
+
+      const result = await engine.generateAlbumData(state, "epilogue text", "report card text");
+
+      expect(result.partnerName).toBe("Jordan");
+      expect(result.relationshipSummary).toContain("quiet");
+      expect(result.moments).toHaveLength(5);
+      expect(result.moments[0].title).toBe("The pasta incident");
+      expect(result.moments[0].momentType).toBe("funny");
+      expect(mock.roleCalls).toEqual(["album"]);
+    });
+  });
 });
