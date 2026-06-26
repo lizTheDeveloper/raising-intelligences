@@ -517,7 +517,14 @@ export function registerSocketHandlers(deps: SocketDeps): void {
             parent1,
             isSolo ? undefined : parent2
           );
-          const withSeed: GameState = { ...updatedState, personalitySeed: seed };
+          // Re-read after the LLM call — concurrent events may have written a
+          // phase transition while generatePersonalitySeed was awaiting (~2s).
+          const latestState = games.get(gameId) ?? updatedState;
+          const withSeed: GameState = {
+            ...latestState,
+            parentPersonalities: updatedState.parentPersonalities,
+            personalitySeed: seed,
+          };
           games.set(gameId, withSeed);
           await repo.saveGame(withSeed);
           io.to(gameId).emit(E.PERSONALITY_SEED_READY, { personalitySeed: seed });
