@@ -13,6 +13,7 @@ import { generatePersonalitySeed, inferGender } from "../game/personality.js";
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
 const MAX_MESSAGE_LENGTH = 2000;
+const MAX_RELATIONSHIP_TYPE_LENGTH = 100;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface GameRouteOptions {
@@ -66,6 +67,10 @@ export function createGameRoutes(
     }
     if (childName.length > MAX_CHILD_NAME_LENGTH) {
       res.status(400).json({ error: `childName must be ${MAX_CHILD_NAME_LENGTH} characters or fewer` });
+      return;
+    }
+    if (relationshipType && relationshipType.length > MAX_RELATIONSHIP_TYPE_LENGTH) {
+      res.status(400).json({ error: `relationshipType must be ${MAX_RELATIONSHIP_TYPE_LENGTH} characters or fewer` });
       return;
     }
     const state = createGame(childName, relationshipType);
@@ -150,38 +155,52 @@ export function createGameRoutes(
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
-    await withGameLock(req.params.id as string, async () => {
-      // Re-read state inside the lock — another handler may have written a newer
-      // snapshot while this request was queued.
-      const state = await resolveGame(req.params.id as string);
-      if (!state) {
-        res.write(`data: ${JSON.stringify({ type: "error", error: "Game not found" })}\n\n`);
-        res.end();
-        return;
-      }
-      try {
-        const result = await engine.handleParentMessage(state, sender, content, (chunk) => {
-          res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
-        });
-        games.set(result.state.id, result.state);
-        // Persist just the two new tail messages (parent + kid), then the checkpoint.
-        const tail = result.state.messages.slice(-2);
-        for (const m of tail) await repo.saveMessage(result.state.id, m);
-        await repo.saveGame(result.state);
-        res.write(
-          `data: ${JSON.stringify({
-            type: "done",
-            kidResponse: result.kidResponse,
-            messagesRemaining: engine.getMessageCapRemaining(result.state),
-          })}\n\n`
-        );
-        res.end();
-      } catch (err) {
-        logger.error("message_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
+    try {
+      await withGameLock(req.params.id as string, async () => {
+        try {
+          // Re-read state inside the lock — another handler may have written a newer
+          // snapshot while this request was queued.
+          const state = await resolveGame(req.params.id as string);
+          if (!state) {
+            if (!res.writableEnded) {
+              res.write(`data: ${JSON.stringify({ type: "error", error: "Game not found" })}\n\n`);
+              res.end();
+            }
+            return;
+          }
+          const result = await engine.handleParentMessage(state, sender, content, (chunk) => {
+            res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
+          });
+          games.set(result.state.id, result.state);
+          // Persist just the two new tail messages (parent + kid), then the checkpoint.
+          const tail = result.state.messages.slice(-2);
+          for (const m of tail) await repo.saveMessage(result.state.id, m);
+          await repo.saveGame(result.state);
+          if (!res.writableEnded) {
+            res.write(
+              `data: ${JSON.stringify({
+                type: "done",
+                kidResponse: result.kidResponse,
+                messagesRemaining: engine.getMessageCapRemaining(result.state),
+              })}\n\n`
+            );
+            res.end();
+          }
+        } catch (err) {
+          logger.error("message_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
+          if (!res.writableEnded) {
+            res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
+            res.end();
+          }
+        }
+      });
+    } catch (err) {
+      logger.error("message_lock_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
+      if (!res.writableEnded) {
         res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
         res.end();
       }
-    });
+    }
   });
 
   router.post("/game/:id/end-chat", ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
@@ -195,36 +214,50 @@ export function createGameRoutes(
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
-    await withGameLock(req.params.id as string, async () => {
-      const state = await resolveGame(req.params.id as string);
-      if (!state) {
-        res.write(`data: ${JSON.stringify({ type: "error", error: "Game not found" })}\n\n`);
-        res.end();
-        return;
-      }
-      try {
-        // Kick off next-event prefetch immediately — runs in parallel with the
-        // psychologist so the event is ready before the player finishes reading debrief.
-        // Uses the current identity doc (one conversation behind) which is fine;
-        // the world manager relies more on the events list than the identity snapshot.
-        if (state.currentEventNumber < state.totalEvents) {
-          prefetchedEvents.set(state.id, engine.prefetchNextEvent(state));
+    try {
+      await withGameLock(req.params.id as string, async () => {
+        try {
+          const state = await resolveGame(req.params.id as string);
+          if (!state) {
+            if (!res.writableEnded) {
+              res.write(`data: ${JSON.stringify({ type: "error", error: "Game not found" })}\n\n`);
+              res.end();
+            }
+            return;
+          }
+          // Kick off next-event prefetch immediately — runs in parallel with the
+          // psychologist so the event is ready before the player finishes reading debrief.
+          // Uses the current identity doc (one conversation behind) which is fine;
+          // the world manager relies more on the events list than the identity snapshot.
+          if (state.currentEventNumber < state.totalEvents) {
+            prefetchedEvents.set(state.id, engine.prefetchNextEvent(state));
+          }
+          const next = await engine.endFamilyChat(state, () => {
+            // Psychologist output is internal — not surfaced to the player.
+          });
+          games.set(next.id, next);
+          const latestSnapshot = next.identitySnapshots[next.identitySnapshots.length - 1];
+          if (latestSnapshot) await repo.saveSnapshot(next.id, latestSnapshot);
+          await repo.saveGame(next);
+          if (!res.writableEnded) {
+            res.write(`data: ${JSON.stringify({ type: "done", phase: next.phase })}\n\n`);
+            res.end();
+          }
+        } catch (err) {
+          logger.error("end_chat_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
+          if (!res.writableEnded) {
+            res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
+            res.end();
+          }
         }
-        const next = await engine.endFamilyChat(state, () => {
-          // Psychologist output is internal — not surfaced to the player.
-        });
-        games.set(next.id, next);
-        const latestSnapshot = next.identitySnapshots[next.identitySnapshots.length - 1];
-        if (latestSnapshot) await repo.saveSnapshot(next.id, latestSnapshot);
-        await repo.saveGame(next);
-        res.write(`data: ${JSON.stringify({ type: "done", phase: next.phase })}\n\n`);
-        res.end();
-      } catch (err) {
-        logger.error("end_chat_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
+      });
+    } catch (err) {
+      logger.error("end_chat_lock_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
+      if (!res.writableEnded) {
         res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
         res.end();
       }
-    });
+    }
   });
 
   router.post("/game/:id/end-debrief", async (req: Request, res: Response) => {

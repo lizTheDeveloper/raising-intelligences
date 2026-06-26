@@ -46,29 +46,43 @@ export function createEndgameRoutes(
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
-    await withGameLock(req.params.id as string, async () => {
-      const state = games.get(req.params.id as string);
-      if (!state) {
-        res.write(`data: ${JSON.stringify({ type: "error", error: "Game not found" })}\n\n`);
-        res.end();
-        return;
-      }
-      try {
-        const result = await engine.generateEpilogue(state, (chunk) => {
-          res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
-        });
-        games.set(result.state.id, result.state);
-        await repo.saveGame(result.state);
-        res.write(
-          `data: ${JSON.stringify({ type: "done", phase: result.state.phase, epilogue: result.epilogue })}\n\n`
-        );
-        res.end();
-      } catch (err) {
-        logger.error("epilogue_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
+    try {
+      await withGameLock(req.params.id as string, async () => {
+        const state = games.get(req.params.id as string);
+        if (!state) {
+          if (!res.writableEnded) {
+            res.write(`data: ${JSON.stringify({ type: "error", error: "Game not found" })}\n\n`);
+            res.end();
+          }
+          return;
+        }
+        try {
+          const result = await engine.generateEpilogue(state, (chunk) => {
+            res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
+          });
+          games.set(result.state.id, result.state);
+          await repo.saveGame(result.state);
+          if (!res.writableEnded) {
+            res.write(
+              `data: ${JSON.stringify({ type: "done", phase: result.state.phase, epilogue: result.epilogue })}\n\n`
+            );
+            res.end();
+          }
+        } catch (err) {
+          logger.error("epilogue_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
+          if (!res.writableEnded) {
+            res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
+            res.end();
+          }
+        }
+      });
+    } catch (err) {
+      logger.error("epilogue_lock_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
+      if (!res.writableEnded) {
         res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
         res.end();
       }
-    });
+    }
   });
 
   router.post("/game/:id/adult-chat", async (req: Request, res: Response) => {
@@ -104,79 +118,93 @@ export function createEndgameRoutes(
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
-    await withGameLock(req.params.id as string, async () => {
-      const state = games.get(req.params.id as string);
-      if (!state) {
-        res.write(`data: ${JSON.stringify({ type: "error", error: "Game not found" })}\n\n`);
-        res.end();
-        return;
-      }
-      try {
-        const result = await engine.generateReportCard(state, epilogue ?? "", (chunk) => {
-          res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
-        });
-        games.set(result.state.id, result.state);
-        await repo.saveEndgame(result.state.id, epilogue ?? "", result.reportCard);
-        await repo.saveGame(result.state);
-        res.write(
-          `data: ${JSON.stringify({ type: "done", phase: result.state.phase, reportCard: result.reportCard })}\n\n`
-        );
-        res.end();
-
-        // Fire-and-forget album generation
-        const userId = req.query.userId as string | undefined;
-        if (userId) {
-          (async () => {
-            try {
-              let partnerDisplayName: string | undefined;
-              const isSoloGame = state.relationshipType === "solo parent" || state.relationshipType === "solo";
-              if (!isSoloGame) {
-                const players = await repo.loadPlayers(state.id);
-                const otherPlayer = players.find(p => p.slot === "parent2");
-                partnerDisplayName = otherPlayer?.displayName ?? undefined;
-              }
-
-              const albumData = await engine.generateAlbumData(
-                state, epilogue ?? "", result.reportCard, partnerDisplayName
-              );
-
-              const partnerType = isSoloGame ? "generated" : "real";
-              const partnerId = await repo.saveAlbumPartner({
-                userId,
-                partnerName: albumData.partnerName,
-                partnerType,
-                relationshipSummary: albumData.relationshipSummary,
-              });
-
-              const illustrations = await generateMomentIllustrations(
-                state.id,
-                albumData.moments.map((m, i) => ({ visualPrompt: m.visualPrompt, sortOrder: i }))
-              );
-
-              const momentsWithImages = albumData.moments.map((m, i) => ({
-                age: m.age,
-                title: m.title,
-                description: m.description,
-                momentType: m.momentType,
-                imagePath: illustrations[i]?.imagePath ?? null,
-                sortOrder: i,
-              }));
-
-              await repo.saveAlbumMoments(state.id, momentsWithImages);
-              await repo.linkGameToPartner(userId, state.id, partnerId);
-
-              logger.info("album_generated", { gameId: state.id, userId, moments: momentsWithImages.length });
-            } catch (e) {
-              logger.error("album_generation_failed", { gameId: state.id, error: (e as Error).message });
-            }
-          })();
+    try {
+      await withGameLock(req.params.id as string, async () => {
+        const state = games.get(req.params.id as string);
+        if (!state) {
+          if (!res.writableEnded) {
+            res.write(`data: ${JSON.stringify({ type: "error", error: "Game not found" })}\n\n`);
+            res.end();
+          }
+          return;
         }
-      } catch (err) {
-        logger.error("report_card_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
+        try {
+          const result = await engine.generateReportCard(state, epilogue ?? "", (chunk) => {
+            res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
+          });
+          games.set(result.state.id, result.state);
+          await repo.saveEndgame(result.state.id, epilogue ?? "", result.reportCard);
+          await repo.saveGame(result.state);
+          if (!res.writableEnded) {
+            res.write(
+              `data: ${JSON.stringify({ type: "done", phase: result.state.phase, reportCard: result.reportCard })}\n\n`
+            );
+            res.end();
+          }
+
+          // Fire-and-forget album generation
+          const userId = req.query.userId as string | undefined;
+          if (userId) {
+            (async () => {
+              try {
+                let partnerDisplayName: string | undefined;
+                const isSoloGame = state.relationshipType === "solo parent" || state.relationshipType === "solo";
+                if (!isSoloGame) {
+                  const players = await repo.loadPlayers(state.id);
+                  const otherPlayer = players.find(p => p.slot === "parent2");
+                  partnerDisplayName = otherPlayer?.displayName ?? undefined;
+                }
+
+                const albumData = await engine.generateAlbumData(
+                  state, epilogue ?? "", result.reportCard, partnerDisplayName
+                );
+
+                const partnerType = isSoloGame ? "generated" : "real";
+                const partnerId = await repo.saveAlbumPartner({
+                  userId,
+                  partnerName: albumData.partnerName,
+                  partnerType,
+                  relationshipSummary: albumData.relationshipSummary,
+                });
+
+                const illustrations = await generateMomentIllustrations(
+                  state.id,
+                  albumData.moments.map((m, i) => ({ visualPrompt: m.visualPrompt, sortOrder: i }))
+                );
+
+                const momentsWithImages = albumData.moments.map((m, i) => ({
+                  age: m.age,
+                  title: m.title,
+                  description: m.description,
+                  momentType: m.momentType,
+                  imagePath: illustrations[i]?.imagePath ?? null,
+                  sortOrder: i,
+                }));
+
+                await repo.saveAlbumMoments(state.id, momentsWithImages);
+                await repo.linkGameToPartner(userId, state.id, partnerId);
+
+                logger.info("album_generated", { gameId: state.id, userId, moments: momentsWithImages.length });
+              } catch (e) {
+                logger.error("album_generation_failed", { gameId: state.id, error: (e as Error).message });
+              }
+            })();
+          }
+        } catch (err) {
+          logger.error("report_card_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
+          if (!res.writableEnded) {
+            res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
+            res.end();
+          }
+        }
+      });
+    } catch (err) {
+      logger.error("report_card_lock_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
+      if (!res.writableEnded) {
         res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
         res.end();
       }
-    });
+    }
   });
 
   return router;
