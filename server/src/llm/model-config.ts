@@ -22,6 +22,7 @@ export type LLMRole =
   | "psychologist"
   | "epilogue"
   | "report_card"
+  | "album"
   | "personality_seed"
   | "gender_inference";
 
@@ -41,6 +42,7 @@ export const STANDARD_MODELS: ModelConfig = {
   psychologist: "qwen/qwen3.7-max",
   epilogue: "qwen/qwen3.7-max",
   report_card: "qwen/qwen3.7-max",
+  album: "qwen/qwen3.7-max",
   personality_seed: "qwen/qwen3.7-max",
   gender_inference: "deepseek/deepseek-v4-flash",
 };
@@ -59,6 +61,7 @@ export const CEREBRAS_MODELS: ModelConfig = {
   psychologist:    "cerebras:gpt-oss-120b",
   epilogue:        "cerebras:gpt-oss-120b",
   report_card:     "cerebras:gpt-oss-120b",
+  album:           "cerebras:gpt-oss-120b",
   personality_seed: "cerebras:gpt-oss-120b",
   gender_inference: "cerebras:gpt-oss-120b",
 };
@@ -72,6 +75,7 @@ export const PREMIUM_MODELS: ModelConfig = {
   psychologist: "google/gemini-2.5-flash",
   epilogue: "anthropic/claude-opus-4-8",
   report_card: "anthropic/claude-opus-4-8",
+  album: "anthropic/claude-opus-4-8",
   personality_seed: "google/gemini-2.5-flash",
   gender_inference: "deepseek/deepseek-v4-flash",
 };
