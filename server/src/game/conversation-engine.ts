@@ -8,16 +8,35 @@ import {
 } from "./context-assembler.js";
 import type { LLMClient } from "../llm/client.js";
 
-function validateGameEvent(obj: unknown): GameEvent {
-  if (!obj || typeof obj !== "object") throw new Error("Expected object from world manager");
-  const e = obj as Record<string, unknown>;
+/**
+ * Validate and coerce raw JSON from the world-manager LLM into a GameEvent.
+ * The LLM occasionally returns age as a string, omits optional fields, or
+ * wraps the object in markdown fences — this guard catches all of those and
+ * throws early with a clear message before the bad data reaches game state.
+ */
+function validateGameEvent(raw: unknown): GameEvent {
+  if (!raw || typeof raw !== "object") {
+    throw new Error("World manager returned a non-object response");
+  }
+  const e = raw as Record<string, unknown>;
+
   const age = typeof e.age === "number" ? e.age : Number(e.age);
-  if (!Number.isFinite(age) || age < 0 || age > 30) throw new Error(`Invalid age from world manager: ${e.age}`);
-  if (typeof e.description !== "string" || !e.description.trim()) throw new Error("Missing description from world manager");
-  if (typeof e.setting !== "string") throw new Error("Missing setting from world manager");
-  if (typeof e.trigger !== "string") throw new Error("Missing trigger from world manager");
+  if (!Number.isFinite(age) || age < 0 || age > 30) {
+    throw new Error(`World manager returned invalid age: ${e.age}`);
+  }
+
+  if (typeof e.description !== "string" || !e.description.trim()) {
+    throw new Error("World manager response missing description");
+  }
+  if (typeof e.setting !== "string" || !e.setting.trim()) {
+    throw new Error("World manager response missing setting");
+  }
+  if (typeof e.trigger !== "string" || !e.trigger.trim()) {
+    throw new Error("World manager response missing trigger");
+  }
+
   return {
-    eventNumber: typeof e.eventNumber === "number" ? e.eventNumber : Number(e.eventNumber),
+    eventNumber: typeof e.eventNumber === "number" ? e.eventNumber : Number(e.eventNumber) || 0,
     age,
     description: e.description,
     setting: e.setting,
