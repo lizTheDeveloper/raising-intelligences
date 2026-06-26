@@ -196,6 +196,58 @@ async function generateWithRetry(
   logger.warn("portrait_generation_abandoned", { gameId, slug, maxAttempts: MAX_PORTRAIT_ATTEMPTS });
 }
 
+function momentPrompt(visualPrompt: string): string {
+  return [
+    `Lo-fi anime illustration: ${visualPrompt}.`,
+    `Warm amber and golden lighting, dark cozy atmosphere.`,
+    `Muted warm palette, soft film grain, slightly desaturated,`,
+    `gentle nostalgic mood, lo-fi music aesthetic.`,
+    `Flat illustration style, clean lines, no text, no watermark.`,
+    `Square composition 1:1.`,
+  ].join(" ");
+}
+
+export async function generateMomentIllustrations(
+  gameId: string,
+  moments: Array<{ visualPrompt: string; sortOrder: number }>
+): Promise<Array<{ sortOrder: number; imagePath: string | null }>> {
+  const key = apiKey();
+  if (!key) {
+    return moments.map(m => ({ sortOrder: m.sortOrder, imagePath: null }));
+  }
+
+  if (!UUID_RE.test(gameId)) {
+    return moments.map(m => ({ sortOrder: m.sortOrder, imagePath: null }));
+  }
+
+  const dir = path.join(PORTRAITS_DIR, gameId);
+  mkdirSync(dir, { recursive: true });
+
+  const results = await Promise.allSettled(
+    moments.map(async (m) => {
+      const filename = `moment-${String(m.sortOrder).padStart(2, "0")}.png`;
+      const outPath = path.join(dir, filename);
+      const relativePath = `portraits/${gameId}/${filename}`;
+
+      try {
+        const buf = await generateImage(momentPrompt(m.visualPrompt), key);
+        writeFileSync(outPath, buf);
+        logger.info("moment_illustration_ready", { gameId, filename });
+        return { sortOrder: m.sortOrder, imagePath: relativePath };
+      } catch (e) {
+        logger.error("moment_illustration_failed", {
+          gameId, filename, error: (e as Error).message,
+        });
+        return { sortOrder: m.sortOrder, imagePath: null };
+      }
+    })
+  );
+
+  return results.map((r, i) =>
+    r.status === "fulfilled" ? r.value : { sortOrder: moments[i].sortOrder, imagePath: null }
+  );
+}
+
 // Called at game creation — generates only the first portrait (age-03) so the
 // guardian screen has something to show as quickly as possible.
 export async function generateFirstPortrait(gameId: string, gender: ChildGender = "nonbinary"): Promise<void> {
