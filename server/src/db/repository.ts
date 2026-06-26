@@ -21,6 +21,44 @@ export interface PlayerRecord {
   token: string;
 }
 
+export interface AlbumKid {
+  gameId: string;
+  childName: string;
+  createdAt: number;
+  hasAlbumData: boolean;
+}
+
+export interface AlbumPartner {
+  id: string;
+  partnerName: string;
+  partnerType: string;
+  relationshipSummary: string;
+  kids: AlbumKid[];
+}
+
+export interface Album {
+  partners: AlbumPartner[];
+  unlinkedKids: AlbumKid[];
+}
+
+export interface AlbumMoment {
+  age: number;
+  title: string;
+  description: string;
+  momentType: string;
+  imageUrl: string | null;
+}
+
+export interface Scrapbook {
+  childName: string;
+  partnerName: string | null;
+  partnerType: string | null;
+  relationshipSummary: string;
+  moments: AlbumMoment[];
+  epilogue: string;
+  reportCard: string;
+}
+
 /**
  * Write-through persistence for games. The in-memory `GameState` remains
  * authoritative during play; the repository mirrors each mutation to durable
@@ -41,6 +79,11 @@ export interface GameRepository {
   loadGame(gameId: string): Promise<GameState | null>;
   savePlayer(gameId: string, slot: string, displayName: string, token: string): Promise<void>;
   loadPlayers(gameId: string): Promise<PlayerRecord[]>;
+
+  /** Return the album overview for a user: partners with their kids, plus unlinked kids. */
+  loadAlbum(userId: string): Promise<Album>;
+  /** Return the full scrapbook for a single kid, or null if the game doesn't exist for this user. */
+  loadScrapbook(userId: string, gameId: string): Promise<Scrapbook | null>;
 }
 
 const DEFAULT_TOTAL_EVENTS = 10;
@@ -350,6 +393,146 @@ export class PgGameRepository implements GameRepository {
       sidebarActive: game.sidebar_active,
     });
   }
+
+  async loadAlbum(userId: string): Promise<Album> {
+    // Fetch all kids for this user, with optional partner link
+    const kidsRes = await this.db.query<{
+      game_id: string;
+      child_name: string;
+      created_at: string;
+      partner_id: string | null;
+    }>(
+      `SELECT game_id, child_name, created_at, partner_id
+       FROM user_games WHERE user_id = $1 ORDER BY created_at DESC`,
+      [userId]
+    );
+
+    // Fetch all partners for this user
+    const partnersRes = await this.db.query<{
+      id: string;
+      partner_name: string;
+      partner_type: string;
+      relationship_summary: string;
+    }>(
+      `SELECT id, partner_name, partner_type, relationship_summary
+       FROM album_partners WHERE user_id = $1 ORDER BY created_at ASC`,
+      [userId]
+    );
+
+    // Check which games have album moments
+    const gameIds = kidsRes.rows.map(r => r.game_id);
+    let albumDataSet = new Set<string>();
+    if (gameIds.length > 0) {
+      const momentsRes = await this.db.query<{ game_id: string }>(
+        `SELECT DISTINCT game_id FROM album_moments WHERE game_id = ANY($1::uuid[])`,
+        [gameIds]
+      );
+      albumDataSet = new Set(momentsRes.rows.map(r => r.game_id));
+    }
+
+    // Build partner map
+    const partnerMap = new Map<string, AlbumPartner>();
+    for (const p of partnersRes.rows) {
+      partnerMap.set(p.id, {
+        id: p.id,
+        partnerName: p.partner_name,
+        partnerType: p.partner_type,
+        relationshipSummary: p.relationship_summary,
+        kids: [],
+      });
+    }
+
+    const unlinkedKids: AlbumKid[] = [];
+    for (const r of kidsRes.rows) {
+      const kid: AlbumKid = {
+        gameId: r.game_id,
+        childName: r.child_name,
+        createdAt: new Date(r.created_at).getTime(),
+        hasAlbumData: albumDataSet.has(r.game_id),
+      };
+      if (r.partner_id && partnerMap.has(r.partner_id)) {
+        partnerMap.get(r.partner_id)!.kids.push(kid);
+      } else {
+        unlinkedKids.push(kid);
+      }
+    }
+
+    return {
+      partners: [...partnerMap.values()],
+      unlinkedKids,
+    };
+  }
+
+  async loadScrapbook(userId: string, gameId: string): Promise<Scrapbook | null> {
+    // Verify the game belongs to this user
+    const ugRes = await this.db.query<{
+      game_id: string;
+      child_name: string;
+      partner_id: string | null;
+    }>(
+      `SELECT game_id, child_name, partner_id
+       FROM user_games WHERE user_id = $1 AND game_id = $2`,
+      [userId, gameId]
+    );
+    const ug = ugRes.rows[0];
+    if (!ug) return null;
+
+    // Load partner info if linked
+    let partnerName: string | null = null;
+    let partnerType: string | null = null;
+    let relationshipSummary = "";
+    if (ug.partner_id) {
+      const pRes = await this.db.query<{
+        partner_name: string;
+        partner_type: string;
+        relationship_summary: string;
+      }>(
+        `SELECT partner_name, partner_type, relationship_summary
+         FROM album_partners WHERE id = $1`,
+        [ug.partner_id]
+      );
+      if (pRes.rows[0]) {
+        partnerName = pRes.rows[0].partner_name;
+        partnerType = pRes.rows[0].partner_type;
+        relationshipSummary = pRes.rows[0].relationship_summary;
+      }
+    }
+
+    // Load moments
+    const momentsRes = await this.db.query<{
+      age: number;
+      title: string;
+      description: string;
+      moment_type: string;
+      image_path: string | null;
+    }>(
+      `SELECT age, title, description, moment_type, image_path
+       FROM album_moments WHERE game_id = $1 ORDER BY sort_order ASC, created_at ASC`,
+      [gameId]
+    );
+
+    // Load endgame data
+    const endRes = await this.db.query<{ epilogue: string; report_card: string }>(
+      `SELECT epilogue, report_card FROM endgames WHERE game_id = $1`,
+      [gameId]
+    );
+
+    return {
+      childName: ug.child_name,
+      partnerName,
+      partnerType,
+      relationshipSummary,
+      moments: momentsRes.rows.map(r => ({
+        age: r.age,
+        title: r.title,
+        description: r.description,
+        momentType: r.moment_type,
+        imageUrl: r.image_path,
+      })),
+      epilogue: endRes.rows[0]?.epilogue ?? "",
+      reportCard: endRes.rows[0]?.report_card ?? "",
+    };
+  }
 }
 
 /**
@@ -380,6 +563,13 @@ export class InMemoryGameRepository implements GameRepository {
   private snapshots = new Map<string, Map<number, IdentitySnapshot>>();
   private endgames = new Map<string, { epilogue: string; reportCard: string }>();
   private playerRecords = new Map<string, Map<string, PlayerRecord>>();
+
+  /** In-memory album data stores, populated via test helpers. */
+  private userGames = new Map<string, Array<{ gameId: string; childName: string; createdAt: number; partnerId: string | null }>>();
+  private albumPartners = new Map<string, AlbumPartner>();
+  private albumMoments = new Map<string, AlbumMoment[]>();
+  /** Maps partnerId -> userId for reverse lookups. */
+  private partnerOwners = new Map<string, string>();
 
   async saveGame(state: GameState): Promise<void> {
     this.games.set(state.id, {
@@ -480,5 +670,87 @@ export class InMemoryGameRepository implements GameRepository {
     gameId: string
   ): Promise<{ epilogue: string; reportCard: string } | null> {
     return this.endgames.get(gameId) ?? null;
+  }
+
+  async loadAlbum(userId: string): Promise<Album> {
+    const kids = this.userGames.get(userId) ?? [];
+
+    // Build partner map
+    const partnerMap = new Map<string, AlbumPartner>();
+    for (const [id, partner] of this.albumPartners) {
+      if (this.partnerOwners.get(id) === userId) {
+        partnerMap.set(id, { ...partner, kids: [] });
+      }
+    }
+
+    const unlinkedKids: AlbumKid[] = [];
+    for (const ug of kids) {
+      const hasAlbumData = (this.albumMoments.get(ug.gameId) ?? []).length > 0;
+      const kid: AlbumKid = {
+        gameId: ug.gameId,
+        childName: ug.childName,
+        createdAt: ug.createdAt,
+        hasAlbumData,
+      };
+      if (ug.partnerId && partnerMap.has(ug.partnerId)) {
+        partnerMap.get(ug.partnerId)!.kids.push(kid);
+      } else {
+        unlinkedKids.push(kid);
+      }
+    }
+
+    return {
+      partners: [...partnerMap.values()],
+      unlinkedKids,
+    };
+  }
+
+  async loadScrapbook(userId: string, gameId: string): Promise<Scrapbook | null> {
+    const kids = this.userGames.get(userId) ?? [];
+    const ug = kids.find(k => k.gameId === gameId);
+    if (!ug) return null;
+
+    let partnerName: string | null = null;
+    let partnerType: string | null = null;
+    let relationshipSummary = "";
+    if (ug.partnerId) {
+      const partner = this.albumPartners.get(ug.partnerId);
+      if (partner) {
+        partnerName = partner.partnerName;
+        partnerType = partner.partnerType;
+        relationshipSummary = partner.relationshipSummary;
+      }
+    }
+
+    const endgame = this.endgames.get(gameId);
+    const moments = this.albumMoments.get(gameId) ?? [];
+
+    return {
+      childName: ug.childName,
+      partnerName,
+      partnerType,
+      relationshipSummary,
+      moments: [...moments],
+      epilogue: endgame?.epilogue ?? "",
+      reportCard: endgame?.reportCard ?? "",
+    };
+  }
+
+  /** Test helper: link a game to a user (simulates user_games table). */
+  addUserGame(userId: string, gameId: string, childName: string, partnerId: string | null = null): void {
+    const list = this.userGames.get(userId) ?? [];
+    list.push({ gameId, childName, createdAt: Date.now(), partnerId });
+    this.userGames.set(userId, list);
+  }
+
+  /** Test helper: create an album partner. */
+  addAlbumPartner(userId: string, partner: AlbumPartner): void {
+    this.albumPartners.set(partner.id, partner);
+    this.partnerOwners.set(partner.id, userId);
+  }
+
+  /** Test helper: add album moments for a game. */
+  addAlbumMoments(gameId: string, moments: AlbumMoment[]): void {
+    this.albumMoments.set(gameId, moments);
   }
 }
