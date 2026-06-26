@@ -2,18 +2,6 @@ import OpenAI from "openai";
 import type { LLMClient, LLMUsage, UsageSink } from "./client.js";
 import { type LLMRole, type ModelTier, estimateCostUsd, selectModel } from "./model-config.js";
 
-async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
-  let last: unknown;
-  for (let i = 0; i < maxAttempts; i++) {
-    try { return await fn(); }
-    catch (e) {
-      last = e;
-      if (i < maxAttempts - 1) await new Promise(r => setTimeout(r, 1000 * 2 ** i));
-    }
-  }
-  throw last;
-}
-
 /**
  * Retry a non-streaming LLM call up to maxAttempts times with exponential
  * backoff. Timeouts (AbortError / TimeoutError) are not retried — a call that
