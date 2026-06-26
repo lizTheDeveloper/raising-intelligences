@@ -354,13 +354,14 @@ export function useGame() {
     }
   }, [gameId]);
 
-  const generateReportCard = useCallback(async () => {
+  const generateReportCard = useCallback(async (userId?: string) => {
     if (!gameId) return;
     setPhase("processing");
     setStreamingDocText("");
     setError(null);
     try {
-      const res = await fetch(`${API}/game/${gameId}/report-card`, {
+      const qp = userId ? `?userId=${encodeURIComponent(userId)}` : "";
+      const res = await fetch(`${API}/game/${gameId}/report-card${qp}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ epilogue }),
