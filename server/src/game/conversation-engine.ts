@@ -8,6 +8,23 @@ import {
 } from "./context-assembler.js";
 import type { LLMClient } from "../llm/client.js";
 
+function validateGameEvent(obj: unknown): GameEvent {
+  if (!obj || typeof obj !== "object") throw new Error("Expected object from world manager");
+  const e = obj as Record<string, unknown>;
+  const age = typeof e.age === "number" ? e.age : Number(e.age);
+  if (!Number.isFinite(age) || age < 0 || age > 30) throw new Error(`Invalid age from world manager: ${e.age}`);
+  if (typeof e.description !== "string" || !e.description.trim()) throw new Error("Missing description from world manager");
+  if (typeof e.setting !== "string") throw new Error("Missing setting from world manager");
+  if (typeof e.trigger !== "string") throw new Error("Missing trigger from world manager");
+  return {
+    eventNumber: typeof e.eventNumber === "number" ? e.eventNumber : Number(e.eventNumber),
+    age,
+    description: e.description,
+    setting: e.setting,
+    trigger: e.trigger,
+  };
+}
+
 /** Which Kid model serves the child's reply, by the phase it's spoken in. */
 function kidRoleForPhase(phase: GamePhase): LLMRole {
   if (phase === "adult_chat") return "kid_adult_chat";
@@ -20,21 +37,15 @@ export class ConversationEngine {
 
   async startEvent(state: GameState): Promise<GameState> {
     const ctx = buildWorldManagerContext(state);
-    const event = await this.llm.completeJson<GameEvent>(
-      ctx.system,
-      ctx.userMessage,
-      "world_manager"
-    );
+    const raw = await this.llm.completeJson<unknown>(ctx.system, ctx.userMessage, "world_manager");
+    const event = validateGameEvent(raw);
     return transition(state, { type: "START_EVENT", event });
   }
 
   async loadEvent(state: GameState): Promise<GameState> {
     const ctx = buildWorldManagerContext(state);
-    const event = await this.llm.completeJson<GameEvent>(
-      ctx.system,
-      ctx.userMessage,
-      "world_manager"
-    );
+    const raw = await this.llm.completeJson<unknown>(ctx.system, ctx.userMessage, "world_manager");
+    const event = validateGameEvent(raw);
     return transition(state, { type: "LOAD_EVENT", event });
   }
 
@@ -87,7 +98,8 @@ export class ConversationEngine {
   /** Generate the next event without transitioning phase — called in background during debrief. */
   async prefetchNextEvent(state: GameState): Promise<GameEvent> {
     const ctx = buildWorldManagerContext(state);
-    return this.llm.completeJson<GameEvent>(ctx.system, ctx.userMessage, "world_manager");
+    const raw = await this.llm.completeJson<unknown>(ctx.system, ctx.userMessage, "world_manager");
+    return validateGameEvent(raw);
   }
 
   /** Apply a pre-fetched event to the current state — skips the LLM call. */

@@ -13,6 +13,7 @@ import { generatePersonalitySeed, inferGender } from "../game/personality.js";
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
 const MAX_MESSAGE_LENGTH = 2000;
+const MAX_RELATIONSHIP_TYPE_LENGTH = 100;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface GameRouteOptions {
@@ -66,6 +67,10 @@ export function createGameRoutes(
     }
     if (childName.length > MAX_CHILD_NAME_LENGTH) {
       res.status(400).json({ error: `childName must be ${MAX_CHILD_NAME_LENGTH} characters or fewer` });
+      return;
+    }
+    if (relationshipType && relationshipType.length > MAX_RELATIONSHIP_TYPE_LENGTH) {
+      res.status(400).json({ error: `relationshipType must be ${MAX_RELATIONSHIP_TYPE_LENGTH} characters or fewer` });
       return;
     }
     const state = createGame(childName, relationshipType);
@@ -349,8 +354,6 @@ export function createGameRoutes(
     res.json({ ok: true });
     generateNextPortrait(state.id, state.childGender).catch(() => {});
   });
-
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
   // Long-poll until the portrait file for this game+slug appears on disk.
   // The client calls this ONCE and waits — no retry loop, no polling.
