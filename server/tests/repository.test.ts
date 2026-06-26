@@ -260,3 +260,164 @@ describe("InMemoryGameRepository", () => {
     ]);
   });
 });
+
+describe("Album features", () => {
+  it("saveAlbumPartner creates a partner and returns an ID", async () => {
+    const repo = new InMemoryGameRepository();
+    const id = await repo.saveAlbumPartner({
+      userId: "user-1",
+      partnerName: "Alex",
+      partnerType: "real",
+      relationshipSummary: "Co-parents since 2020",
+    });
+    expect(id).toBeTruthy();
+    expect(typeof id).toBe("string");
+  });
+
+  it("saveAlbumPartner upserts and returns the same ID on conflict", async () => {
+    const repo = new InMemoryGameRepository();
+    const id1 = await repo.saveAlbumPartner({
+      userId: "user-1",
+      partnerName: "Alex",
+      partnerType: "real",
+      relationshipSummary: "Co-parents since 2020",
+    });
+    const id2 = await repo.saveAlbumPartner({
+      userId: "user-1",
+      partnerName: "Alex",
+      partnerType: "real",
+      relationshipSummary: "Updated summary",
+    });
+    expect(id2).toBe(id1);
+  });
+
+  it("saveAlbumPartner creates separate partners for different types", async () => {
+    const repo = new InMemoryGameRepository();
+    const id1 = await repo.saveAlbumPartner({
+      userId: "user-1",
+      partnerName: "Alex",
+      partnerType: "real",
+      relationshipSummary: "Real partner",
+    });
+    const id2 = await repo.saveAlbumPartner({
+      userId: "user-1",
+      partnerName: "Alex",
+      partnerType: "generated",
+      relationshipSummary: "AI partner",
+    });
+    expect(id1).not.toBe(id2);
+  });
+
+  it("saveAlbumMoments saves moments retrievable via loadScrapbook", async () => {
+    const repo = new InMemoryGameRepository();
+    await repo.saveGame(baseState({ id: "game-1" }));
+    await repo.addUserGame("user-1", "game-1", "Luna");
+
+    await repo.saveAlbumMoments("game-1", [
+      { age: 3, title: "First steps", description: "Luna took her first steps!", momentType: "milestone", imagePath: null, sortOrder: 0 },
+      { age: 5, title: "School day", description: "Luna's first day of school.", momentType: "event", imagePath: "/img/school.png", sortOrder: 1 },
+    ]);
+
+    const scrapbook = await repo.loadScrapbook("user-1", "game-1");
+    expect(scrapbook).not.toBeNull();
+    expect(scrapbook!.moments).toHaveLength(2);
+    expect(scrapbook!.moments[0].title).toBe("First steps");
+    expect(scrapbook!.moments[0].age).toBe(3);
+    expect(scrapbook!.moments[0].imagePath).toBeNull();
+    expect(scrapbook!.moments[1].title).toBe("School day");
+    expect(scrapbook!.moments[1].imagePath).toBe("/img/school.png");
+  });
+
+  it("linkGameToPartner links a game that shows up in loadAlbum", async () => {
+    const repo = new InMemoryGameRepository();
+    await repo.saveGame(baseState({ id: "game-1" }));
+    await repo.addUserGame("user-1", "game-1", "Luna");
+
+    const partnerId = await repo.saveAlbumPartner({
+      userId: "user-1",
+      partnerName: "Alex",
+      partnerType: "real",
+      relationshipSummary: "Co-parents",
+    });
+    await repo.linkGameToPartner("user-1", "game-1", partnerId);
+
+    const album = await repo.loadAlbum("user-1");
+    expect(album.partners).toHaveLength(1);
+    expect(album.partners[0].partnerName).toBe("Alex");
+    expect(album.partners[0].kids).toHaveLength(1);
+    expect(album.partners[0].kids[0].gameId).toBe("game-1");
+    expect(album.partners[0].kids[0].childName).toBe("Luna");
+    expect(album.unlinkedKids).toHaveLength(0);
+  });
+
+  it("loadAlbum returns grouped partners with kids and unlinked kids", async () => {
+    const repo = new InMemoryGameRepository();
+    await repo.saveGame(baseState({ id: "game-1" }));
+    await repo.saveGame(baseState({ id: "game-2", childName: "Max" }));
+    await repo.saveGame(baseState({ id: "game-3", childName: "Zoe" }));
+    await repo.addUserGame("user-1", "game-1", "Luna");
+    await repo.addUserGame("user-1", "game-2", "Max");
+    await repo.addUserGame("user-1", "game-3", "Zoe");
+
+    const partnerId = await repo.saveAlbumPartner({
+      userId: "user-1",
+      partnerName: "Alex",
+      partnerType: "real",
+      relationshipSummary: "Co-parents",
+    });
+    await repo.linkGameToPartner("user-1", "game-1", partnerId);
+    await repo.linkGameToPartner("user-1", "game-2", partnerId);
+
+    const album = await repo.loadAlbum("user-1");
+    expect(album.partners).toHaveLength(1);
+    expect(album.partners[0].kids).toHaveLength(2);
+    const kidNames = album.partners[0].kids.map((k) => k.childName).sort();
+    expect(kidNames).toEqual(["Luna", "Max"]);
+    expect(album.unlinkedKids).toHaveLength(1);
+    expect(album.unlinkedKids[0].childName).toBe("Zoe");
+  });
+
+  it("loadScrapbook returns null for unknown games", async () => {
+    const repo = new InMemoryGameRepository();
+    const result = await repo.loadScrapbook("user-1", "nonexistent-game");
+    expect(result).toBeNull();
+  });
+
+  it("loadScrapbook includes partner info when game is linked", async () => {
+    const repo = new InMemoryGameRepository();
+    await repo.saveGame(baseState({ id: "game-1" }));
+    await repo.addUserGame("user-1", "game-1", "Luna");
+    await repo.saveEndgame("game-1", "Luna grew up thoughtful.", "# Report Card");
+
+    const partnerId = await repo.saveAlbumPartner({
+      userId: "user-1",
+      partnerName: "Alex",
+      partnerType: "real",
+      relationshipSummary: "Co-parents since 2020",
+    });
+    await repo.linkGameToPartner("user-1", "game-1", partnerId);
+
+    const scrapbook = await repo.loadScrapbook("user-1", "game-1");
+    expect(scrapbook).not.toBeNull();
+    expect(scrapbook!.childName).toBe("Luna");
+    expect(scrapbook!.partnerName).toBe("Alex");
+    expect(scrapbook!.partnerType).toBe("real");
+    expect(scrapbook!.relationshipSummary).toBe("Co-parents since 2020");
+    expect(scrapbook!.epilogue).toBe("Luna grew up thoughtful.");
+    expect(scrapbook!.reportCard).toBe("# Report Card");
+  });
+
+  it("loadScrapbook returns null partner fields when game is unlinked", async () => {
+    const repo = new InMemoryGameRepository();
+    await repo.saveGame(baseState({ id: "game-1" }));
+    await repo.addUserGame("user-1", "game-1", "Luna");
+
+    const scrapbook = await repo.loadScrapbook("user-1", "game-1");
+    expect(scrapbook).not.toBeNull();
+    expect(scrapbook!.partnerName).toBeNull();
+    expect(scrapbook!.partnerType).toBeNull();
+    expect(scrapbook!.relationshipSummary).toBeNull();
+    expect(scrapbook!.epilogue).toBe("");
+    expect(scrapbook!.reportCard).toBe("");
+  });
+});
