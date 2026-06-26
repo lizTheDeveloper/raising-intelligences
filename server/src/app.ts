@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
 import path from "path";
 import rateLimit from "express-rate-limit";
 import type { RequestHandler, ErrorRequestHandler } from "express";
@@ -90,6 +91,27 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   const app = express();
   app.set("trust proxy", 1);
   app.use(cors({ origin: allowedOrigin }));
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          // Inline styles used by React component library
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          // Portrait images arrive as data URIs and blob: URLs during generation
+          imgSrc: ["'self'", "data:", "blob:"],
+          // SSE and API calls go back to the same origin; analytics goes to the
+          // configured domain if present.
+          connectSrc: ["'self'", allowedOrigin, "https://analytics.multiversestudios.xyz"],
+          fontSrc: ["'self'"],
+          mediaSrc: ["'self'"],
+        },
+      },
+      // crossOriginEmbedderPolicy blocks EventSource in some browsers when set
+      crossOriginEmbedderPolicy: false,
+    })
+  );
   app.use(express.json());
 
   // Security headers — defense-in-depth against common browser-based attacks.

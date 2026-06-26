@@ -20,6 +20,10 @@ function validateConfig(): void {
     logger.error("missing_env_vars", { missing });
     process.exit(1);
   }
+  if (process.env.NODE_ENV === "production" && !process.env.ALLOWED_ORIGIN) {
+    logger.error("ALLOWED_ORIGIN must be set in production to avoid CORS defaulting to localhost");
+    process.exit(1);
+  }
 }
 
 async function main() {

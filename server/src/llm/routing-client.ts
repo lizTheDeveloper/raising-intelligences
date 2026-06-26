@@ -15,6 +15,29 @@ async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
 }
 
 /**
+ * Retry a non-streaming LLM call up to maxAttempts times with exponential
+ * backoff. Timeouts (AbortError / TimeoutError) are not retried — a call that
+ * already spent 60-90s waiting is not a transient failure worth repeating.
+ * Streaming calls are intentionally excluded: retrying after chunks have
+ * already been sent to the client would produce duplicate output.
+ */
+async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
+  let last: unknown;
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      last = e;
+      const isTimeout =
+        e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
+      if (isTimeout || i === maxAttempts - 1) throw e;
+      await new Promise<void>((r) => setTimeout(r, 1000 * 2 ** i));
+    }
+  }
+  throw last;
+}
+
+/**
  * Routes LLM calls to different OpenAI-compatible providers based on the
  * model slug prefix.  A slug like "cerebras:gpt-oss-120b" sends the call to
  * Cerebras; an unprefixed slug falls through to OpenRouter.
@@ -150,17 +173,18 @@ export class RoutingLLMClient implements LLMClient {
       return fullResponse;
     }
 
-    const response = await client.chat.completions.create({
-      model,
-      max_tokens: maxTokens,
-      ...(this.seed !== undefined ? { seed: this.seed } : {}),
-      messages: msgs,
-    }, { signal: AbortSignal.timeout(90_000) });
-
-    this.report(resolvedRole, providerKey, model, response.usage as OpenAIUsage | undefined);
-    const content = response.choices[0]?.message?.content;
-    if (typeof content === "string") return content;
-    throw new Error(`Unexpected response from ${providerKey}`);
+    return withRetry(async () => {
+      const response = await client.chat.completions.create({
+        model,
+        max_tokens: maxTokens,
+        ...(this.seed !== undefined ? { seed: this.seed } : {}),
+        messages: msgs,
+      }, { signal: AbortSignal.timeout(90_000) });
+      this.report(resolvedRole, providerKey, model, response.usage as OpenAIUsage | undefined);
+      const content = response.choices[0]?.message?.content;
+      if (typeof content === "string") return content;
+      throw new Error(`Unexpected response from ${providerKey}`);
+    });
   }
 
   async completeJson<T>(system: string, userMessage: string, role?: LLMRole, maxTokens = 1500): Promise<T> {
