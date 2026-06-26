@@ -95,11 +95,11 @@ async function consumeSSE<T>(
         // Partial or malformed SSE line — skip
         continue;
       }
-      if (parsed.type === "chunk") {
+      if (parsed && parsed.type === "chunk") {
         onChunk(parsed.text ?? "");
-      } else if (parsed.type === "done") {
+      } else if (parsed && parsed.type === "done") {
         donePayload = parsed as unknown as T;
-      } else if (parsed.type === "error") {
+      } else if (parsed && parsed.type === "error") {
         throw new Error(parsed.error ?? "Stream error");
       }
     }
