@@ -1,0 +1,199 @@
+.album {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.album-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.album-header h2 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 400;
+}
+
+.album-back {
+  background: none;
+  border: none;
+  color: var(--text-dim, #888);
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0.25rem 0.5rem;
+}
+
+.partner-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1rem;
+}
+
+.partner-card {
+  background: var(--card-bg, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-radius: 8px;
+  padding: 1rem;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.partner-card:hover {
+  border-color: var(--accent, rgba(255, 255, 255, 0.3));
+}
+
+.partner-name {
+  font-size: 1.1rem;
+  margin: 0 0 0.25rem;
+}
+
+.partner-generated {
+  font-style: italic;
+}
+
+.partner-kid-count {
+  color: var(--text-dim, #888);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.kids-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.kid-card {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: var(--card-bg, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.kid-card:hover {
+  border-color: var(--accent, rgba(255, 255, 255, 0.3));
+}
+
+.kid-name {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.album-empty {
+  text-align: center;
+  color: var(--text-dim, #888);
+  padding: 3rem 1rem;
+}
+
+.scrapbook-portraits {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding: 0.5rem 0;
+  margin-bottom: 1.5rem;
+  -webkit-overflow-scrolling: touch;
+}
+
+.scrapbook-portrait {
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.scrapbook-portrait img {
+  width: 100px;
+  height: 100px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.scrapbook-portrait-label {
+  font-size: 0.75rem;
+  color: var(--text-dim, #888);
+  margin-top: 0.25rem;
+}
+
+.scrapbook-moments {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.moment-card {
+  display: flex;
+  gap: 1rem;
+  padding: 0.75rem;
+  background: var(--card-bg, rgba(255, 255, 255, 0.05));
+  border-radius: 8px;
+}
+
+.moment-image {
+  width: 80px;
+  height: 80px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.moment-placeholder {
+  width: 80px;
+  height: 80px;
+  border-radius: 6px;
+  background: var(--card-bg, rgba(255, 255, 255, 0.05));
+  flex-shrink: 0;
+}
+
+.moment-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.moment-title {
+  font-weight: 600;
+  margin: 0 0 0.25rem;
+}
+
+.moment-age-badge {
+  font-size: 0.75rem;
+  color: var(--text-dim, #888);
+  margin-right: 0.5rem;
+}
+
+.moment-type {
+  font-size: 0.7rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  margin-left: 0.5rem;
+}
+
+.moment-type-funny { color: #f0c674; }
+.moment-type-tender { color: #a3d9a5; }
+.moment-type-conflict { color: #e08080; }
+.moment-type-milestone { color: #8ab4f8; }
+
+.moment-desc {
+  margin: 0.25rem 0 0;
+  font-size: 0.9rem;
+  color: var(--text-dim, #ccc);
+}
+
+.scrapbook-section {
+  margin-bottom: 2rem;
+}
+
+.scrapbook-section h3 {
+  font-size: 0.85rem;
+  text-transform: lowercase;
+  color: var(--text-dim, #888);
+  margin-bottom: 0.5rem;
+  font-weight: 400;
+}
