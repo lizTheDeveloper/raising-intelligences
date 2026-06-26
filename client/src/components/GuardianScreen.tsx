@@ -367,7 +367,7 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
             {QUIZ_QUESTIONS[currentStep.quizIndex].options.map((opt, i) => (
               <button
                 key={i}
-                className={`guardian-quiz-option${
+                className={`btn guardian-quiz-option${
                   oceanAnswers[currentStep.quizIndex!] === opt.value
                     ? " guardian-quiz-selected"
                     : ""
