@@ -4,6 +4,7 @@ import {
   WORLD_MANAGER_SYSTEM_PROMPT,
   EPILOGUE_SYSTEM_PROMPT,
   REPORT_CARD_SYSTEM_PROMPT,
+  ALBUM_SYSTEM_PROMPT,
 } from "../llm/prompts.js";
 import { getAgeSpecificPrompt } from "../llm/kid-prompts-by-age.js";
 import { PARENT_MESSAGE_CAP } from "./state-machine.js";
@@ -282,6 +283,44 @@ export function buildReportCardContext(
     .join("\n\n---\n\n");
 
   const userMessage = `## Identity Timeline\n${snapshotTimeline}\n\n## Epilogue\n${epilogue}\n\nGenerate the Report Card for ${state.childName}.`;
+
+  return { system, userMessage };
+}
+
+export function buildAlbumContext(
+  state: GameState,
+  epilogue: string,
+  reportCard: string,
+  partnerDisplayName?: string
+): {
+  system: string;
+  userMessage: string;
+} {
+  const system = fillTemplate(ALBUM_SYSTEM_PROMPT, {
+    childName: state.childName,
+  });
+
+  const allMessages = state.messages
+    .filter((m) => m.chatType === "shared" || m.chatType === "private")
+    .map((m) => {
+      const event = state.events.find(e => e.eventNumber === m.eventNumber);
+      return `[Age ${event?.age ?? "?"}] ${senderLabel(m.sender)}: ${m.content}`;
+    })
+    .join("\n");
+
+  const snapshotTimeline = state.identitySnapshots
+    .map((s) => {
+      const event = state.events.find((e) => e.eventNumber === s.eventNumber);
+      return `### Age ${event?.age ?? "?"}\n${s.document}`;
+    })
+    .join("\n\n");
+
+  const isSoloGame = isSolo(state.relationshipType);
+  const partnerContext = isSoloGame
+    ? "This was a solo-parent household. Infer the other parent from the child's story — look for references in conversations and the identity document."
+    : `The co-parent's name is "${partnerDisplayName}". Describe their co-parenting dynamic.`;
+
+  const userMessage = `## Partner Context\n${partnerContext}\n\n## Identity Timeline\n${snapshotTimeline}\n\n## Conversation Log\n${allMessages}\n\n## Epilogue\n${epilogue}\n\n## Report Card\n${reportCard}\n\nExtract the album data for ${state.childName}.`;
 
   return { system, userMessage };
 }

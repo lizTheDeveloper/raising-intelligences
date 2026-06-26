@@ -3,6 +3,7 @@ import {
   buildKidContext,
   buildPsychologistContext,
   buildWorldManagerContext,
+  buildAlbumContext,
 } from "../src/game/context-assembler.js";
 import { createGame, transition } from "../src/game/state-machine.js";
 import type { GameEvent, ParentPersonality } from "../src/types.js";
@@ -178,5 +179,64 @@ describe("buildWorldManagerContext - personalitySeed and landmine section", () =
     const ctx = buildWorldManagerContext(state);
     expect(ctx.system).not.toContain("Emotional landmines");
     expect(ctx.system).not.toContain("{landmineSection}");
+  });
+});
+
+describe("buildAlbumContext", () => {
+  it("builds context for a solo game", () => {
+    let state = createGame("Luna", "solo parent");
+    state = transition(state, { type: "START_EVENT", event: testEvent });
+    state = transition(state, {
+      type: "PARENT_MESSAGE",
+      sender: "parent1",
+      content: "Be careful with the vase!",
+    });
+    state = transition(state, {
+      type: "KID_MESSAGE",
+      content: "I broke it, sorry!",
+    });
+    state.identitySnapshots = [
+      { eventNumber: 1, document: "I feel things deeply." },
+    ];
+
+    const ctx = buildAlbumContext(
+      state,
+      "Luna grew up to be a painter.",
+      "Personality: sensitive and creative."
+    );
+
+    expect(ctx.system).toContain("Luna");
+    expect(ctx.userMessage).toContain("solo-parent household");
+    expect(ctx.userMessage).toContain("Luna grew up to be a painter.");
+    expect(ctx.userMessage).toContain("Personality: sensitive and creative.");
+    expect(ctx.userMessage).toContain("Be careful with the vase!");
+    expect(ctx.userMessage).toContain("[Age 4]");
+  });
+
+  it("builds context for a multiplayer game with partner name", () => {
+    let state = createGame("Luna", "romantic partners");
+    state = transition(state, { type: "START_EVENT", event: testEvent });
+    state = transition(state, {
+      type: "PARENT_MESSAGE",
+      sender: "parent1",
+      content: "We need to talk about this.",
+    });
+    state.identitySnapshots = [
+      { eventNumber: 1, document: "I watch them both carefully." },
+    ];
+
+    const ctx = buildAlbumContext(
+      state,
+      "Luna became a negotiator.",
+      "Strengths: reads the room.",
+      "Jordan"
+    );
+
+    expect(ctx.system).toContain("Luna");
+    expect(ctx.userMessage).toContain("Jordan");
+    expect(ctx.userMessage).toContain("co-parenting dynamic");
+    expect(ctx.userMessage).not.toContain("solo-parent household");
+    expect(ctx.userMessage).toContain("Luna became a negotiator.");
+    expect(ctx.userMessage).toContain("Strengths: reads the room.");
   });
 });
