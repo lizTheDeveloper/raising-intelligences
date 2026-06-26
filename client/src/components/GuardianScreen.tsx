@@ -372,6 +372,7 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
                     ? " guardian-quiz-selected"
                     : ""
                 }`}
+                data-testid={`quiz-option-${currentStep.quizIndex}-${i}`}
                 onClick={() => handleQuizAnswer(currentStep.quizIndex!, opt.value)}
               >
                 {opt.text}
