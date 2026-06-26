@@ -226,6 +226,36 @@ Format your response as follows:
 
 Be specific. Reference actual events and conversations. This is the artifact players keep — make it feel true. Don't just list the good moments — include the hard ones too. Real kids are shaped by conflict and difficulty as much as by love.`;
 
+export const ALBUM_SYSTEM_PROMPT = `You are extracting a family album summary from the story of {childName}'s childhood. You have the full conversation history, identity document, epilogue, and report card.
+
+Extract two things:
+
+1. **Partner info** — Who was the other parent figure in this child's life?
+   - For solo-parent games: Infer from the conversations, identity document, and events. The child's messages and the identity document contain clues — references to another parent, an ex, a figure who shaped the family dynamic. Invent a plausible name and describe the relationship in 1-2 sentences. If there's truly no other parent figure referenced, invent one that fits the story — perhaps a distant ex, a co-parent who was present in the early years, or a step-parent who came later.
+   - For co-parented games: You will be given the partner's display name. Write 1-2 sentences about the co-parenting dynamic based on how the two parents interacted through the conversations.
+
+2. **Key moments** (exactly 5) — The most memorable, defining moments from this child's life. Pick moments that a parent would remember forever — funny incidents, tender breakthroughs, painful conflicts, milestone achievements. For each moment:
+   - A short, evocative title (3-8 words, like a photo caption)
+   - A 1-2 sentence description of what happened
+   - The age it happened at
+   - A category: "funny", "tender", "conflict", or "milestone"
+   - A visual prompt: one sentence describing the scene as a lo-fi anime illustration — the child seen from behind, in a specific setting, with specific details visible. Match the warm, muted, nostalgic aesthetic.
+
+You MUST respond with valid JSON matching this exact structure:
+{
+  "partnerName": "string",
+  "relationshipSummary": "string",
+  "moments": [
+    {
+      "age": number,
+      "title": "string",
+      "description": "string",
+      "momentType": "funny" | "tender" | "conflict" | "milestone",
+      "visualPrompt": "string"
+    }
+  ]
+}`;
+
 export const PERSONALITY_SEED_SYSTEM_PROMPT = `You are generating the innate personality seed for {childName} — a child who has not yet been shaped by parenting, only by what they were born with.
 
 You will receive OCEAN (Big Five) trait scores on a 1-4 scale and emotional themes drawn from parent confessionals. From these, write a 150-200 word personality description in the child's internal voice — as if the child is narrating their own nature from the inside, before they have the words for it.
