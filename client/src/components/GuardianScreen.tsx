@@ -308,7 +308,10 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
 
   // In multiplayer, seedReady comes from the prop (socket event); in solo, from internal state (REST response)
   const effectiveSeedReady = onSubmitPersonality ? !!seedReadyProp : seedReady;
-  const canBegin = eventReady && effectiveSeedReady && portraitRevealed;
+  // Don't gate on eventReady: event loading can take 30–90s (LLM). EventIntro
+  // already shows a spinner while loadingEvent is true, so the user can proceed
+  // from the guardian screen as soon as their personality is submitted.
+  const canBegin = effectiveSeedReady && portraitRevealed;
 
   // ---------- Render ----------
   return (
