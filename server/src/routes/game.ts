@@ -357,7 +357,15 @@ export function createGameRoutes(
           } catch (err) {
             logger.warn("personality_seed_failed", { gameId, error: String(err) });
           }
-          const withSeed: GameState = { ...updatedState, personalitySeed: seed };
+          // Re-read the latest state after the LLM call — concurrent requests
+          // (e.g. /next-event) may have written a newer snapshot while
+          // generatePersonalitySeed was in flight, changing the phase.
+          const latestState = games.get(gameId) ?? updatedState;
+          const withSeed: GameState = {
+            ...latestState,
+            parentPersonalities: updatedState.parentPersonalities,
+            personalitySeed: seed,
+          };
           games.set(gameId, withSeed);
           await repo.saveGame(withSeed);
           res.json({ ready: true });
