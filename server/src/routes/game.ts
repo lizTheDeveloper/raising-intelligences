@@ -79,7 +79,11 @@ export function createGameRoutes(
     res.json({ gameId: state.id });
     // Kick off gender inference, portrait, and first-event generation in parallel.
     inferGender(engine.llm, childName).then(async (gender) => {
-      const updated = { ...state, childGender: gender };
+      // Re-read the live state: /next-event may have already transitioned to
+      // family_chat by the time gender inference completes (especially on retry).
+      // Spreading the stale `state` here would revert the phase to event_intro.
+      const current = games.get(state.id) ?? state;
+      const updated = { ...current, childGender: gender };
       games.set(state.id, updated);
       await repo.saveGame(updated);
       generateFirstPortrait(state.id, gender).catch(() => {});
@@ -357,7 +361,17 @@ export function createGameRoutes(
           } catch (err) {
             logger.warn("personality_seed_failed", { gameId, error: String(err) });
           }
-          const withSeed: GameState = { ...updatedState, personalitySeed: seed };
+          // Re-read the live state: /next-event runs without the game lock and may
+          // have written a newer snapshot (e.g. phase: family_chat) while the seed
+          // LLM call was in-flight. Using the stale updatedState would overwrite
+          // that transition and leave the server stuck in event_intro.
+          const latestState = games.get(gameId) ?? updatedState;
+          const withSeed: GameState = {
+            ...latestState,
+            // Keep the personalities we just stored even if next-event ran first.
+            parentPersonalities: updatedState.parentPersonalities,
+            personalitySeed: seed,
+          };
           games.set(gameId, withSeed);
           await repo.saveGame(withSeed);
           res.json({ ready: true });
