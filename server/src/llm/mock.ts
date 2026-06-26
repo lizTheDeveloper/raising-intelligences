@@ -8,6 +8,7 @@ export class MockLLMClient implements LLMClient {
   public events: GameEvent[] = [];
   public epilogueText = "They grew up to be thoughtful.";
   public reportCardText = "# Luna\n## Personality\nThoughtful and kind.";
+  public albumData: unknown = null;
   private kidCallCount = 0;
   private identityCallCount = 0;
   /** Roles the engine requested, in call order — useful for asserting routing. */
@@ -47,6 +48,7 @@ export class MockLLMClient implements LLMClient {
 
   async completeJson<T>(_system: string, _userMessage: string, role?: LLMRole): Promise<T> {
     this.roleCalls.push(role);
+    if (role === "album" && this.albumData) return this.albumData as T;
     const event = this.events.shift();
     if (!event) throw new Error("No mock events available");
     return event as unknown as T;
