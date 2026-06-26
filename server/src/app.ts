@@ -9,6 +9,7 @@ import { createGameRoutes } from "./routes/game.js";
 import { createEndgameRoutes } from "./routes/endgame.js";
 import { createUserRoutes } from "./routes/user.js";
 import { createAdminRoutes } from "./routes/admin.js";
+import { createAlbumRoutes } from "./routes/album.js";
 import type { AdminQueries } from "./db/admin-queries.js";
 import { ConversationEngine } from "./game/conversation-engine.js";
 import { EndgameEngine } from "./game/endgame-engine.js";
@@ -113,6 +114,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   app.use("/api", createGameRoutes(conversationEngine, games, repo, { llmRateLimit, gameCreateLimit, gameLocks }));
   app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit, gameLocks }));
   app.use("/api", createUserRoutes());
+  app.use("/api", createAlbumRoutes(repo));
   if (adminQueries) {
     app.use("/api", createAdminRoutes(adminQueries));
   }

@@ -651,11 +651,22 @@ export class InMemoryGameRepository implements GameRepository {
   }
 
   /** Test helper: simulate INSERT INTO user_games. */
-  async addUserGame(userId: string, gameId: string, childName: string): Promise<void> {
+  async addUserGame(userId: string, gameId: string, childName: string, partnerId?: string): Promise<void> {
     const key = `${userId}:${gameId}`;
     if (!this.userGames.has(key)) {
-      this.userGames.set(key, { userId, gameId, childName, partnerId: null, createdAt: Date.now() });
+      this.userGames.set(key, { userId, gameId, childName, partnerId: partnerId ?? null, createdAt: Date.now() });
     }
+  }
+
+  /** Test helper: directly insert an album partner. */
+  addAlbumPartner(userId: string, partner: { id: string; partnerName: string; partnerType: string; relationshipSummary: string; kids: unknown[] }): void {
+    this.albumPartners.set(partner.id, {
+      id: partner.id,
+      userId,
+      partnerName: partner.partnerName,
+      partnerType: partner.partnerType,
+      relationshipSummary: partner.relationshipSummary,
+    });
   }
 
   async saveAlbumPartner(partner: { userId: string; partnerName: string; partnerType: string; relationshipSummary: string }): Promise<string> {
