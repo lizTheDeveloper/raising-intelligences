@@ -88,17 +88,19 @@ async function consumeSSE<T>(
     lineBuffer = lines.pop() ?? "";
     for (const line of lines) {
       if (!line.startsWith("data: ")) continue;
+      let data: Record<string, unknown>;
       try {
-        const data = JSON.parse(line.slice(6));
-        if (data.type === "chunk") {
-          onChunk(data.text);
-        } else if (data.type === "done") {
-          donePayload = data as T;
-        } else if (data.type === "error") {
-          throw new Error(data.error ?? "Stream error");
-        }
+        data = JSON.parse(line.slice(6));
       } catch {
         // Partial or malformed SSE line — skip
+        continue;
+      }
+      if (data.type === "chunk") {
+        onChunk(data.text as string);
+      } else if (data.type === "done") {
+        donePayload = data as T;
+      } else if (data.type === "error") {
+        throw new Error((data.error as string) ?? "Stream error");
       }
     }
   }
