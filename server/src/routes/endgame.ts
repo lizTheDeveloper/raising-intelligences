@@ -4,6 +4,7 @@ import { EndgameEngine } from "../game/endgame-engine.js";
 import type { GameRepository } from "../db/repository.js";
 import type { GameState } from "../types.js";
 import { logger } from "../logger.js";
+import { generateMomentIllustrations } from "../portrait-gen.js";
 
 interface EndgameRouteOptions {
   llmRateLimit?: RequestHandler;
@@ -121,6 +122,55 @@ export function createEndgameRoutes(
           `data: ${JSON.stringify({ type: "done", phase: result.state.phase, reportCard: result.reportCard })}\n\n`
         );
         res.end();
+
+        // Fire-and-forget album generation
+        const userId = req.query.userId as string | undefined;
+        if (userId) {
+          (async () => {
+            try {
+              let partnerDisplayName: string | undefined;
+              const isSoloGame = state.relationshipType === "solo parent" || state.relationshipType === "solo";
+              if (!isSoloGame) {
+                const players = await repo.loadPlayers(state.id);
+                const otherPlayer = players.find(p => p.slot === "parent2");
+                partnerDisplayName = otherPlayer?.displayName ?? undefined;
+              }
+
+              const albumData = await engine.generateAlbumData(
+                state, epilogue ?? "", result.reportCard, partnerDisplayName
+              );
+
+              const partnerType = isSoloGame ? "generated" : "real";
+              const partnerId = await repo.saveAlbumPartner({
+                userId,
+                partnerName: albumData.partnerName,
+                partnerType,
+                relationshipSummary: albumData.relationshipSummary,
+              });
+
+              const illustrations = await generateMomentIllustrations(
+                state.id,
+                albumData.moments.map((m, i) => ({ visualPrompt: m.visualPrompt, sortOrder: i }))
+              );
+
+              const momentsWithImages = albumData.moments.map((m, i) => ({
+                age: m.age,
+                title: m.title,
+                description: m.description,
+                momentType: m.momentType,
+                imagePath: illustrations[i]?.imagePath ?? null,
+                sortOrder: i,
+              }));
+
+              await repo.saveAlbumMoments(state.id, momentsWithImages);
+              await repo.linkGameToPartner(userId, state.id, partnerId);
+
+              logger.info("album_generated", { gameId: state.id, userId, moments: momentsWithImages.length });
+            } catch (e) {
+              logger.error("album_generation_failed", { gameId: state.id, error: (e as Error).message });
+            }
+          })();
+        }
       } catch (err) {
         logger.error("report_card_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
         res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
