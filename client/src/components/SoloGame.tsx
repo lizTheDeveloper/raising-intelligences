@@ -9,6 +9,7 @@ import { Endgame } from "./Endgame";
 import { ReportCard } from "./ReportCard";
 import { ProcessingScreen } from "./ProcessingScreen";
 import { ChildPortrait } from "./ChildPortrait";
+import { FamilyAlbum } from "./FamilyAlbum";
 
 export function SoloGame() {
   const {
@@ -43,6 +44,7 @@ export function SoloGame() {
     () => window.matrixAuth?.getUserId() ?? null
   );
   const [cloudKids, setCloudKids] = useState<SavedKid[]>([]);
+  const [showAlbum, setShowAlbum] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -107,6 +109,14 @@ export function SoloGame() {
     setLoadingEvent(false);
   };
 
+  if (showAlbum && matrixUser) {
+    return (
+      <div className="app">
+        <FamilyAlbum userId={matrixUser} onBack={() => setShowAlbum(false)} />
+      </div>
+    );
+  }
+
   if (phase === "start") {
     const savedKids = cloudKids.length > 0 ? cloudKids : getSavedKids();
     const handleResume = (kid: { gameId: string; childName: string }) => {
@@ -157,6 +167,15 @@ export function SoloGame() {
                 </button>
               ))}
             </div>
+          )}
+          {matrixUser && (
+            <button
+              className="btn btn-secondary"
+              onClick={() => setShowAlbum(true)}
+              style={{ marginTop: "1rem" }}
+            >
+              my family
+            </button>
           )}
           <div className="auth-section">
             {matrixUser ? (
@@ -253,7 +272,7 @@ export function SoloGame() {
     return (
       <div className="app">
         {error && <p className="error-banner">{error}</p>}
-        <Endgame epilogue={epilogue} onContinue={generateReportCard} />
+        <Endgame epilogue={epilogue} onContinue={() => generateReportCard(matrixUser ?? undefined)} />
       </div>
     );
   }
@@ -282,6 +301,13 @@ export function SoloGame() {
     return (
       <div className="app">
         <ReportCard reportCard={reportCard} childName={childName} />
+        {matrixUser && (
+          <div style={{ textAlign: "center", marginTop: "1.5rem" }}>
+            <button className="btn" onClick={() => setShowAlbum(true)}>
+              view your family
+            </button>
+          </div>
+        )}
       </div>
     );
   }
