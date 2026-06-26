@@ -3,7 +3,7 @@ import type { Request, Response, RequestHandler } from "express";
 import { existsSync } from "fs";
 import path from "path";
 import { ConversationEngine } from "../game/conversation-engine.js";
-import { createGame } from "../game/state-machine.js";
+import { createGame, PARENT_MESSAGE_CAP } from "../game/state-machine.js";
 import type { GameState, Sender, ParentPersonality } from "../types.js";
 import type { GameRepository } from "../db/repository.js";
 import { generateFirstPortrait, generateNextPortrait, PORTRAITS_DIR } from "../portrait-gen.js";
@@ -91,7 +91,10 @@ export function createGameRoutes(
       return;
     }
     const { identityDocument, identitySnapshots, ...publicState } = state;
-    res.json(publicState);
+    res.json({
+      ...publicState,
+      messagesRemaining: PARENT_MESSAGE_CAP - state.parentMessageCount,
+    });
   });
 
   router.post("/game/:id/next-event", async (req: Request, res: Response) => {
@@ -115,7 +118,7 @@ export function createGameRoutes(
       await repo.saveGame(next);
       res.json({ event: next.currentEvent, phase: next.phase });
     } catch (err) {
-      logger.error("next_event_error", { gameId, error: String(err) });
+      logger.error("next_event_error", { gameId, error: err instanceof Error ? err.stack : String(err) });
       res.status(500).json({ error: "An internal error occurred" });
     }
   });
@@ -174,7 +177,7 @@ export function createGameRoutes(
         );
         res.end();
       } catch (err) {
-        logger.error("message_error", { gameId: req.params.id, error: String(err) });
+        logger.error("message_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
         res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
         res.end();
       }
@@ -217,7 +220,7 @@ export function createGameRoutes(
         res.write(`data: ${JSON.stringify({ type: "done", phase: next.phase })}\n\n`);
         res.end();
       } catch (err) {
-        logger.error("end_chat_error", { gameId: req.params.id, error: String(err) });
+        logger.error("end_chat_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
         res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
         res.end();
       }

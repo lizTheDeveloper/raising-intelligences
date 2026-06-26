@@ -63,7 +63,7 @@ export function createEndgameRoutes(
         );
         res.end();
       } catch (err) {
-        logger.error("epilogue_error", { gameId: req.params.id, error: String(err) });
+        logger.error("epilogue_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
         res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
         res.end();
       }
@@ -87,7 +87,7 @@ export function createEndgameRoutes(
       await repo.saveGame(next);
       res.json({ phase: next.phase, event: next.currentEvent });
     } catch (err) {
-      logger.error("adult_chat_error", { gameId: req.params.id, error: String(err) });
+      logger.error("adult_chat_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
       res.status(500).json({ error: "An internal error occurred" });
     }
   });
@@ -122,7 +122,7 @@ export function createEndgameRoutes(
         );
         res.end();
       } catch (err) {
-        logger.error("report_card_error", { gameId: req.params.id, error: String(err) });
+        logger.error("report_card_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
         res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
         res.end();
       }

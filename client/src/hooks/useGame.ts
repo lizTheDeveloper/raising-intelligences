@@ -88,17 +88,19 @@ async function consumeSSE<T>(
     lineBuffer = lines.pop() ?? "";
     for (const line of lines) {
       if (!line.startsWith("data: ")) continue;
+      let parsed: { type: string; text?: string; error?: string } | null = null;
       try {
-        const data = JSON.parse(line.slice(6));
-        if (data.type === "chunk") {
-          onChunk(data.text);
-        } else if (data.type === "done") {
-          donePayload = data as T;
-        } else if (data.type === "error") {
-          throw new Error(data.error ?? "Stream error");
-        }
+        parsed = JSON.parse(line.slice(6));
       } catch {
         // Partial or malformed SSE line — skip
+        continue;
+      }
+      if (parsed.type === "chunk") {
+        onChunk(parsed.text ?? "");
+      } else if (parsed.type === "done") {
+        donePayload = parsed as unknown as T;
+      } else if (parsed.type === "error") {
+        throw new Error(parsed.error ?? "Stream error");
       }
     }
   }
@@ -138,7 +140,7 @@ export function useGame() {
       setPhase(data.phase);
       setCurrentEvent(data.currentEvent ?? null);
       setMessages(data.messages ?? []);
-      setMessagesRemaining(12 - (data.parentMessageCount ?? 0));
+      setMessagesRemaining(data.messagesRemaining ?? 12 - (data.parentMessageCount ?? 0));
       return true;
     },
     []

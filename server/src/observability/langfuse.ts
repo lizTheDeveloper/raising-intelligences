@@ -126,24 +126,30 @@ export class TracedLLMClient implements LLMClient {
     }
 
     const model = this.resolveModel(role);
-    const trace = client.trace({
-      name: this.traceName("stream", role),
-      tags: buildTags(metadata),
-      metadata: { ...metadata },
-    });
-    const generation = trace.generation({
-      name: metadata.role ?? "llm",
-      input: { system, messages },
-      ...(model ? { model } : {}),
-      metadata: { ...metadata },
-    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let generation: { end: (args: any) => void } | undefined;
+    try {
+      const trace = client.trace({
+        name: this.traceName("stream", role),
+        tags: buildTags(metadata),
+        metadata: { ...metadata },
+      });
+      generation = trace.generation({
+        name: metadata.role ?? "llm",
+        input: { system, messages },
+        ...(model ? { model } : {}),
+        metadata: { ...metadata },
+      });
+    } catch {
+      // Langfuse SDK error — continue without tracing
+    }
 
     try {
       const result = await this.inner.streamResponse(system, messages, onChunk, role);
-      generation.end({ output: result });
+      generation?.end({ output: result });
       return result;
     } catch (err) {
-      generation.end({ output: { error: String(err) }, level: "ERROR" });
+      generation?.end({ output: { error: String(err) }, level: "ERROR" });
       throw err;
     }
   }
@@ -162,24 +168,30 @@ export class TracedLLMClient implements LLMClient {
     }
 
     const model = this.resolveModel(role);
-    const trace = client.trace({
-      name: this.traceName("complete", role),
-      tags: buildTags(metadata),
-      metadata: { ...metadata },
-    });
-    const generation = trace.generation({
-      name: metadata.role ?? "llm",
-      input: { system, userMessage },
-      ...(model ? { model } : {}),
-      metadata: { ...metadata, maxTokens },
-    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let generation: { end: (args: any) => void } | undefined;
+    try {
+      const trace = client.trace({
+        name: this.traceName("complete", role),
+        tags: buildTags(metadata),
+        metadata: { ...metadata },
+      });
+      generation = trace.generation({
+        name: metadata.role ?? "llm",
+        input: { system, userMessage },
+        ...(model ? { model } : {}),
+        metadata: { ...metadata, maxTokens },
+      });
+    } catch {
+      // Langfuse SDK error — continue without tracing
+    }
 
     try {
       const result = await this.inner.completeResponse(system, userMessage, maxTokens, role, onChunk);
-      generation.end({ output: result });
+      generation?.end({ output: result });
       return result;
     } catch (err) {
-      generation.end({ output: { error: String(err) }, level: "ERROR" });
+      generation?.end({ output: { error: String(err) }, level: "ERROR" });
       throw err;
     }
   }
@@ -192,24 +204,30 @@ export class TracedLLMClient implements LLMClient {
     }
 
     const model = this.resolveModel(role);
-    const trace = client.trace({
-      name: this.traceName("complete_json", role),
-      tags: buildTags(metadata),
-      metadata: { ...metadata },
-    });
-    const generation = trace.generation({
-      name: metadata.role ?? "llm",
-      input: { system, userMessage },
-      ...(model ? { model } : {}),
-      metadata: { ...metadata },
-    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let generation: { end: (args: any) => void } | undefined;
+    try {
+      const trace = client.trace({
+        name: this.traceName("complete_json", role),
+        tags: buildTags(metadata),
+        metadata: { ...metadata },
+      });
+      generation = trace.generation({
+        name: metadata.role ?? "llm",
+        input: { system, userMessage },
+        ...(model ? { model } : {}),
+        metadata: { ...metadata },
+      });
+    } catch {
+      // Langfuse SDK error — continue without tracing
+    }
 
     try {
       const result = await this.inner.completeJson<T>(system, userMessage, role);
-      generation.end({ output: result });
+      generation?.end({ output: result });
       return result;
     } catch (err) {
-      generation.end({ output: { error: String(err) }, level: "ERROR" });
+      generation?.end({ output: { error: String(err) }, level: "ERROR" });
       throw err;
     }
   }
