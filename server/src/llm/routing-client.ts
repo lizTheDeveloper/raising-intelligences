@@ -2,6 +2,18 @@ import OpenAI from "openai";
 import type { LLMClient, LLMUsage, UsageSink } from "./client.js";
 import { type LLMRole, type ModelTier, estimateCostUsd, selectModel } from "./model-config.js";
 
+async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
+  let last: unknown;
+  for (let i = 0; i < maxAttempts; i++) {
+    try { return await fn(); }
+    catch (e) {
+      last = e;
+      if (i < maxAttempts - 1) await new Promise(r => setTimeout(r, 1000 * 2 ** i));
+    }
+  }
+  throw last;
+}
+
 /**
  * Routes LLM calls to different OpenAI-compatible providers based on the
  * model slug prefix.  A slug like "cerebras:gpt-oss-120b" sends the call to
@@ -152,10 +164,12 @@ export class RoutingLLMClient implements LLMClient {
   }
 
   async completeJson<T>(system: string, userMessage: string, role?: LLMRole, maxTokens = 1500): Promise<T> {
-    const text = await this.completeResponse(system, userMessage, maxTokens, role);
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("No JSON found in response");
-    return JSON.parse(jsonMatch[0]) as T;
+    return withRetry(async () => {
+      const text = await this.completeResponse(system, userMessage, maxTokens, role);
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error("No JSON found in response");
+      return JSON.parse(jsonMatch[0]) as T;
+    });
   }
 
   private report(role: LLMRole, providerKey: string, model: string, usage: OpenAIUsage | undefined): void {

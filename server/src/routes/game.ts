@@ -383,8 +383,6 @@ export function createGameRoutes(
     generateNextPortrait(state.id, state.childGender).catch(() => {});
   });
 
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
   // Long-poll until the portrait file for this game+slug appears on disk.
   // The client calls this ONCE and waits — no retry loop, no polling.
   // Responds with { url } when ready, 408 if it takes longer than 5 minutes.

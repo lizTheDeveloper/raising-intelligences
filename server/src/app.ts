@@ -92,6 +92,16 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   app.use(cors({ origin: allowedOrigin }));
   app.use(express.json());
 
+  // Security headers — defense-in-depth against common browser-based attacks.
+  const securityHeaders: RequestHandler = (_req, res, next) => {
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    next();
+  };
+  app.use(securityHeaders);
+
   // Global rate limit: 200 req / min per IP. Catches broad abuse.
   app.use(rateLimit({ windowMs: 60_000, max: 200, standardHeaders: true, legacyHeaders: false }));
 
