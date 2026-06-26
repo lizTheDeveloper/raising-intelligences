@@ -357,7 +357,16 @@ export function createGameRoutes(
           } catch (err) {
             logger.warn("personality_seed_failed", { gameId, error: String(err) });
           }
-          const withSeed: GameState = { ...updatedState, personalitySeed: seed };
+          // Re-read from the map after the async LLM call — /next-event runs
+          // without the game lock and may have advanced the phase while the
+          // seed was generating. Spreading stale updatedState would overwrite
+          // that transition, leaving the server stuck in event_intro.
+          const latestState = games.get(gameId) ?? updatedState;
+          const withSeed: GameState = {
+            ...latestState,
+            parentPersonalities: updatedState.parentPersonalities,
+            personalitySeed: seed,
+          };
           games.set(gameId, withSeed);
           await repo.saveGame(withSeed);
           res.json({ ready: true });

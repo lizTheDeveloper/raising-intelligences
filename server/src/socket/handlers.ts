@@ -30,6 +30,7 @@ import {
   type ViewerState,
 } from "./protocol.js";
 import { generatePersonalitySeed } from "../game/personality.js";
+import { logger } from "../logger.js";
 
 export interface SocketDeps {
   io: Server;
@@ -511,13 +512,25 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         const allPersonalitiesReady = isSolo ? !!parent1 : !!(parent1 && parent2);
 
         if (allPersonalitiesReady && parent1) {
-          const seed = await generatePersonalitySeed(
-            conversationEngine.llm,
-            updatedState.childName,
-            parent1,
-            isSolo ? undefined : parent2
-          );
-          const withSeed: GameState = { ...updatedState, personalitySeed: seed };
+          let seed = "";
+          try {
+            seed = await generatePersonalitySeed(
+              conversationEngine.llm,
+              updatedState.childName,
+              parent1,
+              isSolo ? undefined : parent2
+            );
+          } catch (err) {
+            logger.warn("personality_seed_failed", { gameId, error: String(err) });
+          }
+          // Re-read after the async LLM call — the game may have advanced
+          // phase while the seed was generating (same race as REST /personality).
+          const latestState = games.get(gameId) ?? updatedState;
+          const withSeed: GameState = {
+            ...latestState,
+            parentPersonalities: updatedState.parentPersonalities,
+            personalitySeed: seed,
+          };
           games.set(gameId, withSeed);
           await repo.saveGame(withSeed);
           io.to(gameId).emit(E.PERSONALITY_SEED_READY, { personalitySeed: seed });
