@@ -16,7 +16,7 @@ export function createUserRoutes(): Router {
   const router = Router();
 
   router.get("/user/:userId/kids", async (req: Request, res: Response) => {
-    const { userId } = req.params;
+    const userId = String(req.params.userId);
     if (!isValidUserId(userId)) {
       res.status(400).json({ error: "Invalid userId format" });
       return;
@@ -35,7 +35,7 @@ export function createUserRoutes(): Router {
   });
 
   router.post("/user/:userId/kids", async (req: Request, res: Response) => {
-    const { userId } = req.params;
+    const userId = String(req.params.userId);
     if (!isValidUserId(userId)) {
       res.status(400).json({ error: "Invalid userId format" });
       return;
