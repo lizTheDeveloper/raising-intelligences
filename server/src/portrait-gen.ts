@@ -40,24 +40,24 @@ import type { ChildGender } from "./types.js";
 
 const AGE_BUCKETS_BY_GENDER: Record<ChildGender, Array<{ slug: string; figure: string }>> = {
   nonbinary: [
-    { slug: "age-03", figure: "tiny round-headed toddler, maybe 3 years old," },
-    { slug: "age-07", figure: "7-year-old child," },
-    { slug: "age-12", figure: "12-year-old preteen," },
-    { slug: "age-16", figure: "16-year-old teenager with slightly slumped posture," },
+    { slug: "age-03", figure: "tiny round-headed toddler," },
+    { slug: "age-07", figure: "small child with a slightly larger frame," },
+    { slug: "age-12", figure: "young person, medium build, starting to grow taller," },
+    { slug: "age-16", figure: "lanky young person with slightly slumped posture," },
     { slug: "age-20", figure: "person in their mid-twenties," },
   ],
   boy: [
-    { slug: "age-03", figure: "tiny round-headed toddler boy, maybe 3 years old," },
-    { slug: "age-07", figure: "7-year-old boy," },
-    { slug: "age-12", figure: "12-year-old boy," },
-    { slug: "age-16", figure: "16-year-old teenage boy with slightly slumped posture," },
+    { slug: "age-03", figure: "tiny round-headed toddler," },
+    { slug: "age-07", figure: "small boy with a slightly larger frame," },
+    { slug: "age-12", figure: "young boy, medium build, starting to grow taller," },
+    { slug: "age-16", figure: "lanky young man with slightly slumped posture," },
     { slug: "age-20", figure: "young man in his mid-twenties," },
   ],
   girl: [
-    { slug: "age-03", figure: "tiny round-headed toddler girl, maybe 3 years old," },
-    { slug: "age-07", figure: "7-year-old girl," },
-    { slug: "age-12", figure: "12-year-old girl," },
-    { slug: "age-16", figure: "16-year-old teenage girl with slightly slumped posture," },
+    { slug: "age-03", figure: "tiny round-headed toddler," },
+    { slug: "age-07", figure: "small girl with a slightly larger frame," },
+    { slug: "age-12", figure: "young girl, medium build, starting to grow taller," },
+    { slug: "age-16", figure: "lanky young woman with slightly slumped posture," },
     { slug: "age-20", figure: "young woman in her mid-twenties," },
   ],
 };
