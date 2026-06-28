@@ -1,13 +1,18 @@
 import OpenAI from "openai";
 import type { LLMClient, LLMUsage, UsageSink } from "./client.js";
-import { type LLMRole, type ModelTier, estimateCostUsd, selectModel } from "./model-config.js";
+import { type LLMRole, type ModelTier, estimateCostUsd, selectModel, STANDARD_MODELS } from "./model-config.js";
+
+function isRateLimitError(e: unknown): boolean {
+  return e instanceof OpenAI.RateLimitError;
+}
 
 /**
  * Retry a non-streaming LLM call up to maxAttempts times with exponential
  * backoff. Timeouts (AbortError / TimeoutError) are not retried — a call that
  * already spent 60-90s waiting is not a transient failure worth repeating.
- * Streaming calls are intentionally excluded: retrying after chunks have
- * already been sent to the client would produce duplicate output.
+ * Rate limit errors (429) use a longer base delay (10s) to escape the quota
+ * window. Streaming calls are intentionally excluded: retrying after chunks
+ * have already been sent to the client would produce duplicate output.
  */
 async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
   let last: unknown;
@@ -19,7 +24,9 @@ async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
       const isTimeout =
         e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
       if (isTimeout || i === maxAttempts - 1) throw e;
-      await new Promise<void>((r) => setTimeout(r, 1000 * 2 ** i));
+      // Rate limit errors need much longer backoff to escape the quota window
+      const delayMs = isRateLimitError(e) ? 10_000 * (i + 1) : 1_000 * 2 ** i;
+      await new Promise<void>((r) => setTimeout(r, delayMs));
     }
   }
   throw last;
@@ -103,14 +110,33 @@ export class RoutingLLMClient implements LLMClient {
       ? messages
       : [{ role: "user" as const, content: "(The child looks at their parents, waiting.)" }];
 
-    const stream = await client.chat.completions.create({
-      model,
-      max_tokens: 500,
-      stream: true,
-      stream_options: { include_usage: true },
-      ...(this.seed !== undefined ? { seed: this.seed } : {}),
-      messages: [{ role: "system", content: system }, ...promptMessages],
-    }, { signal: AbortSignal.timeout(60_000) });
+    const openStream = async (c: OpenAI, m: string) =>
+      c.chat.completions.create({
+        model: m,
+        max_tokens: 500,
+        stream: true,
+        stream_options: { include_usage: true },
+        ...(this.seed !== undefined ? { seed: this.seed } : {}),
+        messages: [{ role: "system", content: system }, ...promptMessages],
+      }, { signal: AbortSignal.timeout(60_000) });
+
+    // Before any chunks are emitted we can safely fall back to OpenRouter on 429.
+    let stream: Awaited<ReturnType<typeof openStream>>;
+    let actualProviderKey = providerKey;
+    let actualModel = model;
+    try {
+      stream = await openStream(client, model);
+    } catch (e) {
+      if (isRateLimitError(e) && providerKey !== this.fallback) {
+        const fallbackSlug = STANDARD_MODELS[resolvedRole];
+        const { providerKey: fbKey, model: fbModel } = this.resolve(fallbackSlug);
+        stream = await openStream(this.getClient(fbKey), fbModel);
+        actualProviderKey = fbKey;
+        actualModel = fbModel;
+      } else {
+        throw e;
+      }
+    }
 
     let fullResponse = "";
     let usage: OpenAIUsage | undefined;
@@ -119,7 +145,7 @@ export class RoutingLLMClient implements LLMClient {
       if (delta) { fullResponse += delta; onChunk(delta); }
       if (chunk.usage) usage = chunk.usage as OpenAIUsage;
     }
-    this.report(resolvedRole, providerKey, model, usage);
+    this.report(resolvedRole, actualProviderKey, actualModel, usage);
     return fullResponse;
   }
 
@@ -161,18 +187,33 @@ export class RoutingLLMClient implements LLMClient {
       return fullResponse;
     }
 
-    return withRetry(async () => {
-      const response = await client.chat.completions.create({
-        model,
-        max_tokens: maxTokens,
-        ...(this.seed !== undefined ? { seed: this.seed } : {}),
-        messages: msgs,
-      }, { signal: AbortSignal.timeout(90_000) });
-      this.report(resolvedRole, providerKey, model, response.usage as OpenAIUsage | undefined);
-      const content = response.choices[0]?.message?.content;
-      if (typeof content === "string") return content;
-      throw new Error(`Unexpected response from ${providerKey}`);
-    });
+    const callProvider = (c: OpenAI, m: string, pk: string) =>
+      withRetry(async () => {
+        const response = await c.chat.completions.create({
+          model: m,
+          max_tokens: maxTokens,
+          ...(this.seed !== undefined ? { seed: this.seed } : {}),
+          messages: msgs,
+        }, { signal: AbortSignal.timeout(90_000) });
+        this.report(resolvedRole, pk, m, response.usage as OpenAIUsage | undefined);
+        const content = response.choices[0]?.message?.content;
+        if (typeof content === "string") return content;
+        throw new Error(`Unexpected response from ${pk}`);
+      });
+
+    try {
+      return await callProvider(client, model, providerKey);
+    } catch (e) {
+      // When the primary provider (e.g. Cerebras) is still rate-limited after
+      // all retry attempts, fall back to the OpenRouter standard model for this
+      // role so the game continues instead of crashing.
+      if (isRateLimitError(e) && providerKey !== this.fallback) {
+        const fallbackSlug = STANDARD_MODELS[resolvedRole];
+        const { providerKey: fbKey, model: fbModel } = this.resolve(fallbackSlug);
+        return callProvider(this.getClient(fbKey), fbModel, fbKey);
+      }
+      throw e;
+    }
   }
 
   async completeJson<T>(system: string, userMessage: string, role?: LLMRole, maxTokens = 1500): Promise<T> {
