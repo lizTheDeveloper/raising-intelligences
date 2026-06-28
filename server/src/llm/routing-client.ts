@@ -6,6 +6,10 @@ function isRateLimitError(e: unknown): boolean {
   return e instanceof OpenAI.RateLimitError;
 }
 
+function isTimeoutError(e: unknown): boolean {
+  return e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
+}
+
 /**
  * Retry a non-streaming LLM call up to maxAttempts times with exponential
  * backoff. Timeouts (AbortError / TimeoutError) are not retried — a call that
@@ -127,7 +131,7 @@ export class RoutingLLMClient implements LLMClient {
     try {
       stream = await openStream(client, model);
     } catch (e) {
-      if (isRateLimitError(e) && providerKey !== this.fallback) {
+      if ((isRateLimitError(e) || isTimeoutError(e)) && providerKey !== this.fallback) {
         const fallbackSlug = STANDARD_MODELS[resolvedRole];
         const { providerKey: fbKey, model: fbModel } = this.resolve(fallbackSlug);
         stream = await openStream(this.getClient(fbKey), fbModel);
@@ -167,14 +171,32 @@ export class RoutingLLMClient implements LLMClient {
     ];
 
     if (onChunk) {
-      const stream = await client.chat.completions.create({
-        model,
-        max_tokens: maxTokens,
-        stream: true,
-        stream_options: { include_usage: true },
-        ...(this.seed !== undefined ? { seed: this.seed } : {}),
-        messages: msgs,
-      }, { signal: AbortSignal.timeout(120_000) });
+      const createStream = (c: OpenAI, m: string) =>
+        c.chat.completions.create({
+          model: m,
+          max_tokens: maxTokens,
+          stream: true,
+          stream_options: { include_usage: true },
+          ...(this.seed !== undefined ? { seed: this.seed } : {}),
+          messages: msgs,
+        }, { signal: AbortSignal.timeout(120_000) });
+
+      let stream: Awaited<ReturnType<typeof createStream>>;
+      let actualProviderKey = providerKey;
+      let actualModel = model;
+      try {
+        stream = await createStream(client, model);
+      } catch (e) {
+        if (isRateLimitError(e) && providerKey !== this.fallback) {
+          const fallbackSlug = STANDARD_MODELS[resolvedRole];
+          const { providerKey: fbKey, model: fbModel } = this.resolve(fallbackSlug);
+          stream = await createStream(this.getClient(fbKey), fbModel);
+          actualProviderKey = fbKey;
+          actualModel = fbModel;
+        } else {
+          throw e;
+        }
+      }
 
       let fullResponse = "";
       let usage: OpenAIUsage | undefined;
@@ -183,7 +205,7 @@ export class RoutingLLMClient implements LLMClient {
         if (delta) { fullResponse += delta; onChunk(delta); }
         if (chunk.usage) usage = chunk.usage as OpenAIUsage;
       }
-      this.report(resolvedRole, providerKey, model, usage);
+      this.report(resolvedRole, actualProviderKey, actualModel, usage);
       return fullResponse;
     }
 

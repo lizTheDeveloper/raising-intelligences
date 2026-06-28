@@ -236,9 +236,7 @@ export function createGameRoutes(
           if (state.currentEventNumber < state.totalEvents) {
             prefetchedEvents.set(state.id, engine.prefetchNextEvent(state));
           }
-          const next = await engine.endFamilyChat(state, () => {
-            // Psychologist output is internal — not surfaced to the player.
-          });
+          const next = await engine.endFamilyChat(state);
           games.set(next.id, next);
           const latestSnapshot = next.identitySnapshots[next.identitySnapshots.length - 1];
           if (latestSnapshot) await repo.saveSnapshot(next.id, latestSnapshot);
