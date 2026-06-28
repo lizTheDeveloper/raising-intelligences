@@ -5,6 +5,9 @@ import type { GameRepository } from "../db/repository.js";
 import type { GameState } from "../types.js";
 import { logger } from "../logger.js";
 import { generateMomentIllustrations } from "../portrait-gen.js";
+import { withGameLock } from "../lib/game-lock.js";
+import { initSSE, sseChunk, sseDone, sseError } from "../lib/sse.js";
+import { resolveGame } from "../lib/resolve-game.js";
 
 interface EndgameRouteOptions {
   llmRateLimit?: RequestHandler;
@@ -27,61 +30,34 @@ export function createEndgameRoutes(
   const { llmRateLimit, gameLocks = new Map<string, Promise<void>>() } = options;
   const router = Router();
 
-  function withGameLock<T>(gameId: string, fn: () => Promise<T>): Promise<T> {
-    const prev = gameLocks.get(gameId) ?? Promise.resolve();
-    const next = prev.catch(() => {}).then(fn);
-    const settled = next.then(() => {}, () => {});
-    settled.then(() => { if (gameLocks.get(gameId) === settled) gameLocks.delete(gameId); });
-    gameLocks.set(gameId, settled);
-    return next;
-  }
+  const lock = <T>(gameId: string, fn: () => Promise<T>) => withGameLock(gameLocks, gameId, fn);
+  const resolve = (id: string) => resolveGame(id, games, repo);
 
   router.post("/game/:id/epilogue", ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
-    if (!games.get(req.params.id as string)) {
+    if (!(await resolve(req.params.id as string))) {
       res.status(404).json({ error: "Game not found" });
       return;
     }
 
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
+    initSSE(res);
 
     try {
-      await withGameLock(req.params.id as string, async () => {
-        const state = games.get(req.params.id as string);
-        if (!state) {
-          if (!res.writableEnded) {
-            res.write(`data: ${JSON.stringify({ type: "error", error: "Game not found" })}\n\n`);
-            res.end();
-          }
-          return;
-        }
+      await lock(req.params.id as string, async () => {
+        const state = await resolve(req.params.id as string);
+        if (!state) { sseError(res, "Game not found"); return; }
         try {
-          const result = await engine.generateEpilogue(state, (chunk) => {
-            res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
-          });
+          const result = await engine.generateEpilogue(state, (chunk) => { sseChunk(res, chunk); });
           games.set(result.state.id, result.state);
           await repo.saveGame(result.state);
-          if (!res.writableEnded) {
-            res.write(
-              `data: ${JSON.stringify({ type: "done", phase: result.state.phase, epilogue: result.epilogue })}\n\n`
-            );
-            res.end();
-          }
+          sseDone(res, { phase: result.state.phase, epilogue: result.epilogue });
         } catch (err) {
           logger.error("epilogue_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
-          if (!res.writableEnded) {
-            res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
-            res.end();
-          }
+          sseError(res, "An internal error occurred");
         }
       });
     } catch (err) {
       logger.error("epilogue_lock_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
-      if (!res.writableEnded) {
-        res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
-        res.end();
-      }
+      sseError(res, "An internal error occurred");
     }
   });
 
@@ -108,39 +84,26 @@ export function createEndgameRoutes(
   });
 
   router.post("/game/:id/report-card", ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
-    if (!games.get(req.params.id as string)) {
+    if (!(await resolve(req.params.id as string))) {
       res.status(404).json({ error: "Game not found" });
       return;
     }
     const { epilogue } = req.body as { epilogue?: string };
 
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
+    initSSE(res);
 
     try {
-      await withGameLock(req.params.id as string, async () => {
-        const state = games.get(req.params.id as string);
-        if (!state) {
-          if (!res.writableEnded) {
-            res.write(`data: ${JSON.stringify({ type: "error", error: "Game not found" })}\n\n`);
-            res.end();
-          }
-          return;
-        }
+      await lock(req.params.id as string, async () => {
+        const state = await resolve(req.params.id as string);
+        if (!state) { sseError(res, "Game not found"); return; }
         try {
           const result = await engine.generateReportCard(state, epilogue ?? "", (chunk) => {
-            res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
+            sseChunk(res, chunk);
           });
           games.set(result.state.id, result.state);
           await repo.saveEndgame(result.state.id, epilogue ?? "", result.reportCard);
           await repo.saveGame(result.state);
-          if (!res.writableEnded) {
-            res.write(
-              `data: ${JSON.stringify({ type: "done", phase: result.state.phase, reportCard: result.reportCard })}\n\n`
-            );
-            res.end();
-          }
+          sseDone(res, { phase: result.state.phase, reportCard: result.reportCard });
 
           // Fire-and-forget album generation
           const userId = req.query.userId as string | undefined;
@@ -192,18 +155,12 @@ export function createEndgameRoutes(
           }
         } catch (err) {
           logger.error("report_card_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
-          if (!res.writableEnded) {
-            res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
-            res.end();
-          }
+          sseError(res, "An internal error occurred");
         }
       });
     } catch (err) {
       logger.error("report_card_lock_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
-      if (!res.writableEnded) {
-        res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
-        res.end();
-      }
+      sseError(res, "An internal error occurred");
     }
   });
 

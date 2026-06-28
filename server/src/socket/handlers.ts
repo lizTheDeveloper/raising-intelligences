@@ -5,6 +5,7 @@ import type { EndgameEngine } from "../game/endgame-engine.js";
 import type { GameRepository } from "../db/repository.js";
 import { createGame, PARENT_MESSAGE_CAP } from "../game/state-machine.js";
 import { generateFirstPortrait, generateNextPortrait } from "../portrait-gen.js";
+import { withGameLock } from "../lib/game-lock.js";
 import {
   type Session,
   type PlayerSlot,
@@ -81,14 +82,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
   const { io, games, sessions, conversationEngine, endgameEngine, repo,
           gameLocks = new Map<string, Promise<void>>() } = deps;
 
-  function withGameLock<T>(gameId: string, fn: () => Promise<T>): Promise<T> {
-    const prev = gameLocks.get(gameId) ?? Promise.resolve();
-    const next = prev.catch(() => {}).then(fn);
-    const settled = next.then(() => {}, () => {});
-    settled.then(() => { if (gameLocks.get(gameId) === settled) gameLocks.delete(gameId); });
-    gameLocks.set(gameId, settled);
-    return next;
-  }
+  const lock = <T>(gameId: string, fn: () => Promise<T>) => withGameLock(gameLocks, gameId, fn);
 
   function broadcastState(gameId: string): void {
     const state = games.get(gameId);
@@ -309,7 +303,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       if (slot === "kid") return fail("Invalid sender");
       if (!payload?.content?.trim()) return;
 
-      withGameLock(gameId, async () => {
+      lock(gameId, async () => {
         const state = currentState();
         const session = sessions.get(gameId);
         if (!state || !session) { fail("Not in a game"); return; }
@@ -397,7 +391,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       const gameId = data.gameId;
       if (!gameId) return fail("Not in a game");
 
-      withGameLock(gameId, async () => {
+      lock(gameId, async () => {
         await endChat(gameId);
       }).catch((err) => fail(String(err)));
     });
@@ -485,7 +479,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         confessional2: confessional2 ?? "",
       };
 
-      withGameLock(gameId, async () => {
+      lock(gameId, async () => {
         const state = currentState();
         if (!state) { fail("Not in a game"); return; }
 
