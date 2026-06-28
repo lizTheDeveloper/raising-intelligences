@@ -118,16 +118,17 @@ export class RoutingLLMClient implements LLMClient {
         stream_options: { include_usage: true },
         ...(this.seed !== undefined ? { seed: this.seed } : {}),
         messages: [{ role: "system", content: system }, ...promptMessages],
-      }, { signal: AbortSignal.timeout(60_000) });
+      }, { signal: AbortSignal.timeout(90_000) });
 
-    // Before any chunks are emitted we can safely fall back to OpenRouter on 429.
+    // Before any chunks are emitted we can safely fall back to OpenRouter on 429 or timeout.
     let stream: Awaited<ReturnType<typeof openStream>>;
     let actualProviderKey = providerKey;
     let actualModel = model;
     try {
       stream = await openStream(client, model);
     } catch (e) {
-      if (isRateLimitError(e) && providerKey !== this.fallback) {
+      const isTimeout = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
+      if ((isRateLimitError(e) || isTimeout) && providerKey !== this.fallback) {
         const fallbackSlug = STANDARD_MODELS[resolvedRole];
         const { providerKey: fbKey, model: fbModel } = this.resolve(fallbackSlug);
         stream = await openStream(this.getClient(fbKey), fbModel);
@@ -187,7 +188,7 @@ export class RoutingLLMClient implements LLMClient {
       return fullResponse;
     }
 
-    const callProvider = (c: OpenAI, m: string, pk: string) =>
+    const callProvider = (c: OpenAI, m: string, pk: string, attempts = 3) =>
       withRetry(async () => {
         const response = await c.chat.completions.create({
           model: m,
@@ -199,15 +200,16 @@ export class RoutingLLMClient implements LLMClient {
         const content = response.choices[0]?.message?.content;
         if (typeof content === "string") return content;
         throw new Error(`Unexpected response from ${pk}`);
-      });
+      }, attempts);
 
+    const hasFallback = providerKey !== this.fallback;
     try {
-      return await callProvider(client, model, providerKey);
+      // When a fallback provider exists, try the primary only once on failure so
+      // a 429 falls through to OpenRouter immediately rather than spending ~30s
+      // burning through retry backoff (10s + 20s) in the same quota window.
+      return await callProvider(client, model, providerKey, hasFallback ? 1 : 3);
     } catch (e) {
-      // When the primary provider (e.g. Cerebras) is still rate-limited after
-      // all retry attempts, fall back to the OpenRouter standard model for this
-      // role so the game continues instead of crashing.
-      if (isRateLimitError(e) && providerKey !== this.fallback) {
+      if (isRateLimitError(e) && hasFallback) {
         const fallbackSlug = STANDARD_MODELS[resolvedRole];
         const { providerKey: fbKey, model: fbModel } = this.resolve(fallbackSlug);
         return callProvider(this.getClient(fbKey), fbModel, fbKey);
