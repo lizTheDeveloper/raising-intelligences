@@ -114,6 +114,9 @@ export class RoutingLLMClient implements LLMClient {
       ? messages
       : [{ role: "user" as const, content: "(The child looks at their parents, waiting.)" }];
 
+    // 120s matches the completeResponse streaming path; Cerebras can be slow under load
+    const STREAM_TIMEOUT_MS = Number(process.env.STREAM_TIMEOUT_MS ?? 120_000);
+
     const openStream = async (c: OpenAI, m: string) =>
       c.chat.completions.create({
         model: m,
@@ -122,7 +125,7 @@ export class RoutingLLMClient implements LLMClient {
         stream_options: { include_usage: true },
         ...(this.seed !== undefined ? { seed: this.seed } : {}),
         messages: [{ role: "system", content: system }, ...promptMessages],
-      }, { signal: AbortSignal.timeout(60_000) });
+      }, { signal: AbortSignal.timeout(STREAM_TIMEOUT_MS) });
 
     // Before any chunks are emitted we can safely fall back to OpenRouter on 429.
     let stream: Awaited<ReturnType<typeof openStream>>;
