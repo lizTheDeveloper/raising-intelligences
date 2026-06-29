@@ -7,3 +7,9 @@ dist/
 server/dist/
 client/dist/
 *.tsbuildinfo
+# Runtime-generated portrait files
+server/portraits/
+client/public/portraits/starters/
+# Tool session artifacts
+.playwright-mcp/
+.qwen/
