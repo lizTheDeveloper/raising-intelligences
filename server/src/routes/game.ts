@@ -9,6 +9,9 @@ import type { GameRepository } from "../db/repository.js";
 import { generateFirstPortrait, generateNextPortrait, PORTRAITS_DIR } from "../portrait-gen.js";
 import { logger } from "../logger.js";
 import { generatePersonalitySeed, inferGender } from "../game/personality.js";
+import { withGameLock } from "../lib/game-lock.js";
+import { initSSE, sseChunk, sseDone, sseError } from "../lib/sse.js";
+import { resolveGame as sharedResolveGame } from "../lib/resolve-game.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -37,24 +40,8 @@ export function createGameRoutes(
   // every end-chat (events 2+), so next-event returns instantly instead of waiting.
   const prefetchedEvents = new Map<string, Promise<import("../types.js").GameEvent>>();
 
-  function withGameLock<T>(gameId: string, fn: () => Promise<T>): Promise<T> {
-    const prev = gameLocks.get(gameId) ?? Promise.resolve();
-    const next = prev.catch(() => {}).then(fn);
-    const settled = next.then(() => {}, () => {});
-    settled.then(() => { if (gameLocks.get(gameId) === settled) gameLocks.delete(gameId); });
-    gameLocks.set(gameId, settled);
-    return next;
-  }
-
-  // Resolve a game from the in-memory store, falling back to the repository
-  // (reconstructing from the latest persisted checkpoint) for reconnects.
-  async function resolveGame(id: string): Promise<GameState | null> {
-    const inMemory = games.get(id);
-    if (inMemory) return inMemory;
-    const loaded = await repo.loadGame(id);
-    if (loaded) games.set(id, loaded);
-    return loaded;
-  }
+  const lock = <T>(gameId: string, fn: () => Promise<T>) => withGameLock(gameLocks, gameId, fn);
+  const resolveGame = (id: string) => sharedResolveGame(id, games, repo);
 
   router.post("/game", ...(gameCreateLimit ? [gameCreateLimit] : []), async (req: Request, res: Response) => {
     const { childName, relationshipType } = req.body as {
@@ -155,55 +142,35 @@ export function createGameRoutes(
       return;
     }
 
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
+    initSSE(res);
 
     try {
-      await withGameLock(req.params.id as string, async () => {
+      await lock(req.params.id as string, async () => {
         try {
           // Re-read state inside the lock — another handler may have written a newer
           // snapshot while this request was queued.
           const state = await resolveGame(req.params.id as string);
-          if (!state) {
-            if (!res.writableEnded) {
-              res.write(`data: ${JSON.stringify({ type: "error", error: "Game not found" })}\n\n`);
-              res.end();
-            }
-            return;
-          }
+          if (!state) { sseError(res, "Game not found"); return; }
           const result = await engine.handleParentMessage(state, sender, content, (chunk) => {
-            res.write(`data: ${JSON.stringify({ type: "chunk", text: chunk })}\n\n`);
+            sseChunk(res, chunk);
           });
           games.set(result.state.id, result.state);
           // Persist just the two new tail messages (parent + kid), then the checkpoint.
           const tail = result.state.messages.slice(-2);
           for (const m of tail) await repo.saveMessage(result.state.id, m);
           await repo.saveGame(result.state);
-          if (!res.writableEnded) {
-            res.write(
-              `data: ${JSON.stringify({
-                type: "done",
-                kidResponse: result.kidResponse,
-                messagesRemaining: engine.getMessageCapRemaining(result.state),
-              })}\n\n`
-            );
-            res.end();
-          }
+          sseDone(res, {
+            kidResponse: result.kidResponse,
+            messagesRemaining: engine.getMessageCapRemaining(result.state),
+          });
         } catch (err) {
           logger.error("message_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
-          if (!res.writableEnded) {
-            res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
-            res.end();
-          }
+          sseError(res, "An internal error occurred");
         }
       });
     } catch (err) {
       logger.error("message_lock_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
-      if (!res.writableEnded) {
-        res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
-        res.end();
-      }
+      sseError(res, "An internal error occurred");
     }
   });
 
@@ -214,21 +181,13 @@ export function createGameRoutes(
       return;
     }
 
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
+    initSSE(res);
 
     try {
-      await withGameLock(req.params.id as string, async () => {
+      await lock(req.params.id as string, async () => {
         try {
           const state = await resolveGame(req.params.id as string);
-          if (!state) {
-            if (!res.writableEnded) {
-              res.write(`data: ${JSON.stringify({ type: "error", error: "Game not found" })}\n\n`);
-              res.end();
-            }
-            return;
-          }
+          if (!state) { sseError(res, "Game not found"); return; }
           // Kick off next-event prefetch immediately — runs in parallel with the
           // psychologist so the event is ready before the player finishes reading debrief.
           // Uses the current identity doc (one conversation behind) which is fine;
@@ -241,24 +200,15 @@ export function createGameRoutes(
           const latestSnapshot = next.identitySnapshots[next.identitySnapshots.length - 1];
           if (latestSnapshot) await repo.saveSnapshot(next.id, latestSnapshot);
           await repo.saveGame(next);
-          if (!res.writableEnded) {
-            res.write(`data: ${JSON.stringify({ type: "done", phase: next.phase })}\n\n`);
-            res.end();
-          }
+          sseDone(res, { phase: next.phase });
         } catch (err) {
           logger.error("end_chat_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
-          if (!res.writableEnded) {
-            res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
-            res.end();
-          }
+          sseError(res, "An internal error occurred");
         }
       });
     } catch (err) {
       logger.error("end_chat_lock_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
-      if (!res.writableEnded) {
-        res.write(`data: ${JSON.stringify({ type: "error", error: "An internal error occurred" })}\n\n`);
-        res.end();
-      }
+      sseError(res, "An internal error occurred");
     }
   });
 
@@ -320,7 +270,7 @@ export function createGameRoutes(
     };
 
     try {
-      await withGameLock(gameId, async () => {
+      await lock(gameId, async () => {
         const current = await resolveGame(gameId);
         if (!current) {
           res.status(404).json({ error: "Game not found" });
