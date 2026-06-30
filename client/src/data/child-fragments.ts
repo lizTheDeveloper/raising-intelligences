@@ -236,6 +236,46 @@ const fragments: TaggedFragment[] = [
   { text: "i said the wrong thing and now everyone is looking.", tags: [] },
   { text: "my tooth is doing something.", tags: [] },
   { text: "i forgot how to swallow.", tags: [] },
+
+  // --- heartbreakers ---
+  { text: "will you remember me when i'm big?", tags: [] },
+  { text: "i don't want today to end.", tags: [] },
+  { text: "can we do this again tomorrow?", tags: [] },
+  { text: "i want to stay this size.", tags: [] },
+  { text: "don't forget about me.", tags: [] },
+  { text: "i want to be little forever.", tags: [] },
+  { text: "will you still know me?", tags: [] },
+
+  // --- childhood is hard ---
+  { text: "nobody told me it would be like this.", tags: [] },
+  { text: "i don't know how to make them like me.", tags: [] },
+  { text: "why is everyone bigger than me?", tags: [] },
+  { text: "i tried so hard and it didn't work.", tags: [] },
+  { text: "nobody listened.", tags: [] },
+  { text: "i don't know the rules yet.", tags: [] },
+  { text: "everyone else already knows how.", tags: [] },
+
+  // --- quiet guilt ---
+  { text: "you're not listening.", tags: [] },
+  { text: "you said you'd play with me.", tags: [] },
+  { text: "you always say 'in a minute.'", tags: [] },
+  { text: "you promised.", tags: [] },
+  { text: "why are you always on your phone?", tags: [] },
+  { text: "you forgot.", tags: [] },
+  { text: "you said you'd be there.", tags: [] },
+
+  // --- the kid trying to say something bigger than their vocabulary ---
+  { text: "am i doing it right?", tags: [] },
+  { text: "is this what everyone feels like?", tags: [] },
+  { text: "i want to tell you something but i don't know what it is.", tags: [] },
+  { text: "why does happy feel sad sometimes?", tags: [] },
+  { text: "do other kids feel like this?", tags: [] },
+  { text: "i think i'm different but i don't know how.", tags: [] },
+  { text: "i had a thought and it scared me.", tags: [] },
+  { text: "i don't know who to be yet.", tags: [] },
+  { text: "sometimes i feel like i'm pretending.", tags: [] },
+  { text: "i don't know how to say it.", tags: [] },
+  { text: "i feel too much.", tags: [] },
 ];
 
 /**

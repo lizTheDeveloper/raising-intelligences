@@ -101,6 +101,45 @@ const TAGLINES = [
   "love is the easy part. it's the tuesday nights that break you.",
   "you're building something you'll never see finished.",
 
+  // heartbreakers
+  "the last time they reach for your hand, you won't know it's the last time.",
+  "they stopped asking you to watch. you didn't notice when.",
+  "they don't remember the thing you're most proud of.",
+  "the small one in the photos is gone.",
+  "they're going to forget most of this. you're going to remember all of it.",
+  "one day they'll describe their childhood to someone and you won't recognize it.",
+  "you blinked.",
+
+  // childhood is hard
+  "they're doing all of this for the first time.",
+  "they have feelings they don't have words for yet.",
+  "they're the smallest person in every room they enter.",
+  "nobody asked them if they were ready.",
+  "the world is very loud when you're very small.",
+  "they don't get to choose any of this.",
+  "they need you to understand something they can't explain.",
+
+  // you're a bad parent (you're not)
+  "you checked your phone while they were talking to you.",
+  "you said 'not right now' more than you said 'yes' today.",
+  "you were too tired to play and they stopped asking.",
+  "you lost your temper over something that didn't matter.",
+  "they asked you to watch and you were looking at something else.",
+  "you said 'because i said so.' you swore you never would.",
+  "you counted the hours until bedtime and then missed them immediately.",
+
+  // the things you can't unknow
+  "they trust you completely. you are guessing.",
+  "you will forget what their voice sounded like at three.",
+  "the best day was a tuesday. you didn't know it was the best day.",
+  "they're already someone. you're still finding out who.",
+  "somewhere in the middle you stopped being the whole world to them.",
+  "the thing you're worried about isn't the thing that'll matter.",
+  "they needed you to be perfect. you needed them to forgive you for not being.",
+  "every night you put them to bed is one fewer night you put them to bed.",
+  "they're having an experience of their childhood that you will never fully know.",
+  "you are their first experience of love. they won't remember most of it.",
+
   // evocative
   "a bedroom door, closing.",
   "the backseat on a long drive.",
