@@ -78,7 +78,8 @@ describe("ConversationEngine", () => {
     expect(mock.roleCalls).toEqual([
       "world_manager", // startEvent
       "kid_family_chat", // handleParentMessage during family chat
-      "psychologist", // endFamilyChat
+      "psychologist", // endFamilyChat (identity doc)
+      "memory_summarizer", // endFamilyChat (memory summary, runs in parallel)
     ]);
   });
 

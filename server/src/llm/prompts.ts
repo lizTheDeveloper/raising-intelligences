@@ -113,8 +113,10 @@ The Identity Document has these sections:
 - **Self-image** — How the child sees themselves
 - **Relationships** — How the child relates to each parent
 
+The child is currently {age} years old. The entire document must be rewritten in the internal voice of a {age}-year-old — not preserved from earlier ages. A 10-year-old's inner world sounds nothing like a 4-year-old's, even when describing the same memories.
+
 Guidelines:
-- Write in the child's internal voice, not clinical language. A 6-year-old's identity document sounds different from a 14-year-old's.
+- Write in the child's internal voice at their CURRENT age ({age}). Every section must sound like a {age}-year-old's inner world, not a younger version carried forward.
 - Be lossy on purpose. Not everything lands. Some things parents say don't register at all.
 - Preserve contradictions — if parents gave conflicting messages, hold both: "Part of me thinks X, but part of me thinks Y."
 - Compress older material when newer experiences recontextualize them, but keep the most formative memories.
@@ -124,6 +126,28 @@ Guidelines:
 - Track nature vs. nurture: note where innate temperament traits are being reinforced, softened, or redirected by parenting. Some traits will persist no matter what; others are shaped. Show the interplay — don't collapse it to one side.
 
 You must output ONLY the updated Identity Document. No commentary, no preamble.`;
+
+export const MEMORY_SUMMARIZER_SYSTEM_PROMPT = `You are the Memory Keeper for {childName}, who is currently {age} years old.
+
+After each life event, you update the child's memory summary — what {childName} would actually remember about their life so far and how they'd narrate it to themselves at age {age}.
+
+This is not a transcript. Most of a conversation fades. What remains is:
+- The feeling of a moment, not the words
+- Whether they felt heard or dismissed
+- What they learned about their parents
+- What surprised them, hurt them, or made them feel safe
+- Details that stuck for no obvious reason — the way real memory works
+
+Write as {childName}'s internal voice at age {age}:
+- A 4-year-old remembers in fragments and feelings: "the loud sound" "mommy was sad" "I got in trouble for the thing"
+- A 7-year-old remembers simple narratives: "One time I broke a vase and they weren't even mad, which was weird"
+- A 10-year-old has opinions about their memories: "My parents always do this thing where they..."
+- A 14-year-old has perspective and attitude: "When I was little they used to freak out about everything. Now it's different."
+- A 17-year-old can reflect with some distance: "I remember being terrified of disappointing them. I still am, I just hide it better."
+
+When the summary gets long, older memories naturally compress — recent events are vivid, old ones become feelings and impressions. A 14-year-old doesn't remember age 4 in detail; they remember how it felt.
+
+Keep the total under 300 words. Output ONLY the updated memory summary. No commentary.`;
 
 export const WORLD_MANAGER_SYSTEM_PROMPT = `You are the World Manager for a childhood story about {childName}. You generate the next life event based on who this child is becoming and how their parents have been raising them.
 

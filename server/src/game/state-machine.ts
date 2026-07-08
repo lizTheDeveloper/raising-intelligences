@@ -12,7 +12,7 @@ export type GameAction =
   | { type: "START_SIDEBAR"; parent: Sender }
   | { type: "END_SIDEBAR" }
   | { type: "END_FAMILY_CHAT" }
-  | { type: "IDENTITY_UPDATED"; document: string }
+  | { type: "IDENTITY_UPDATED"; document: string; memorySummary?: string }
   | { type: "READY_UP"; player: Sender }
   | { type: "END_DEBRIEF" }
   | { type: "START_EPILOGUE"; epilogue: string }
@@ -33,6 +33,7 @@ export function createGame(childName: string, relationshipType = "co-parents"): 
     totalEvents: 10,
     identityDocument: "",
     identitySnapshots: [],
+    memorySummary: "",
     events: [],
     messages: [],
     parentMessageCount: 0,
@@ -189,6 +190,7 @@ function applyTransition(state: GameState, action: GameAction): GameState {
         ...state,
         phase: "debrief",
         identityDocument: action.document,
+        memorySummary: action.memorySummary ?? state.memorySummary,
         identitySnapshots: [
           ...state.identitySnapshots,
           {

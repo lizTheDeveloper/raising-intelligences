@@ -68,6 +68,103 @@ describe("buildKidContext", () => {
   });
 });
 
+describe("cross-event message isolation", () => {
+  const event1: GameEvent = {
+    eventNumber: 1,
+    age: 4,
+    description: "Your toddler broke a vase.",
+    setting: "Living room",
+    trigger: "Accident",
+  };
+  const event2: GameEvent = {
+    eventNumber: 2,
+    age: 10,
+    description: "Your child failed a test at school.",
+    setting: "Kitchen",
+    trigger: "Report card",
+  };
+
+  it("kid context only includes messages from the current event", () => {
+    let state = createGame("Luna");
+    state = transition(state, { type: "START_EVENT", event: event1 });
+    state = transition(state, { type: "PARENT_MESSAGE", sender: "parent1", content: "oh no the vase" });
+    state = transition(state, { type: "KID_MESSAGE", content: "me sowwy" });
+    state = transition(state, { type: "END_FAMILY_CHAT" });
+    state = transition(state, { type: "IDENTITY_UPDATED", document: "I break things." });
+    state = transition(state, { type: "END_DEBRIEF" });
+
+    state = transition(state, { type: "START_EVENT", event: event2 });
+    state = transition(state, { type: "PARENT_MESSAGE", sender: "parent1", content: "let's talk about the test" });
+    state = transition(state, { type: "KID_MESSAGE", content: "whatever, it was hard" });
+
+    const ctx = buildKidContext(state);
+    expect(ctx.messages).toHaveLength(2);
+    expect(ctx.messages[0].content).toContain("let's talk about the test");
+    expect(ctx.messages[1].content).toBe("whatever, it was hard");
+    expect(ctx.messages.some(m => m.content.includes("vase"))).toBe(false);
+    expect(ctx.messages.some(m => m.content.includes("sowwy"))).toBe(false);
+  });
+
+  it("psychologist context only includes messages from the current event", () => {
+    let state = createGame("Luna");
+    state = transition(state, { type: "START_EVENT", event: event1 });
+    state = transition(state, { type: "PARENT_MESSAGE", sender: "parent1", content: "oh no the vase" });
+    state = transition(state, { type: "KID_MESSAGE", content: "me sowwy" });
+    state = transition(state, { type: "END_FAMILY_CHAT" });
+    state = transition(state, { type: "IDENTITY_UPDATED", document: "I break things." });
+    state = transition(state, { type: "END_DEBRIEF" });
+
+    state = transition(state, { type: "START_EVENT", event: event2 });
+    state = transition(state, { type: "PARENT_MESSAGE", sender: "parent1", content: "let's talk about the test" });
+    state = transition(state, { type: "END_FAMILY_CHAT" });
+
+    const ctx = buildPsychologistContext(state);
+    expect(ctx.userMessage).toContain("let's talk about the test");
+    expect(ctx.userMessage).not.toContain("oh no the vase");
+    expect(ctx.userMessage).not.toContain("me sowwy");
+  });
+
+  it("psychologist system prompt includes the current age", () => {
+    let state = createGame("Luna");
+    state = transition(state, { type: "START_EVENT", event: event2 });
+    state = transition(state, { type: "END_FAMILY_CHAT" });
+
+    const ctx = buildPsychologistContext(state);
+    expect(ctx.system).toContain("currently 10 years old");
+    expect(ctx.system).not.toContain("{age}");
+  });
+
+  it("kid context includes both events recap and memory summary when available", () => {
+    let state = createGame("Luna");
+    state = transition(state, { type: "START_EVENT", event: event1 });
+    state = transition(state, { type: "END_FAMILY_CHAT" });
+    state = transition(state, { type: "IDENTITY_UPDATED", document: "I break things.", memorySummary: "I remember when I broke the vase. Mom wasn't even mad." });
+    state = transition(state, { type: "END_DEBRIEF" });
+    state = transition(state, { type: "START_EVENT", event: event2 });
+
+    const ctx = buildKidContext(state);
+    expect(ctx.system).toContain("What you remember");
+    expect(ctx.system).toContain("Your life so far:");
+    expect(ctx.system).toContain("Age 4: Accident");
+    expect(ctx.system).toContain("What sticks with you:");
+    expect(ctx.system).toContain("I remember when I broke the vase");
+  });
+
+  it("kid context shows events list without memory section when no summary exists", () => {
+    let state = createGame("Luna");
+    state = transition(state, { type: "START_EVENT", event: event1 });
+    state = transition(state, { type: "END_FAMILY_CHAT" });
+    state = transition(state, { type: "IDENTITY_UPDATED", document: "I break things." });
+    state = transition(state, { type: "END_DEBRIEF" });
+    state = transition(state, { type: "START_EVENT", event: event2 });
+
+    const ctx = buildKidContext(state);
+    expect(ctx.system).toContain("What you remember");
+    expect(ctx.system).toContain("Your life so far:");
+    expect(ctx.system).toContain("Age 4: Accident");
+  });
+});
+
 describe("buildPsychologistContext", () => {
   it("includes all messages from the event including private sidebars", () => {
     let state = createGame("Luna");

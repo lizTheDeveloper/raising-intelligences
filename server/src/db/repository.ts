@@ -88,6 +88,7 @@ function reconstructState(input: {
   currentEventNumber: number;
   totalEvents: number;
   identityDocument: string;
+  memorySummary?: string;
   events: GameEvent[];
   messages: Message[];
   identitySnapshots: IdentitySnapshot[];
@@ -124,6 +125,7 @@ function reconstructState(input: {
     totalEvents: input.totalEvents,
     identityDocument: input.identityDocument,
     identitySnapshots: input.identitySnapshots,
+    memorySummary: input.memorySummary ?? "",
     events: input.events,
     messages: input.messages,
     parentMessageCount,
@@ -140,9 +142,9 @@ export class PgGameRepository implements GameRepository {
     await this.db.query(
       `INSERT INTO games
          (id, child_name, child_gender, relationship_type, phase, current_event_number,
-          total_events, identity_document, personality_seed, parent_personalities,
+          total_events, identity_document, memory_summary, personality_seed, parent_personalities,
           sidebar_used_parent1, sidebar_used_parent2, sidebar_active, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, now())
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, now())
        ON CONFLICT (id) DO UPDATE SET
          child_name            = EXCLUDED.child_name,
          child_gender          = EXCLUDED.child_gender,
@@ -151,6 +153,7 @@ export class PgGameRepository implements GameRepository {
          current_event_number  = EXCLUDED.current_event_number,
          total_events          = EXCLUDED.total_events,
          identity_document     = EXCLUDED.identity_document,
+         memory_summary        = EXCLUDED.memory_summary,
          personality_seed      = EXCLUDED.personality_seed,
          parent_personalities  = EXCLUDED.parent_personalities,
          sidebar_used_parent1  = EXCLUDED.sidebar_used_parent1,
@@ -166,6 +169,7 @@ export class PgGameRepository implements GameRepository {
         state.currentEventNumber,
         state.totalEvents,
         state.identityDocument,
+        state.memorySummary,
         state.personalitySeed,
         JSON.stringify(state.parentPersonalities),
         state.sidebarUsed.parent1,
@@ -278,6 +282,7 @@ export class PgGameRepository implements GameRepository {
       current_event_number: number;
       total_events: number;
       identity_document: string;
+      memory_summary: string;
       personality_seed: string;
       parent_personalities: { parent1?: ParentPersonality; parent2?: ParentPersonality } | null;
       sidebar_used_parent1: boolean;
@@ -288,6 +293,7 @@ export class PgGameRepository implements GameRepository {
               COALESCE(child_gender, 'nonbinary') AS child_gender,
               relationship_type, phase,
               current_event_number, total_events, identity_document,
+              COALESCE(memory_summary, '') AS memory_summary,
               COALESCE(personality_seed, '') AS personality_seed,
               parent_personalities,
               COALESCE(sidebar_used_parent1, false) AS sidebar_used_parent1,
@@ -367,6 +373,7 @@ export class PgGameRepository implements GameRepository {
       currentEventNumber: game.current_event_number,
       totalEvents: game.total_events ?? DEFAULT_TOTAL_EVENTS,
       identityDocument: game.identity_document,
+      memorySummary: game.memory_summary,
       events,
       messages,
       identitySnapshots,
@@ -534,6 +541,7 @@ export class InMemoryGameRepository implements GameRepository {
       currentEventNumber: number;
       totalEvents: number;
       identityDocument: string;
+      memorySummary: string;
       sidebarUsedParent1: boolean;
       sidebarUsedParent2: boolean;
       sidebarActive: string | null;
@@ -561,6 +569,7 @@ export class InMemoryGameRepository implements GameRepository {
       currentEventNumber: state.currentEventNumber,
       totalEvents: state.totalEvents,
       identityDocument: state.identityDocument,
+      memorySummary: state.memorySummary,
       sidebarUsedParent1: state.sidebarUsed.parent1,
       sidebarUsedParent2: state.sidebarUsed.parent2,
       sidebarActive: state.sidebarActive ?? null,
@@ -632,6 +641,7 @@ export class InMemoryGameRepository implements GameRepository {
       currentEventNumber: game.currentEventNumber,
       totalEvents: game.totalEvents,
       identityDocument: game.identityDocument,
+      memorySummary: game.memorySummary,
       events: events.map((e) => ({ ...e })),
       messages: messages.map((m) => ({ ...m, visibleTo: [...m.visibleTo] })),
       identitySnapshots: identitySnapshots.map((s) => ({ ...s })),

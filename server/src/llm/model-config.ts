@@ -20,6 +20,7 @@ export type LLMRole =
   | "kid_adult_chat"
   | "world_manager"
   | "psychologist"
+  | "memory_summarizer"
   | "epilogue"
   | "report_card"
   | "album"
@@ -40,6 +41,7 @@ export const STANDARD_MODELS: ModelConfig = {
   // The identity update and keepsake artifacts are the quality-critical calls,
   // so the standard tier spends up to Qwen Max here (monetization-strategy.md §3.1).
   psychologist: "qwen/qwen3.7-max",
+  memory_summarizer: "qwen/qwen3.7-max",
   epilogue: "qwen/qwen3.7-max",
   report_card: "qwen/qwen3.7-max",
   album: "qwen/qwen3.7-max",
@@ -59,6 +61,7 @@ export const CEREBRAS_MODELS: ModelConfig = {
   kid_adult_chat:  "cerebras:gpt-oss-120b",
   world_manager:   "cerebras:gpt-oss-120b",
   psychologist:    "cerebras:gpt-oss-120b",
+  memory_summarizer: "cerebras:gpt-oss-120b",
   epilogue:        "cerebras:gpt-oss-120b",
   report_card:     "cerebras:gpt-oss-120b",
   album:           "cerebras:gpt-oss-120b",
@@ -73,6 +76,7 @@ export const PREMIUM_MODELS: ModelConfig = {
   kid_adult_chat: "qwen/qwen3.7-max",
   world_manager: "qwen/qwen3.7-max",
   psychologist: "google/gemini-2.5-flash",
+  memory_summarizer: "google/gemini-2.5-flash",
   epilogue: "anthropic/claude-opus-4-8",
   report_card: "anthropic/claude-opus-4-8",
   album: "anthropic/claude-opus-4-8",

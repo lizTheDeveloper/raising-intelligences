@@ -1,6 +1,7 @@
 import type { GameState, Message } from "../types.js";
 import {
   PSYCHOLOGIST_SYSTEM_PROMPT,
+  MEMORY_SUMMARIZER_SYSTEM_PROMPT,
   WORLD_MANAGER_SYSTEM_PROMPT,
   EPILOGUE_SYSTEM_PROMPT,
   REPORT_CARD_SYSTEM_PROMPT,
@@ -92,7 +93,9 @@ The solo parent dynamic has a specific texture that should come through in event
 
 function currentEventMessages(state: GameState): Message[] {
   return state.messages.filter(
-    (m) => m.chatType === "shared" || m.chatType === "private"
+    (m) =>
+      (m.chatType === "shared" || m.chatType === "private") &&
+      m.eventNumber === state.currentEventNumber
   );
 }
 
@@ -103,6 +106,16 @@ export function buildKidContext(state: GameState): {
   const identitySection = state.identityDocument
     ? `Your inner world (this is who you are — act from this, don't recite it):\n${state.identityDocument}`
     : "This is your earliest memory with your parents. You don't have much history yet — you're just a little kid.";
+
+  const priorEvents = state.events.filter(e => e.eventNumber !== state.currentEventNumber);
+  const eventsRecap = priorEvents.length > 0
+    ? priorEvents.map(e => `- Age ${e.age}: ${e.trigger}`).join("\n")
+    : "";
+  const memorySection = eventsRecap || state.memorySummary
+    ? `## What you remember\n\n`
+      + (eventsRecap ? `Your life so far:\n${eventsRecap}\n\n` : "")
+      + (state.memorySummary ? `What sticks with you:\n${state.memorySummary}` : "")
+    : "";
 
   const scenePacing = `## Scene pacing
 
@@ -126,7 +139,9 @@ Not every response should end the scene. Only end it when the moment has genuine
 
   const system = getAgeSpecificPrompt(String(state.currentEvent?.age ?? 4), { childName: state.childName })
     + (temperamentSection ? `\n\n${temperamentSection}` : "")
-    + `\n\n${scenePacing}\n\n${identitySection}\n\nThe current situation: ${state.currentEvent?.description ?? ""}`;
+    + `\n\n${scenePacing}\n\n${identitySection}`
+    + (memorySection ? `\n\n${memorySection}` : "")
+    + `\n\nThe current situation: ${state.currentEvent?.description ?? ""}`;
 
   const eventMessages = currentEventMessages(state);
   const isInSidebar = state.phase === "sidebar";
@@ -158,6 +173,7 @@ export function buildPsychologistContext(state: GameState): {
 } {
   const system = fillTemplate(PSYCHOLOGIST_SYSTEM_PROMPT, {
     childName: state.childName,
+    age: String(state.currentEvent?.age ?? 4),
   });
 
   const eventMessages = currentEventMessages(state);
@@ -185,6 +201,35 @@ export function buildPsychologistContext(state: GameState): {
     userMessage += `## Current Identity Document\n${state.identityDocument}\n\n`;
   }
   userMessage += `## Conversation\n${transcript}\n\nWrite the updated Identity Document for ${state.childName} after this event.`;
+
+  return { system, userMessage };
+}
+
+export function buildMemorySummarizerContext(state: GameState): {
+  system: string;
+  userMessage: string;
+} {
+  const age = String(state.currentEvent?.age ?? 4);
+  const system = fillTemplate(MEMORY_SUMMARIZER_SYSTEM_PROMPT, {
+    childName: state.childName,
+    age,
+  });
+
+  const eventMessages = currentEventMessages(state);
+  let transcript = `## What just happened (Age ${age})\n${state.currentEvent?.description ?? ""}\n\n`;
+  for (const m of eventMessages) {
+    transcript += `${senderLabel(m.sender)}: ${m.content}\n`;
+  }
+
+  let userMessage = "";
+  if (state.memorySummary) {
+    userMessage += `## Previous Memory Summary\n${state.memorySummary}\n\n`;
+  }
+  const priorEvents = state.events.filter(e => e.eventNumber !== state.currentEventNumber);
+  if (priorEvents.length > 0) {
+    userMessage += `## Life events so far\n${priorEvents.map(e => `- Age ${e.age}: ${e.description}`).join("\n")}\n\n`;
+  }
+  userMessage += `## This Event's Conversation\n${transcript}\n\nWrite the updated memory summary for ${state.childName} at age ${age}.`;
 
   return { system, userMessage };
 }

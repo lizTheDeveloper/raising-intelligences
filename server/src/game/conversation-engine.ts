@@ -4,6 +4,7 @@ import type { LLMRole } from "../llm/model-config.js";
 import {
   buildKidContext,
   buildPsychologistContext,
+  buildMemorySummarizerContext,
   buildWorldManagerContext,
 } from "./context-assembler.js";
 import type { LLMClient } from "../llm/client.js";
@@ -102,15 +103,29 @@ export class ConversationEngine {
 
   async endFamilyChat(state: GameState, onChunk?: (chunk: string) => void): Promise<GameState> {
     let next = transition(state, { type: "END_FAMILY_CHAT" });
-    const ctx = buildPsychologistContext(next);
-    const updatedDoc = await this.llm.completeResponse(
-      ctx.system,
-      ctx.userMessage,
-      undefined,
-      "psychologist",
-      onChunk
-    );
-    next = transition(next, { type: "IDENTITY_UPDATED", document: updatedDoc });
+    const psychCtx = buildPsychologistContext(next);
+    const memCtx = buildMemorySummarizerContext(next);
+
+    const [updatedDoc, memorySummary] = await Promise.all([
+      this.llm.completeResponse(
+        psychCtx.system,
+        psychCtx.userMessage,
+        undefined,
+        "psychologist",
+        onChunk
+      ),
+      this.llm.completeResponse(
+        memCtx.system,
+        memCtx.userMessage,
+        undefined,
+        "memory_summarizer"
+      ).catch((err) => {
+        console.error("Memory summarizer failed (non-fatal):", err);
+        return undefined;
+      }),
+    ]);
+
+    next = transition(next, { type: "IDENTITY_UPDATED", document: updatedDoc, memorySummary });
     return next;
   }
 

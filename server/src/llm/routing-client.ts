@@ -82,6 +82,15 @@ export class RoutingLLMClient implements LLMClient {
     }
   }
 
+  private needsEnglishEnforcement(slug: string): boolean {
+    return /qwen|deepseek/i.test(slug);
+  }
+
+  private enforceEnglish(system: string, slug: string): string {
+    if (!this.needsEnglishEnforcement(slug)) return system;
+    return system + "\n\nIMPORTANT: You MUST respond entirely in English. Never use Chinese or any other non-English language.";
+  }
+
   /** Parse "provider:model" → { provider, model }. Unprefixed → fallback. */
   private resolve(slug: string): { providerKey: string; model: string } {
     const colon = slug.indexOf(":");
@@ -117,15 +126,17 @@ export class RoutingLLMClient implements LLMClient {
     // 120s matches the completeResponse streaming path; Cerebras can be slow under load
     const STREAM_TIMEOUT_MS = Number(process.env.STREAM_TIMEOUT_MS ?? 120_000);
 
-    const openStream = async (c: OpenAI, m: string) =>
-      c.chat.completions.create({
+    const openStream = async (c: OpenAI, m: string) => {
+      const effectiveSystem = this.enforceEnglish(system, slug);
+      return c.chat.completions.create({
         model: m,
         max_tokens: 500,
         stream: true,
         stream_options: { include_usage: true },
         ...(this.seed !== undefined ? { seed: this.seed } : {}),
-        messages: [{ role: "system", content: system }, ...promptMessages],
+        messages: [{ role: "system", content: effectiveSystem }, ...promptMessages],
       }, { signal: AbortSignal.timeout(STREAM_TIMEOUT_MS) });
+    };
 
     // Before any chunks are emitted we can safely fall back to OpenRouter on 429.
     let stream: Awaited<ReturnType<typeof openStream>>;
@@ -168,8 +179,9 @@ export class RoutingLLMClient implements LLMClient {
     const { providerKey, model } = this.resolve(slug);
     const client = this.getClient(providerKey);
 
+    const effectiveSystem = this.enforceEnglish(system, slug);
     const msgs = [
-      { role: "system" as const, content: system },
+      { role: "system" as const, content: effectiveSystem },
       { role: "user" as const, content: userMessage },
     ];
 

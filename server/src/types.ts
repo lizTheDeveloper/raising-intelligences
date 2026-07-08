@@ -56,6 +56,7 @@ export interface GameState {
   totalEvents: number;
   identityDocument: string;
   identitySnapshots: { eventNumber: number; document: string }[];
+  memorySummary: string;
   events: GameEvent[];
   messages: Message[];
   parentMessageCount: number;
