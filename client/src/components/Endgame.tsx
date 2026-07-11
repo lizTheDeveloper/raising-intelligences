@@ -1,4 +1,5 @@
 import "../styles/endgame.css";
+import { SupportPrompt } from "./SupportPrompt";
 
 interface Props {
   epilogue: string;
@@ -10,6 +11,11 @@ export function Endgame({ epilogue, onContinue }: Props) {
     .split(/\n\s*\n/)
     .map((p) => p.trim())
     .filter(Boolean);
+
+  // The support prompt fades in once the last paragraph has landed, and the
+  // continue button waits a beat past that — reading the epilogue and the
+  // quiet ask both come before "what next".
+  const lastParaDelay = paragraphs.length * 420;
 
   return (
     <div className="endgame">
@@ -25,12 +31,13 @@ export function Endgame({ epilogue, onContinue }: Props) {
           </p>
         ))}
       </div>
+      <SupportPrompt sourcePage="epilogue" style={{ animationDelay: `${lastParaDelay + 500}ms` }} />
       <div className="endgame-actions">
         <button
           onClick={onContinue}
           className="btn"
           data-testid="btn-continue"
-          style={{ animationDelay: `${paragraphs.length * 420 + 400}ms` }}
+          style={{ animationDelay: `${lastParaDelay + 900}ms` }}
         >
           continue
         </button>

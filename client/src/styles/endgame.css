@@ -47,6 +47,37 @@
   animation: fadeIn 900ms ease both;
 }
 
+.support-prompt {
+  opacity: 0;
+  animation: fadeIn 900ms ease both;
+  text-align: center;
+  padding: 0 8px;
+}
+
+.support-line {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--fg-dim);
+  max-width: 46ch;
+  margin: 0 auto 8px;
+}
+
+.support-amounts {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+}
+
+.support-amount {
+  font-size: 12px;
+}
+
+.support-error {
+  font-size: 11px;
+  color: var(--fg-dim);
+  margin-top: 6px;
+}
+
 /* Report card — the most designed screen. */
 .report-card {
   display: flex;
