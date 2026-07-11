@@ -46,10 +46,10 @@ describe("ConversationEngine", () => {
     let state = createGame("Luna");
     state = await engine.startEvent(state);
     const result = await engine.handleParentMessage(state, "parent1", "It's okay.");
-    state = await engine.endFamilyChat(result.state);
-    expect(state.phase).toBe("debrief");
-    expect(state.identityDocument).toBe("Core beliefs: accidents are forgivable.");
-    expect(state.identitySnapshots).toHaveLength(1);
+    const { state: nextState } = await engine.endFamilyChat(result.state);
+    expect(nextState.phase).toBe("debrief");
+    expect(nextState.identityDocument).toBe("Core beliefs: accidents are forgivable.");
+    expect(nextState.identitySnapshots).toHaveLength(1);
   });
 
   it("getMessageCapRemaining returns correct count", async () => {
@@ -80,6 +80,7 @@ describe("ConversationEngine", () => {
       "kid_family_chat", // handleParentMessage during family chat
       "psychologist", // endFamilyChat (identity doc)
       "memory_summarizer", // endFamilyChat (memory summary, runs in parallel)
+      "safety_check", // endFamilyChat (grooming-pattern check, runs in parallel)
     ]);
   });
 

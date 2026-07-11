@@ -167,15 +167,13 @@ Not every response should end the scene. Only end it when the moment has genuine
   return { system, messages };
 }
 
-export function buildPsychologistContext(state: GameState): {
-  system: string;
-  userMessage: string;
-} {
-  const system = fillTemplate(PSYCHOLOGIST_SYSTEM_PROMPT, {
-    childName: state.childName,
-    age: String(state.currentEvent?.age ?? 4),
-  });
-
+/**
+ * Full transcript of the current scene/event, with markers for private
+ * sidebar sections. Shared by the Psychologist (identity update) and the
+ * grooming-pattern safety check (safety/pattern-detection.ts) — both need
+ * the same complete-scene view, just for different purposes.
+ */
+export function buildSceneTranscript(state: GameState): string {
   const eventMessages = currentEventMessages(state);
 
   let transcript = `## Event: ${state.currentEvent?.description}\nAge: ${state.currentEvent?.age}\n\n`;
@@ -195,6 +193,20 @@ export function buildPsychologistContext(state: GameState): {
     }
     transcript += `${senderLabel(m.sender)}: ${m.content}\n`;
   }
+
+  return transcript;
+}
+
+export function buildPsychologistContext(state: GameState): {
+  system: string;
+  userMessage: string;
+} {
+  const system = fillTemplate(PSYCHOLOGIST_SYSTEM_PROMPT, {
+    childName: state.childName,
+    age: String(state.currentEvent?.age ?? 4),
+  });
+
+  const transcript = buildSceneTranscript(state);
 
   let userMessage = "";
   if (state.identityDocument) {

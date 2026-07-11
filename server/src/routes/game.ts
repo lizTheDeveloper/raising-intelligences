@@ -12,7 +12,8 @@ import { generatePersonalitySeed, inferGender } from "../game/personality.js";
 import { withGameLock } from "../lib/game-lock.js";
 import { initSSE, sseChunk, sseDone, sseError, sseTerminated } from "../lib/sse.js";
 import { resolveGame as sharedResolveGame } from "../lib/resolve-game.js";
-import { moderateParentMessage } from "../safety/moderation.js";
+import { moderateParentMessage, applyModerationBlock } from "../safety/moderation.js";
+import { buildSceneTranscript } from "../game/context-assembler.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -154,7 +155,6 @@ export function createGameRoutes(
           if (!state) { sseError(res, "Game not found"); return; }
 
           const moderation = await moderateParentMessage({
-            llm: engine.llm,
             repo,
             games,
             state,
@@ -211,10 +211,26 @@ export function createGameRoutes(
           if (state.currentEventNumber < state.totalEvents) {
             prefetchedEvents.set(state.id, engine.prefetchNextEvent(state));
           }
-          const next = await engine.endFamilyChat(state);
-          games.set(next.id, next);
+          const { state: next, groomingCheck } = await engine.endFamilyChat(state);
           const latestSnapshot = next.identitySnapshots[next.identitySnapshots.length - 1];
           if (latestSnapshot) await repo.saveSnapshot(next.id, latestSnapshot);
+
+          if (groomingCheck.flagged) {
+            const lastParentMessage = [...next.messages].reverse().find((m) => m.sender !== "kid");
+            await applyModerationBlock({
+              repo,
+              games,
+              state: next,
+              sender: lastParentMessage?.sender ?? "parent1",
+              content: buildSceneTranscript(next),
+              reason: groomingCheck.reason,
+              ipAddress: req.ip ?? null,
+            });
+            sseTerminated(res);
+            return;
+          }
+
+          games.set(next.id, next);
           await repo.saveGame(next);
           sseDone(res, { phase: next.phase });
         } catch (err) {

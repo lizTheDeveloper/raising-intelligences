@@ -31,8 +31,9 @@ import {
   type ViewerState,
 } from "./protocol.js";
 import { generatePersonalitySeed } from "../game/personality.js";
-import { moderateParentMessage } from "../safety/moderation.js";
+import { moderateParentMessage, applyModerationBlock } from "../safety/moderation.js";
 import { getSocketIp } from "../lib/client-ip.js";
+import { buildSceneTranscript } from "../game/context-assembler.js";
 
 export interface SocketDeps {
   io: Server;
@@ -111,7 +112,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
    * serialization themselves (either by calling from within an existing
    * `withGameLock` block, or wrapping the call in one).
    */
-  async function endChat(gameId: string): Promise<void> {
+  async function endChat(gameId: string, ipAddress: string | null): Promise<void> {
     const state = games.get(gameId);
     const session = sessions.get(gameId);
     if (!state || !session) return;
@@ -119,10 +120,27 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     const emitChunk = (chunk: string) => {
       io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
     };
-    const next = await conversationEngine.endFamilyChat(state, emitChunk);
-    games.set(next.id, next);
+    const { state: next, groomingCheck } = await conversationEngine.endFamilyChat(state, emitChunk);
     const snap = next.identitySnapshots[next.identitySnapshots.length - 1];
     if (snap) await repo.saveSnapshot(next.id, snap);
+
+    if (groomingCheck.flagged) {
+      const lastParentMessage = [...next.messages].reverse().find((m) => m.sender !== "kid");
+      await applyModerationBlock({
+        repo,
+        games,
+        state: next,
+        sender: lastParentMessage?.sender ?? "parent1",
+        content: buildSceneTranscript(next),
+        reason: groomingCheck.reason,
+        ipAddress,
+      });
+      io.to(gameId).emit(E.ERROR, { error: "This session has ended." });
+      broadcastState(gameId);
+      return;
+    }
+
+    games.set(next.id, next);
     await repo.saveGame(next);
     sessions.set(gameId, resetReady(session));
     io.to(gameId).emit(E.DOC_DONE, { documentType: "identity" });
@@ -316,7 +334,6 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         }
 
         const moderation = await moderateParentMessage({
-          llm: conversationEngine.llm,
           repo,
           games,
           state,
@@ -372,7 +389,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         // since the endChat phase guard returns early, leaving no recovery path.
         if (!inSidebar && (sceneEnded || result.state.parentMessageCount >= PARENT_MESSAGE_CAP)) {
           io.to(gameId).emit(E.SCENE_ENDED, {});
-          await endChat(gameId);
+          await endChat(gameId, getSocketIp(socket));
         }
       }).catch((err) => fail(String(err)));
     });
@@ -409,7 +426,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       if (!gameId) return fail("Not in a game");
 
       lock(gameId, async () => {
-        await endChat(gameId);
+        await endChat(gameId, getSocketIp(socket));
       }).catch((err) => fail(String(err)));
     });
 

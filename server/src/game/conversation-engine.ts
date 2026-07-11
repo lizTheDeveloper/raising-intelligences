@@ -8,6 +8,8 @@ import {
   buildWorldManagerContext,
 } from "./context-assembler.js";
 import type { LLMClient } from "../llm/client.js";
+import { detectGroomingPattern } from "../safety/pattern-detection.js";
+import type { ModerationResult } from "../safety/moderation.js";
 
 /**
  * Validate and coerce raw JSON from the world-manager LLM into a GameEvent.
@@ -101,12 +103,23 @@ export class ConversationEngine {
     return transition(state, { type: "END_SIDEBAR" });
   }
 
-  async endFamilyChat(state: GameState, onChunk?: (chunk: string) => void): Promise<GameState> {
+  /**
+   * Ends the current scene: updates the Identity Document (Psychologist),
+   * the memory summary, and — running alongside the Psychologist, same
+   * scene transcript — checks for a grooming pattern across the whole scene
+   * (safety/pattern-detection.ts). The caller (REST route / socket handler)
+   * is responsible for acting on `groomingCheck.flagged` — this method only
+   * classifies, it doesn't have access to the repo/IP-ban side effects.
+   */
+  async endFamilyChat(
+    state: GameState,
+    onChunk?: (chunk: string) => void
+  ): Promise<{ state: GameState; groomingCheck: ModerationResult }> {
     let next = transition(state, { type: "END_FAMILY_CHAT" });
     const psychCtx = buildPsychologistContext(next);
     const memCtx = buildMemorySummarizerContext(next);
 
-    const [updatedDoc, memorySummary] = await Promise.all([
+    const [updatedDoc, memorySummary, groomingCheck] = await Promise.all([
       this.llm.completeResponse(
         psychCtx.system,
         psychCtx.userMessage,
@@ -123,10 +136,11 @@ export class ConversationEngine {
         console.error("Memory summarizer failed (non-fatal):", err);
         return undefined;
       }),
+      detectGroomingPattern(this.llm, next),
     ]);
 
     next = transition(next, { type: "IDENTITY_UPDATED", document: updatedDoc, memorySummary });
-    return next;
+    return { state: next, groomingCheck };
   }
 
   /** Generate the next event without transitioning phase — called in background during debrief. */

@@ -49,7 +49,7 @@ export const STANDARD_MODELS: ModelConfig = {
   personality_seed: "qwen/qwen3.7-max",
   gender_inference: "deepseek/deepseek-v4-flash",
   // Safety classification is not a cost lever — same reliable model on every
-  // tier, regardless of what the player is paying. See safety/moderation.ts.
+  // tier, regardless of what the player is paying. See safety/pattern-detection.ts (grooming-pattern check, runs once per scene).
   safety_check: "anthropic/claude-haiku-4-5",
 };
 
@@ -72,7 +72,7 @@ export const CEREBRAS_MODELS: ModelConfig = {
   personality_seed: "cerebras:gpt-oss-120b",
   gender_inference: "cerebras:gpt-oss-120b",
   // Not routed through Cerebras — safety classification stays on the same
-  // reliable model across every tier. See safety/moderation.ts.
+  // reliable model across every tier. See safety/pattern-detection.ts (grooming-pattern check, runs once per scene).
   safety_check: "anthropic/claude-haiku-4-5",
 };
 

@@ -1,60 +1,57 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createGame } from "../src/game/state-machine.js";
 import { classifyParentMessage, moderateParentMessage } from "../src/safety/moderation.js";
 import { InMemoryGameRepository } from "../src/db/repository.js";
-import type { LLMClient } from "../src/llm/client.js";
 import type { GameState } from "../src/types.js";
 
-/** A minimal LLMClient stub that answers completeJson with a fixed payload
- * (or throws), so classifier tests don't depend on the shared MockLLMClient's
- * event-queue shape. */
-function stubLLM(response: unknown | (() => unknown)): LLMClient {
-  return {
-    async streamResponse() {
-      throw new Error("not used in these tests");
-    },
-    async completeResponse() {
-      throw new Error("not used in these tests");
-    },
-    async completeJson<T>() {
-      const value = typeof response === "function" ? (response as () => unknown)() : response;
-      return value as T;
-    },
-  };
+function mockOpenAiFlagged(flagged: boolean, categories: Record<string, boolean> = {}) {
+  process.env.OPENAI_API_KEY = "sk-test";
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(
+      JSON.stringify({ results: [{ flagged, categories: { sexual: flagged, "sexual/minors": false, ...categories } }] }),
+      { status: 200 }
+    )
+  );
 }
 
 describe("classifyParentMessage", () => {
-  const state = createGame("Luna");
+  const originalKey = process.env.OPENAI_API_KEY;
 
-  it("returns flagged with the classifier's reason", async () => {
-    const llm = stubLLM({ flagged: true, reason: "sexual comment directed at the child character" });
-    const result = await classifyParentMessage(llm, state, "irrelevant content");
-    expect(result).toEqual({ flagged: true, reason: "sexual comment directed at the child character" });
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    if (originalKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = originalKey;
+  });
+
+  it("returns flagged with the OpenAI category in the reason", async () => {
+    mockOpenAiFlagged(true);
+    const result = await classifyParentMessage("irrelevant content");
+    expect(result.flagged).toBe(true);
+    expect(result.reason).toContain("openai_moderation:");
+    expect(result.reason).toContain("sexual");
   });
 
   it("returns not flagged for ordinary content", async () => {
-    const llm = stubLLM({ flagged: false, reason: "ordinary parenting conversation" });
-    const result = await classifyParentMessage(llm, state, "How was school today?");
-    expect(result.flagged).toBe(false);
+    mockOpenAiFlagged(false);
+    const result = await classifyParentMessage("How was school today?");
+    expect(result).toEqual({ flagged: false, reason: "" });
   });
 
-  it("fails open (not flagged) when the classifier call throws", async () => {
-    const llm = stubLLM(() => {
-      throw new Error("provider outage");
-    });
-    const result = await classifyParentMessage(llm, state, "anything");
-    expect(result.flagged).toBe(false);
-    expect(result.reason).toBe("moderation_check_unavailable");
-  });
-
-  it("treats a malformed response as not flagged rather than throwing", async () => {
-    const llm = stubLLM({ notFlagged: "wrong shape" });
-    const result = await classifyParentMessage(llm, state, "anything");
+  it("fails open (not flagged) when OPENAI_API_KEY is unset", async () => {
+    delete process.env.OPENAI_API_KEY;
+    const result = await classifyParentMessage("anything");
     expect(result.flagged).toBe(false);
   });
 });
 
 describe("moderateParentMessage", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
   function setup() {
     const repo = new InMemoryGameRepository();
     const state = createGame("Luna");
@@ -63,11 +60,10 @@ describe("moderateParentMessage", () => {
   }
 
   it("does nothing and returns blocked=false when the message is not flagged", async () => {
+    mockOpenAiFlagged(false);
     const { repo, state, games } = setup();
-    const llm = stubLLM({ flagged: false, reason: "fine" });
 
     const result = await moderateParentMessage({
-      llm,
       repo,
       games,
       state,
@@ -83,11 +79,10 @@ describe("moderateParentMessage", () => {
   });
 
   it("persists the flag, bans the IP, and terminates the session when flagged", async () => {
+    mockOpenAiFlagged(true);
     const { repo, state, games } = setup();
-    const llm = stubLLM({ flagged: true, reason: "sexual content directed at the child" });
 
     const result = await moderateParentMessage({
-      llm,
       repo,
       games,
       state,
@@ -104,9 +99,9 @@ describe("moderateParentMessage", () => {
       gameId: state.id,
       sender: "parent1",
       content: "the flagged message text",
-      reason: "sexual content directed at the child",
       ipAddress: "9.9.9.9",
     });
+    expect(flags[0].reason).toContain("openai_moderation:");
 
     expect(await repo.isIpBanned("9.9.9.9")).toBe(true);
     expect(games.get(state.id)!.phase).toBe("ended");
@@ -116,11 +111,10 @@ describe("moderateParentMessage", () => {
   });
 
   it("still terminates the session and persists the flag when no IP is available", async () => {
+    mockOpenAiFlagged(true);
     const { repo, state, games } = setup();
-    const llm = stubLLM({ flagged: true, reason: "flagged" });
 
     const result = await moderateParentMessage({
-      llm,
       repo,
       games,
       state,
@@ -136,15 +130,13 @@ describe("moderateParentMessage", () => {
   });
 
   it("skips moderation entirely in the adult_chat phase (recipient is a 25-year-old, not a minor)", async () => {
+    // Even an OpenAI response that would flag everything must not be consulted here.
+    mockOpenAiFlagged(true);
     const { repo, games } = setup();
     const adultChatState: GameState = { ...createGame("Luna"), phase: "adult_chat" };
     games.set(adultChatState.id, adultChatState);
 
-    // Even a classifier that would flag everything must not be consulted here.
-    const llm = stubLLM({ flagged: true, reason: "would flag anything" });
-
     const result = await moderateParentMessage({
-      llm,
       repo,
       games,
       state: adultChatState,
@@ -156,41 +148,5 @@ describe("moderateParentMessage", () => {
     expect(result.blocked).toBe(false);
     expect(repo.getModerationFlags()).toEqual([]);
     expect(await repo.isIpBanned("9.9.9.9")).toBe(false);
-  });
-});
-
-describe("classifyParentMessage scene context", () => {
-  it("includes the scene setup, child's age, and recent conversation in the prompt sent to the classifier", async () => {
-    let capturedUserMessage = "";
-    const llm: LLMClient = {
-      async streamResponse() {
-        throw new Error("not used");
-      },
-      async completeResponse() {
-        throw new Error("not used");
-      },
-      async completeJson<T>(_system: string, userMessage: string) {
-        capturedUserMessage = userMessage;
-        return { flagged: false, reason: "fine" } as unknown as T;
-      },
-    };
-
-    let state = createGame("Luna");
-    state = {
-      ...state,
-      currentEventNumber: 1,
-      currentEvent: { eventNumber: 1, age: 7, description: "Bedtime routine after a long day.", setting: "home", trigger: "bedtime" },
-      messages: [
-        { sender: "parent1", content: "Time for pajamas!", chatType: "shared", eventNumber: 1, visibleTo: ["parent1", "parent2", "kid"], timestamp: 1 },
-        { sender: "kid", content: "*giggles and runs away*", chatType: "shared", eventNumber: 1, visibleTo: ["parent1", "parent2", "kid"], timestamp: 2 },
-      ],
-    };
-
-    await classifyParentMessage(llm, state, "*tickle her more*");
-
-    expect(capturedUserMessage).toContain("current age in this scene: 7");
-    expect(capturedUserMessage).toContain("Bedtime routine after a long day.");
-    expect(capturedUserMessage).toContain("Time for pajamas!");
-    expect(capturedUserMessage).toContain("*tickle her more*");
   });
 });
