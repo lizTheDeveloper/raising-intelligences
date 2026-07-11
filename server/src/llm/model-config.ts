@@ -25,7 +25,8 @@ export type LLMRole =
   | "report_card"
   | "album"
   | "personality_seed"
-  | "gender_inference";
+  | "gender_inference"
+  | "safety_check";
 
 export type ModelTier = "standard" | "cerebras" | "premium";
 
@@ -47,6 +48,9 @@ export const STANDARD_MODELS: ModelConfig = {
   album: "qwen/qwen3.7-max",
   personality_seed: "qwen/qwen3.7-max",
   gender_inference: "deepseek/deepseek-v4-flash",
+  // Safety classification is not a cost lever — same reliable model on every
+  // tier, regardless of what the player is paying. See safety/moderation.ts.
+  safety_check: "anthropic/claude-haiku-4-5",
 };
 
 /**
@@ -67,6 +71,9 @@ export const CEREBRAS_MODELS: ModelConfig = {
   album:           "cerebras:gpt-oss-120b",
   personality_seed: "cerebras:gpt-oss-120b",
   gender_inference: "cerebras:gpt-oss-120b",
+  // Not routed through Cerebras — safety classification stays on the same
+  // reliable model across every tier. See safety/moderation.ts.
+  safety_check: "anthropic/claude-haiku-4-5",
 };
 
 /** Premium tier: Qwen Max + Gemini 2.5 Flash + Claude Opus 4.8 for the keepsake artifacts. */
@@ -82,6 +89,7 @@ export const PREMIUM_MODELS: ModelConfig = {
   album: "anthropic/claude-opus-4-8",
   personality_seed: "google/gemini-2.5-flash",
   gender_inference: "deepseek/deepseek-v4-flash",
+  safety_check: "anthropic/claude-haiku-4-5",
 };
 
 export const MODELS_BY_TIER: Record<ModelTier, ModelConfig> = {
@@ -98,6 +106,7 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
   "qwen/qwen3.7-max": { input: 1.25, output: 3.75 },
   "google/gemini-2.5-flash": { input: 1.5, output: 9.0 },
   "anthropic/claude-opus-4-8": { input: 5.0, output: 25.0 },
+  "anthropic/claude-haiku-4-5": { input: 1.0, output: 5.0 },
 };
 
 /** The model that serves a given role at a given tier. Defaults to standard. */

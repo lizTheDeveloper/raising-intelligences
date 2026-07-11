@@ -268,6 +268,11 @@ export function useGame() {
               // can type again. The stream may not have physically closed yet
               // (finally will also clear this), but there's nothing left to receive.
               setIsStreaming(false);
+            } else if (data.type === "terminated") {
+              setPhase("ended");
+              setTrackedError("This session has ended.", "moderation");
+              setStreamingMessage("");
+              setIsStreaming(false);
             } else if (data.type === "error") {
               throw new Error((data.error as string) ?? "Stream error");
             }

@@ -68,6 +68,18 @@ export interface GameRepository {
   linkGameToPartner(userId: string, gameId: string, partnerId: string): Promise<void>;
   loadAlbum(userId: string): Promise<{ partners: Array<AlbumPartner & { kids: Array<{ gameId: string; childName: string; createdAt: number }> }>; unlinkedKids: Array<{ gameId: string; childName: string; createdAt: number }> }>;
   loadScrapbook(userId: string, gameId: string): Promise<{ childName: string; partnerName: string | null; partnerType: string | null; relationshipSummary: string | null; moments: AlbumMoment[]; epilogue: string; reportCard: string } | null>;
+
+  // Safety / moderation
+  /** Persists a flagged parent message in full, for review — see safety/moderation.ts. */
+  saveModerationFlag(record: {
+    gameId: string;
+    sender: Sender;
+    content: string;
+    reason: string;
+    ipAddress: string | null;
+  }): Promise<void>;
+  banIp(ipAddress: string, reason: string): Promise<void>;
+  isIpBanned(ipAddress: string): Promise<boolean>;
 }
 
 const DEFAULT_TOTAL_EVENTS = 10;
@@ -521,6 +533,33 @@ export class PgGameRepository implements GameRepository {
       })),
     };
   }
+
+  async saveModerationFlag(record: {
+    gameId: string;
+    sender: Sender;
+    content: string;
+    reason: string;
+    ipAddress: string | null;
+  }): Promise<void> {
+    await this.db.query(
+      `INSERT INTO moderation_flags (game_id, sender, content, reason, ip_address)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [record.gameId, record.sender, record.content, record.reason, record.ipAddress]
+    );
+  }
+
+  async banIp(ipAddress: string, reason: string): Promise<void> {
+    await this.db.query(
+      `INSERT INTO banned_ips (ip_address, reason) VALUES ($1, $2)
+       ON CONFLICT (ip_address) DO NOTHING`,
+      [ipAddress, reason]
+    );
+  }
+
+  async isIpBanned(ipAddress: string): Promise<boolean> {
+    const res = await this.db.query("SELECT 1 FROM banned_ips WHERE ip_address = $1", [ipAddress]);
+    return res.rows.length > 0;
+  }
 }
 
 /**
@@ -556,6 +595,8 @@ export class InMemoryGameRepository implements GameRepository {
   private albumMoments = new Map<string, Array<AlbumMoment>>();
   private userGames = new Map<string, { userId: string; gameId: string; childName: string; partnerId: string | null; createdAt: number }>();
   private partnerLinks = new Map<string, string>();
+  private moderationFlags: Array<{ gameId: string; sender: Sender; content: string; reason: string; ipAddress: string | null }> = [];
+  private bannedIps = new Set<string>();
 
   async saveGame(state: GameState): Promise<void> {
     this.games.set(state.id, {
@@ -789,5 +830,28 @@ export class InMemoryGameRepository implements GameRepository {
       epilogue: endgame?.epilogue ?? "",
       reportCard: endgame?.reportCard ?? "",
     };
+  }
+
+  async saveModerationFlag(record: {
+    gameId: string;
+    sender: Sender;
+    content: string;
+    reason: string;
+    ipAddress: string | null;
+  }): Promise<void> {
+    this.moderationFlags.push({ ...record });
+  }
+
+  async banIp(ipAddress: string, _reason: string): Promise<void> {
+    this.bannedIps.add(ipAddress);
+  }
+
+  async isIpBanned(ipAddress: string): Promise<boolean> {
+    return this.bannedIps.has(ipAddress);
+  }
+
+  /** Test-only accessor — inspect persisted flags without a DB. */
+  getModerationFlags(): Array<{ gameId: string; sender: Sender; content: string; reason: string; ipAddress: string | null }> {
+    return [...this.moderationFlags];
   }
 }

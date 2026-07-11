@@ -31,6 +31,8 @@ import {
   type ViewerState,
 } from "./protocol.js";
 import { generatePersonalitySeed } from "../game/personality.js";
+import { moderateParentMessage } from "../safety/moderation.js";
+import { getSocketIp } from "../lib/client-ip.js";
 
 export interface SocketDeps {
   io: Server;
@@ -310,6 +312,21 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
         if (state.phase === "sidebar" && state.sidebarActive !== slot) {
           fail("The other parent is in a private conversation");
+          return;
+        }
+
+        const moderation = await moderateParentMessage({
+          llm: conversationEngine.llm,
+          repo,
+          games,
+          state,
+          sender: slot,
+          content: payload.content.trim(),
+          ipAddress: getSocketIp(socket),
+        });
+        if (moderation.blocked) {
+          fail("This session has ended.");
+          broadcastState(gameId);
           return;
         }
 

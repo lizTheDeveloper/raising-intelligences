@@ -10,8 +10,9 @@ import { generateFirstPortrait, generateNextPortrait, PORTRAITS_DIR } from "../p
 import { logger } from "../logger.js";
 import { generatePersonalitySeed, inferGender } from "../game/personality.js";
 import { withGameLock } from "../lib/game-lock.js";
-import { initSSE, sseChunk, sseDone, sseError } from "../lib/sse.js";
+import { initSSE, sseChunk, sseDone, sseError, sseTerminated } from "../lib/sse.js";
 import { resolveGame as sharedResolveGame } from "../lib/resolve-game.js";
+import { moderateParentMessage } from "../safety/moderation.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -151,6 +152,21 @@ export function createGameRoutes(
           // snapshot while this request was queued.
           const state = await resolveGame(req.params.id as string);
           if (!state) { sseError(res, "Game not found"); return; }
+
+          const moderation = await moderateParentMessage({
+            llm: engine.llm,
+            repo,
+            games,
+            state,
+            sender,
+            content,
+            ipAddress: req.ip ?? null,
+          });
+          if (moderation.blocked) {
+            sseTerminated(res);
+            return;
+          }
+
           const result = await engine.handleParentMessage(state, sender, content, (chunk) => {
             sseChunk(res, chunk);
           });

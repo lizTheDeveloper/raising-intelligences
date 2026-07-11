@@ -23,3 +23,12 @@ export function sseError(res: Response, error: string): void {
     res.end();
   }
 }
+
+/** A moderation-blocked message ended the session. Deliberately generic —
+ * no explanation of why, to avoid coaching evasion. */
+export function sseTerminated(res: Response): void {
+  if (!res.writableEnded) {
+    res.write(`data: ${JSON.stringify({ type: "terminated" })}\n\n`);
+    res.end();
+  }
+}
