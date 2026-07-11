@@ -91,7 +91,7 @@ The solo parent dynamic has a specific texture that should come through in event
   return `The parents' relationship: ${relationshipType}. This shapes the family dynamic and the kinds of events that make sense. Two romantic partners raising a child together will face different situations than two friends, siblings, or ex-partners co-parenting.`;
 }
 
-function currentEventMessages(state: GameState): Message[] {
+export function currentEventMessages(state: GameState): Message[] {
   return state.messages.filter(
     (m) =>
       (m.chatType === "shared" || m.chatType === "private") &&
