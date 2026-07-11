@@ -17,7 +17,11 @@ export type GameAction =
   | { type: "END_DEBRIEF" }
   | { type: "START_EPILOGUE"; epilogue: string }
   | { type: "START_ADULT_CHAT"; event: GameEvent }
-  | { type: "SHOW_REPORT_CARD"; reportCard: string };
+  | { type: "SHOW_REPORT_CARD"; reportCard: string }
+  | { type: "TRAJECTORY_CHECKED"; concerning: boolean; guidanceSeed: string };
+
+/** Consecutive "notable"/"significant" scenes before guidance queues for the World Manager. */
+const CONCERNING_STREAK_THRESHOLD = 2;
 
 export function createGame(childName: string, relationshipType = "co-parents"): GameState {
   return {
@@ -39,6 +43,8 @@ export function createGame(childName: string, relationshipType = "co-parents"): 
     parentMessageCount: 0,
     sidebarUsed: { parent1: false, parent2: false },
     sidebarActive: null,
+    concerningStreak: 0,
+    pendingGuidance: null,
     lastActivityAt: Date.now(),
   };
 }
@@ -84,6 +90,8 @@ export function canTransition(state: GameState, action: GameAction): boolean {
       return state.phase === "epilogue" || state.phase === "event_intro";
     case "SHOW_REPORT_CARD":
       return state.phase === "event_intro" || state.phase === "epilogue";
+    case "TRAJECTORY_CHECKED":
+      return state.phase === "debrief";
     default:
       return false;
   }
@@ -104,6 +112,7 @@ function applyTransition(state: GameState, action: GameAction): GameState {
         currentEvent: action.event,
         currentEventNumber: state.currentEventNumber + 1,
         events: [...state.events, action.event],
+        pendingGuidance: null,
       };
 
     case "BEGIN_FAMILY_CHAT":
@@ -119,6 +128,7 @@ function applyTransition(state: GameState, action: GameAction): GameState {
         currentEvent: action.event,
         currentEventNumber: state.currentEventNumber + 1,
         events: [...state.events, action.event],
+        pendingGuidance: null,
       };
 
     case "PARENT_MESSAGE": {
@@ -229,6 +239,17 @@ function applyTransition(state: GameState, action: GameAction): GameState {
         ...state,
         phase: "report_card",
       };
+
+    case "TRAJECTORY_CHECKED": {
+      if (!action.concerning) {
+        return { ...state, concerningStreak: 0 };
+      }
+      const streak = state.concerningStreak + 1;
+      if (streak >= CONCERNING_STREAK_THRESHOLD) {
+        return { ...state, concerningStreak: 0, pendingGuidance: action.guidanceSeed };
+      }
+      return { ...state, concerningStreak: streak };
+    }
 
     default:
       return state;

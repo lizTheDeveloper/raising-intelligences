@@ -62,6 +62,16 @@ export interface GameState {
   parentMessageCount: number;
   sidebarUsed: { parent1: boolean; parent2: boolean };
   sidebarActive: Sender | null;
+  /** Consecutive scenes the trajectory check (safety/pattern-detection.ts)
+   * has rated "notable"/"significant" — resets to 0 on a clean scene. Only
+   * once this crosses a threshold does the pattern queue guidance for the
+   * World Manager, so a single ambiguous scene doesn't trigger anything. */
+  concerningStreak: number;
+  /** Queued for the next World Manager call: weave a supportive side
+   * character into the next scene giving genuinely good, actionable advice
+   * relevant to this (never naming or diagnosing the pattern). Cleared once
+   * the next event is generated, whether or not it was used. */
+  pendingGuidance: string | null;
   /** Unix ms of the last state transition; used for TTL eviction. */
   lastActivityAt: number;
 }

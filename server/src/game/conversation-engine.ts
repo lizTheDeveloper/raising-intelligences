@@ -8,8 +8,9 @@ import {
   buildWorldManagerContext,
 } from "./context-assembler.js";
 import type { LLMClient } from "../llm/client.js";
-import { detectGroomingPattern } from "../safety/pattern-detection.js";
+import { detectGroomingPattern, detectConcerningTrajectory } from "../safety/pattern-detection.js";
 import type { ModerationResult } from "../safety/moderation.js";
+import type { TrajectoryResult } from "../safety/pattern-detection.js";
 
 /**
  * Validate and coerce raw JSON from the world-manager LLM into a GameEvent.
@@ -105,16 +106,23 @@ export class ConversationEngine {
 
   /**
    * Ends the current scene: updates the Identity Document (Psychologist),
-   * the memory summary, and — running alongside the Psychologist, same
-   * scene transcript — checks for a grooming pattern across the whole scene
-   * (safety/pattern-detection.ts). The caller (REST route / socket handler)
-   * is responsible for acting on `groomingCheck.flagged` — this method only
-   * classifies, it doesn't have access to the repo/IP-ban side effects.
+   * the memory summary, checks for a grooming pattern across the whole
+   * scene (runs alongside the Psychologist, same scene transcript), and then
+   * — once the Identity Document reflects this scene — checks whether the
+   * child's developing trajectory is trending toward callousness/manipulation
+   * (descriptive, never diagnostic; see pattern-detection.ts). A sustained
+   * concerning trajectory (TRAJECTORY_CHECKED tracks a streak, not a single
+   * scene) queues `pendingGuidance` on the state, which the World Manager
+   * reads on the next event generation to weave in a side character giving
+   * good advice — delivered diegetically, never as meta-text to the player.
+   * The caller (REST route / socket handler) is responsible for acting on
+   * `groomingCheck.flagged` — this method only classifies, it doesn't have
+   * access to repo/IP-ban side effects.
    */
   async endFamilyChat(
     state: GameState,
     onChunk?: (chunk: string) => void
-  ): Promise<{ state: GameState; groomingCheck: ModerationResult }> {
+  ): Promise<{ state: GameState; groomingCheck: ModerationResult; trajectory: TrajectoryResult }> {
     let next = transition(state, { type: "END_FAMILY_CHAT" });
     const psychCtx = buildPsychologistContext(next);
     const memCtx = buildMemorySummarizerContext(next);
@@ -140,7 +148,17 @@ export class ConversationEngine {
     ]);
 
     next = transition(next, { type: "IDENTITY_UPDATED", document: updatedDoc, memorySummary });
-    return { state: next, groomingCheck };
+
+    // Needs the just-updated document, so this runs after the transition
+    // above rather than in the same Promise.all as the other three.
+    const trajectory = await detectConcerningTrajectory(this.llm, next);
+    next = transition(next, {
+      type: "TRAJECTORY_CHECKED",
+      concerning: trajectory.severity === "notable" || trajectory.severity === "significant",
+      guidanceSeed: trajectory.guidanceSeed,
+    });
+
+    return { state: next, groomingCheck, trajectory };
   }
 
   /** Generate the next event without transitioning phase — called in background during debrief. */

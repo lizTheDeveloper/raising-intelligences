@@ -143,6 +143,8 @@ function reconstructState(input: {
     parentMessageCount,
     sidebarUsed: input.sidebarUsed,
     sidebarActive: (input.sidebarActive as GameState["sidebarActive"]) ?? null,
+    concerningStreak: 0,
+    pendingGuidance: null,
     lastActivityAt: Date.now(),
   };
 }

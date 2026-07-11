@@ -295,6 +295,9 @@ export function buildWorldManagerContext(state: GameState): {
   if (state.identityDocument) {
     userMessage += `\n\nCurrent Identity Document:\n${state.identityDocument}`;
   }
+  if (state.pendingGuidance) {
+    userMessage += `\n\nWeave a supportive side character into this scene — a teacher, friend, relative, or other recurring figure appropriate to this family's situation (vary who it is from scene to scene; don't reuse the same one every time). Have them naturally offer the parent genuinely good, specific, actionable advice: ${state.pendingGuidance}. The character must never name, label, or diagnose any pattern in the child — they should just help, the way a good mentor figure would, without the story ever explaining why it matters right now.`;
+  }
 
   return { system, userMessage };
 }

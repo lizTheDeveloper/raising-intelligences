@@ -81,6 +81,7 @@ describe("ConversationEngine", () => {
       "psychologist", // endFamilyChat (identity doc)
       "memory_summarizer", // endFamilyChat (memory summary, runs in parallel)
       "safety_check", // endFamilyChat (grooming-pattern check, runs in parallel)
+      "safety_check", // endFamilyChat (trajectory-hint check, runs after the identity doc updates)
     ]);
   });
 
