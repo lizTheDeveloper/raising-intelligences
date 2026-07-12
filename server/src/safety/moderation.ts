@@ -41,14 +41,25 @@ export async function applyModerationBlock(params: {
   content: string;
   reason: string;
   ipAddress: string | null;
+  /**
+   * Whether this trigger permanently bans the IP. The per-message OpenAI
+   * check (narrow, purpose-built category classifier, low false-positive
+   * rate) bans by default. The scene-level grooming-PATTERN check is a
+   * single LLM judgment call over a whole scene + the child's Identity
+   * Document with no appeal path -- it still ends the session and logs
+   * the flag for human review, but must not by itself impose a permanent,
+   * unappealable IP ban. Defaults to true for backward compatibility with
+   * the per-message caller.
+   */
+  banIp?: boolean;
 }): Promise<void> {
-  const { repo, games, state, sender, content, reason, ipAddress } = params;
+  const { repo, games, state, sender, content, reason, ipAddress, banIp = true } = params;
 
-  logger.error("moderation_flag", { gameId: state.id, sender, ipAddress, reason });
+  logger.error("moderation_flag", { gameId: state.id, sender, ipAddress, reason, banIp });
 
   await repo.saveModerationFlag({ gameId: state.id, sender, content, reason, ipAddress });
 
-  if (ipAddress) {
+  if (ipAddress && banIp) {
     await repo.banIp(ipAddress, `moderation_flag:${state.id}`);
   }
 

@@ -134,6 +134,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         content: buildSceneTranscript(next),
         reason: groomingCheck.reason,
         ipAddress,
+        banIp: false, // scene-level pattern check: flag + end session, don't permanently ban -- see moderation.ts
       });
       io.to(gameId).emit(E.ERROR, { error: "This session has ended." });
       broadcastState(gameId);
