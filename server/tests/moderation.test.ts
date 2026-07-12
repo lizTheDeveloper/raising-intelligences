@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createGame } from "../src/game/state-machine.js";
-import { classifyParentMessage, moderateParentMessage } from "../src/safety/moderation.js";
+import { classifyParentMessage, moderateParentMessage, applyModerationBlock } from "../src/safety/moderation.js";
 import { InMemoryGameRepository } from "../src/db/repository.js";
 import type { GameState } from "../src/types.js";
 
@@ -148,5 +148,54 @@ describe("moderateParentMessage", () => {
     expect(result.blocked).toBe(false);
     expect(repo.getModerationFlags()).toEqual([]);
     expect(await repo.isIpBanned("9.9.9.9")).toBe(false);
+  });
+});
+
+
+describe("applyModerationBlock", () => {
+  function setup() {
+    const repo = new InMemoryGameRepository();
+    const state = createGame("Luna");
+    const games = new Map<string, GameState>([[state.id, state]]);
+    return { repo, state, games };
+  }
+
+  it("bans the IP by default (per-message caller behavior)", async () => {
+    const { repo, state, games } = setup();
+
+    await applyModerationBlock({
+      repo,
+      games,
+      state,
+      sender: "parent1",
+      content: "flagged content",
+      reason: "test reason",
+      ipAddress: "5.5.5.5",
+    });
+
+    expect(await repo.isIpBanned("5.5.5.5")).toBe(true);
+    expect(games.get(state.id)!.phase).toBe("ended");
+    expect(repo.getModerationFlags()).toHaveLength(1);
+  });
+
+  it("does NOT ban the IP when banIp is false (scene-level grooming-pattern caller) but still flags and ends the session", async () => {
+    const { repo, state, games } = setup();
+
+    await applyModerationBlock({
+      repo,
+      games,
+      state,
+      sender: "parent1",
+      content: "a whole scene transcript",
+      reason: "grooming-pattern reason",
+      ipAddress: "8.8.8.8",
+      banIp: false,
+    });
+
+    expect(await repo.isIpBanned("8.8.8.8")).toBe(false);
+    expect(games.get(state.id)!.phase).toBe("ended");
+    const flags = repo.getModerationFlags();
+    expect(flags).toHaveLength(1);
+    expect(flags[0]).toMatchObject({ ipAddress: "8.8.8.8", reason: "grooming-pattern reason" });
   });
 });
