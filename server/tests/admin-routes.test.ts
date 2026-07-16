@@ -111,4 +111,18 @@ describe("Admin API routes", () => {
     });
     expect(res.status).toBe(404);
   });
+
+  it("falls back to default pagination instead of erroring on non-numeric limit/offset", async () => {
+    const res = await fetch(`${server.baseUrl}/api/admin/games?limit=abc&offset=-5`, {
+      headers: { Authorization: "Bearer test-admin-secret" },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("clamps an oversized limit instead of pulling the whole table", async () => {
+    const res = await fetch(`${server.baseUrl}/api/admin/games?limit=100000000`, {
+      headers: { Authorization: "Bearer test-admin-secret" },
+    });
+    expect(res.status).toBe(200);
+  });
 });

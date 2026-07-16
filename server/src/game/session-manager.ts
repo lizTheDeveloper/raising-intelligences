@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import type { Sender } from "../types.js";
+import { safeEqual } from "../lib/safe-equal.js";
 
 /**
  * Multiplayer session bookkeeping — kept pure and free of socket.io so it can
@@ -45,7 +46,7 @@ export function getPlayerBySlot(session: Session, slot: PlayerSlot): Player | un
 }
 
 export function getPlayerByToken(session: Session, token: string): Player | undefined {
-  return session.players.find((p) => p.token === token);
+  return session.players.find((p) => safeEqual(p.token, token));
 }
 
 /**

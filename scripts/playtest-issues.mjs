@@ -190,6 +190,10 @@ async function run() {
     await waitForStreamingDone(page);
     console.log("  ✓ First response received");
 
+    // The input re-enables as soon as streaming finishes, which can race the
+    // message-list re-render — give the DOM a moment to catch up before counting.
+    await page.waitForFunction(() => document.querySelectorAll(".message").length >= 2, { timeout: 5_000 }).catch(() => {});
+
     const msgs1 = await page.$$eval(".message", (els) => els.length);
     console.log(`  Messages visible: ${msgs1}`);
     if (msgs1 < 2) {
