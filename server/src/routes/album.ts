@@ -4,6 +4,7 @@ import type { GameRepository } from "../db/repository.js";
 import { existsSync } from "fs";
 import path from "path";
 import { PORTRAITS_DIR } from "../portrait-gen.js";
+import { isValidUserId, UUID_RE } from "../lib/validation.js";
 
 const AGE_SLUGS = [
   { age: 3, slug: "age-03" },
@@ -24,6 +25,10 @@ export function createAlbumRoutes(repo: GameRepository): Router {
 
   router.get("/user/:userId/album", async (req: Request, res: Response) => {
     const userId = req.params.userId as string;
+    if (!isValidUserId(userId)) {
+      res.status(400).json({ error: "Invalid userId format" });
+      return;
+    }
     const album = await repo.loadAlbum(userId);
     res.json(album);
   });
@@ -31,6 +36,14 @@ export function createAlbumRoutes(repo: GameRepository): Router {
   router.get("/user/:userId/album/kid/:gameId", async (req: Request, res: Response) => {
     const userId = req.params.userId as string;
     const gameId = req.params.gameId as string;
+    if (!isValidUserId(userId)) {
+      res.status(400).json({ error: "Invalid userId format" });
+      return;
+    }
+    if (!UUID_RE.test(gameId)) {
+      res.status(400).json({ error: "Invalid gameId format" });
+      return;
+    }
     const scrapbook = await repo.loadScrapbook(userId, gameId);
     if (!scrapbook) {
       res.status(404).json({ error: "Kid not found" });
