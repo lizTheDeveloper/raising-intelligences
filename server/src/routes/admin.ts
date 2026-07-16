@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Request, Response, NextFunction } from "express";
 import type { AdminQueries } from "../db/admin-queries.js";
 import { logger } from "../logger.js";
+import { safeEqual } from "../lib/safe-equal.js";
 
 export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
   const token = process.env.ADMIN_TOKEN;
@@ -10,11 +11,18 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
     return;
   }
   const header = req.headers.authorization;
-  if (!header || header !== `Bearer ${token}`) {
+  if (!header || !safeEqual(header, `Bearer ${token}`)) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
   next();
+}
+
+function parseBound(v: unknown, def: number, max: number): number {
+  if (v === undefined) return def;
+  const n = parseInt(String(v), 10);
+  if (!Number.isFinite(n) || n < 0) return def;
+  return Math.min(n, max);
 }
 
 export function createAdminRoutes(adminQueries: AdminQueries): Router {
@@ -34,8 +42,8 @@ export function createAdminRoutes(adminQueries: AdminQueries): Router {
   router.get("/admin/games", async (req: Request, res: Response) => {
     try {
       const status = req.query.status as "active" | "completed" | "abandoned" | undefined;
-      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
-      const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : undefined;
+      const limit = parseBound(req.query.limit, 50, 200);
+      const offset = parseBound(req.query.offset, 0, Number.MAX_SAFE_INTEGER);
       const result = await adminQueries.listGames({ status, limit, offset });
       res.json(result);
     } catch (err) {

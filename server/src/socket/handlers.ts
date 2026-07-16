@@ -373,7 +373,13 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           const msgs = result.state.messages;
           const lastMsg = msgs[msgs.length - 1];
           if (lastMsg) {
-            lastMsg.content = lastMsg.content.replace(/\s*\[SCENE_END\]\s*/g, "").trim();
+            result.state = {
+              ...result.state,
+              messages: [
+                ...msgs.slice(0, -1),
+                { ...lastMsg, content: lastMsg.content.replace(/\s*\[SCENE_END\]\s*/g, "").trim() },
+              ],
+            };
           }
         }
 

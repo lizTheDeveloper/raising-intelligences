@@ -14,12 +14,12 @@ import { initSSE, sseChunk, sseDone, sseError, sseTerminated } from "../lib/sse.
 import { resolveGame as sharedResolveGame } from "../lib/resolve-game.js";
 import { moderateParentMessage, applyModerationBlock } from "../safety/moderation.js";
 import { buildSceneTranscript } from "../game/context-assembler.js";
+import { UUID_RE } from "../lib/validation.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
 const MAX_MESSAGE_LENGTH = 2000;
 const MAX_RELATIONSHIP_TYPE_LENGTH = 100;
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface GameRouteOptions {
   llmRateLimit?: RequestHandler;
