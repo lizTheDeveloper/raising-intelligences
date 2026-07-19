@@ -42,24 +42,39 @@ export async function applyModerationBlock(params: {
   reason: string;
   ipAddress: string | null;
   /**
-   * Whether this trigger permanently bans the IP. The per-message OpenAI
-   * check (narrow, purpose-built category classifier, low false-positive
-   * rate) bans by default. The scene-level grooming-PATTERN check is a
-   * single LLM judgment call over a whole scene + the child's Identity
-   * Document with no appeal path -- it still ends the session and logs
-   * the flag for human review, but must not by itself impose a permanent,
-   * unappealable IP ban. Defaults to true for backward compatibility with
-   * the per-message caller.
+   * Ban policy for this trigger:
+   * - `true`  — always permanently ban the IP. Used by the per-message
+   *   OpenAI check (narrow, purpose-built category classifier, low
+   *   false-positive rate).
+   * - `false` — never ban; only end the session and log the flag.
+   * - `"repeat-offender"` — ban only if this IP has now been flagged in TWO
+   *   OR MORE distinct games. Used by the scene-level grooming/abuse PATTERN
+   *   check: a single LLM judgment over one scene can catch intense-but-
+   *   ordinary parenting, so a first flag only ends the session (and is
+   *   logged for human review), but a second flag in a *different* session
+   *   is a deliberate pattern and earns a permanent ban.
+   * Defaults to true for backward compatibility with the per-message caller.
    */
-  banIp?: boolean;
+  banIp?: boolean | "repeat-offender";
 }): Promise<void> {
   const { repo, games, state, sender, content, reason, ipAddress, banIp = true } = params;
 
-  logger.error("moderation_flag", { gameId: state.id, sender, ipAddress, reason, banIp });
-
+  // Persist the flag first so the repeat-offender count below includes it.
   await repo.saveModerationFlag({ gameId: state.id, sender, content, reason, ipAddress });
 
-  if (ipAddress && banIp) {
+  let doBan = false;
+  if (ipAddress) {
+    if (banIp === "repeat-offender") {
+      const distinctGames = await repo.countDistinctFlaggedGamesForIp(ipAddress);
+      doBan = distinctGames >= 2;
+    } else {
+      doBan = banIp;
+    }
+  }
+
+  logger.error("moderation_flag", { gameId: state.id, sender, ipAddress, reason, banIp: doBan });
+
+  if (doBan && ipAddress) {
     await repo.banIp(ipAddress, `moderation_flag:${state.id}`);
   }
 
