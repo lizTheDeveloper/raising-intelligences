@@ -84,7 +84,7 @@ describe("E2E: solo REST playthrough", () => {
   });
 
   it("ends the chat and runs the psychologist identity update", async () => {
-    const { json } = await api.post<{ phase: string }>(`/api/game/${gameId}/end-chat`);
+    const { json } = await api.postSSE<{ phase: string }>(`/api/game/${gameId}/end-chat`);
     expect(json.phase).toBe("debrief");
     // A snapshot should now be persisted in the repository.
     const reloaded = await server.memRepo.loadGame(gameId);
@@ -98,7 +98,7 @@ describe("E2E: solo REST playthrough", () => {
   });
 
   it("generates the epilogue", async () => {
-    const { json } = await api.post<{ phase: string; epilogue: string }>(
+    const { json } = await api.postSSE<{ phase: string; epilogue: string }>(
       `/api/game/${gameId}/epilogue`
     );
     expect(json.phase).toBe("epilogue");
@@ -106,7 +106,7 @@ describe("E2E: solo REST playthrough", () => {
   });
 
   it("generates the final report card", async () => {
-    const { json } = await api.post<{ phase: string; reportCard: string }>(
+    const { json } = await api.postSSE<{ phase: string; reportCard: string }>(
       `/api/game/${gameId}/report-card`,
       { epilogue: "Luna grew up thoughtful and steady." }
     );
