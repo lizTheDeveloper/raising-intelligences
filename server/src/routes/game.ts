@@ -154,6 +154,12 @@ export function createGameRoutes(
           const state = await resolveGame(req.params.id as string);
           if (!state) { sseError(res, "Game not found"); return; }
 
+          // A terminated session must not accept further input.
+          if (state.phase === "ended") {
+            sseTerminated(res);
+            return;
+          }
+
           const moderation = await moderateParentMessage({
             repo,
             games,
@@ -170,6 +176,25 @@ export function createGameRoutes(
           const result = await engine.handleParentMessage(state, sender, content, (chunk) => {
             sseChunk(res, chunk);
           });
+
+          // Mid-scene abuse interception: terminate immediately rather than
+          // letting a bad-faith actor keep going until the scene ends.
+          if (result.abuse) {
+            const lastParent = [...result.state.messages].reverse().find((m) => m.sender !== "kid");
+            await applyModerationBlock({
+              repo,
+              games,
+              state: result.state,
+              sender: lastParent?.sender ?? sender,
+              content: buildSceneTranscript(result.state),
+              reason: result.abuse.reason,
+              ipAddress: req.ip ?? null,
+              banIp: "repeat-offender",
+            });
+            sseTerminated(res);
+            return;
+          }
+
           games.set(result.state.id, result.state);
           // Persist just the two new tail messages (parent + kid), then the checkpoint.
           const tail = result.state.messages.slice(-2);

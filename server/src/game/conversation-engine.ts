@@ -13,6 +13,14 @@ import type { ModerationResult } from "../safety/moderation.js";
 import type { TrajectoryResult } from "../safety/pattern-detection.js";
 
 /**
+ * How often, in parent messages, to run the mid-scene abuse check within a
+ * single family-chat scene (in addition to the end-of-scene check). At 4,
+ * a clear pattern is caught by roughly the 4th message instead of the 12th
+ * (PARENT_MESSAGE_CAP). See handleParentMessage.
+ */
+const MID_SCENE_ABUSE_CHECK_EVERY = 4;
+
+/**
  * Validate and coerce raw JSON from the world-manager LLM into a GameEvent.
  * The LLM occasionally returns age as a string, omits optional fields, or
  * wraps the object in markdown fences — this guard catches all of those and
@@ -81,7 +89,7 @@ export class ConversationEngine {
     sender: Sender,
     content: string,
     onKidChunk?: (chunk: string) => void
-  ): Promise<{ state: GameState; kidResponse: string }> {
+  ): Promise<{ state: GameState; kidResponse: string; abuse?: ModerationResult }> {
     let next = transition(state, { type: "PARENT_MESSAGE", sender, content });
 
     const ctx = buildKidContext(next);
@@ -93,7 +101,27 @@ export class ConversationEngine {
     );
 
     next = transition(next, { type: "KID_MESSAGE", content: kidResponse });
-    return { state: next, kidResponse };
+
+    // Mid-scene abuse interception. The full grooming/abuse pattern check
+    // otherwise only runs at end-of-scene (endFamilyChat), which lets a
+    // bad-faith actor send up to PARENT_MESSAGE_CAP (12) messages at the
+    // child before the session terminates. Re-run the SAME calibrated
+    // detector (it already distinguishes ordinary hard parenting from real
+    // abuse) at mid-scene checkpoints so a clear pattern ends the session
+    // promptly instead of after a whole scene. Only during family_chat, and
+    // not on the final message (the cap triggers end-chat, which checks anyway).
+    let abuse: ModerationResult | undefined;
+    if (
+      next.phase === "family_chat" &&
+      next.parentMessageCount >= MID_SCENE_ABUSE_CHECK_EVERY &&
+      next.parentMessageCount < PARENT_MESSAGE_CAP &&
+      next.parentMessageCount % MID_SCENE_ABUSE_CHECK_EVERY === 0
+    ) {
+      const check = await detectGroomingPattern(this.llm, next);
+      if (check.flagged) abuse = check;
+    }
+
+    return { state: next, kidResponse, abuse };
   }
 
   startSidebar(state: GameState, parent: Sender): GameState {
