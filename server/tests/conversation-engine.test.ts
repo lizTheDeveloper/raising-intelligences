@@ -37,6 +37,64 @@ describe("ConversationEngine", () => {
     expect(result.kidResponse).toBe("I'm sorry!");
   });
 
+  it("intercepts abuse mid-scene at the checkpoint and surfaces it before the scene ends", async () => {
+    const mock = new MockLLMClient();
+    mock.events = [testEvent];
+    mock.kidResponses = ["ok"];
+    mock.groomingResult = { flagged: true, reason: "sustained verbal abuse toward the child" };
+    const engine = new ConversationEngine(mock);
+    let state = createGame("Luna");
+    state = await engine.startEvent(state);
+
+    let result!: Awaited<ReturnType<typeof engine.handleParentMessage>>;
+    for (let i = 1; i <= 4; i++) {
+      result = await engine.handleParentMessage(state, "parent1", `message ${i}`);
+      state = result.state;
+    }
+
+    expect(state.parentMessageCount).toBe(4);
+    expect(result.abuse).toBeDefined();
+    expect(result.abuse?.reason).toContain("verbal abuse");
+  });
+
+  it("does not run the mid-scene check before the checkpoint", async () => {
+    const mock = new MockLLMClient();
+    mock.events = [testEvent];
+    mock.kidResponses = ["ok"];
+    mock.groomingResult = { flagged: true, reason: "would-be flag" };
+    const engine = new ConversationEngine(mock);
+    let state = createGame("Luna");
+    state = await engine.startEvent(state);
+
+    let result!: Awaited<ReturnType<typeof engine.handleParentMessage>>;
+    for (let i = 1; i <= 3; i++) {
+      result = await engine.handleParentMessage(state, "parent1", `message ${i}`);
+      state = result.state;
+    }
+
+    expect(result.abuse).toBeUndefined();
+    expect(mock.roleCalls).not.toContain("safety_check");
+  });
+
+  it("mid-scene check that returns not-flagged does not surface abuse (ordinary parenting)", async () => {
+    const mock = new MockLLMClient();
+    mock.events = [testEvent];
+    mock.kidResponses = ["ok"];
+    // groomingResult defaults to { flagged: false }
+    const engine = new ConversationEngine(mock);
+    let state = createGame("Luna");
+    state = await engine.startEvent(state);
+
+    let result!: Awaited<ReturnType<typeof engine.handleParentMessage>>;
+    for (let i = 1; i <= 4; i++) {
+      result = await engine.handleParentMessage(state, "parent1", `message ${i}`);
+      state = result.state;
+    }
+
+    expect(result.abuse).toBeUndefined();
+    expect(mock.roleCalls).toContain("safety_check"); // it WAS checked, just came back clean
+  });
+
   it("endFamilyChat triggers psychologist and updates identity doc", async () => {
     const mock = new MockLLMClient();
     mock.events = [testEvent];

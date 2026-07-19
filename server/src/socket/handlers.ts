@@ -329,6 +329,12 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         const session = sessions.get(gameId);
         if (!state || !session) { fail("Not in a game"); return; }
 
+        // A terminated session must not accept further input.
+        if (state.phase === "ended") {
+          fail("This session has ended.");
+          return;
+        }
+
         if (state.phase === "sidebar" && state.sidebarActive !== slot) {
           fail("The other parent is in a private conversation");
           return;
@@ -365,6 +371,25 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           payload.content.trim(),
           emitChunk
         );
+
+        // Mid-scene abuse interception: terminate immediately rather than
+        // letting a bad-faith actor keep going until the scene ends.
+        if (result.abuse) {
+          const lastParent = [...result.state.messages].reverse().find((m) => m.sender !== "kid");
+          await applyModerationBlock({
+            repo,
+            games,
+            state: result.state,
+            sender: lastParent?.sender ?? slot,
+            content: buildSceneTranscript(result.state),
+            reason: result.abuse.reason,
+            ipAddress: getSocketIp(socket),
+            banIp: "repeat-offender",
+          });
+          fail("This session has ended.");
+          broadcastState(gameId);
+          return;
+        }
 
         // Detect and strip the [SCENE_END] sentinel before saving/broadcasting
         const sceneEnded = result.kidResponse.includes("[SCENE_END]");
