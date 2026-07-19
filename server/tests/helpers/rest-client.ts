@@ -23,6 +23,44 @@ export class RestClient {
   }
 
   /**
+   * POST to an SSE endpoint (end-chat, epilogue, report-card — anything that
+   * uses initSSE/sseDone) and return the terminal `done` frame's payload as
+   * `json`. These endpoints stream `data: {"type":"done", ...payload}` rather
+   * than a plain JSON body, so `post()` (which calls res.json()) can't read them.
+   */
+  async postSSE<T = unknown>(path: string, body?: unknown): Promise<{ status: number; json: T }> {
+    const res = await fetch(this.baseUrl + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (!res.body) throw new Error(`No response body from ${path}`);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let done: T | undefined;
+
+    for (;;) {
+      const { value, done: streamDone } = await reader.read();
+      if (streamDone) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() ?? "";
+      for (const frame of frames) {
+        const line = frame.replace(/^data:\s*/, "").trim();
+        if (!line) continue;
+        const evt = JSON.parse(line) as { type: string; error?: string };
+        if (evt.type === "error") throw new Error(`${path} error: ${evt.error}`);
+        if (evt.type === "done") done = evt as unknown as T;
+      }
+    }
+
+    if (done === undefined) throw new Error(`${path} produced no 'done' frame`);
+    return { status: res.status, json: done };
+  }
+
+  /**
    * Drive the SSE streaming /message endpoint: collect kid chunks and the final
    * `done` frame. Returns the assembled kid text plus messagesRemaining.
    */
