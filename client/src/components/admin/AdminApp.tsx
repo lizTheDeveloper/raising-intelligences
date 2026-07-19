@@ -3,9 +3,10 @@ import { useAdminApi } from "../../hooks/useAdminApi";
 import { Overview } from "./Overview";
 import { GameList } from "./GameList";
 import { GameDetailView } from "./GameDetail";
+import { Moderation } from "./Moderation";
 import "../../admin.css";
 
-type Page = "overview" | "games" | "game-detail";
+type Page = "overview" | "games" | "game-detail" | "moderation";
 
 const ADMIN_BASE = import.meta.env.BASE_URL + "api/admin";
 
@@ -22,7 +23,8 @@ export function AdminApp() {
   const [page, setPage] = useState<Page>("overview");
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
 
-  const { fetchOverview, fetchGames, fetchGameDetail } = useAdminApi();
+  const { fetchOverview, fetchGames, fetchGameDetail, fetchModerationFlags, banIp, unbanIp } =
+    useAdminApi();
 
   function navigateToGame(gameId: string) {
     setSelectedGameId(gameId);
@@ -104,6 +106,12 @@ export function AdminApp() {
         >
           Games
         </button>
+        <button
+          className={page === "moderation" ? "active" : ""}
+          onClick={() => setPage("moderation")}
+        >
+          Moderation
+        </button>
       </div>
       <main>
         {page === "overview" && (
@@ -120,6 +128,13 @@ export function AdminApp() {
             gameId={selectedGameId}
             fetchGameDetail={(id) => fetchGameDetail(token, id)}
             onBack={() => setPage("games")}
+          />
+        )}
+        {page === "moderation" && (
+          <Moderation
+            fetchModerationFlags={(opts) => fetchModerationFlags(token, opts)}
+            banIp={(ip, reason) => banIp(token, ip, reason)}
+            unbanIp={(ip) => unbanIp(token, ip)}
           />
         )}
       </main>

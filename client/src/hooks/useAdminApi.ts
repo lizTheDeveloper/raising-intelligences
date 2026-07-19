@@ -54,9 +54,32 @@ export interface GameDetail extends GameSummary {
   endgame: { epilogue: string; reportCard: string } | null;
 }
 
+export interface ModerationFlag {
+  id: string;
+  gameId: string;
+  childName: string | null;
+  sender: string;
+  reason: string;
+  content: string;
+  ipAddress: string | null;
+  createdAt: string;
+  banned: boolean;
+}
+
 async function apiFetch<T>(path: string, token: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { Authorization: `Bearer ${token}` },
+  });
+  if (res.status === 401) throw new Error("Unauthorized");
+  if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+async function apiPost<T>(path: string, token: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
   if (res.status === 401) throw new Error("Unauthorized");
   if (!res.ok) throw new Error(`Request failed: ${res.status}`);
@@ -84,5 +107,31 @@ export function useAdminApi() {
     return apiFetch<GameDetail>(`/games/${gameId}`, token);
   }
 
-  return { fetchOverview, fetchGames, fetchGameDetail };
+  function fetchModerationFlags(
+    token: string,
+    opts?: { limit?: number; offset?: number }
+  ): Promise<{ flags: ModerationFlag[]; total: number }> {
+    const params = new URLSearchParams();
+    if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+    if (opts?.offset !== undefined) params.set("offset", String(opts.offset));
+    const qs = params.toString();
+    return apiFetch<{ flags: ModerationFlag[]; total: number }>(
+      `/moderation-flags${qs ? `?${qs}` : ""}`,
+      token
+    );
+  }
+
+  function banIp(
+    token: string,
+    ip: string,
+    reason?: string
+  ): Promise<{ ok: boolean; ip: string; banned: boolean }> {
+    return apiPost("/moderation/ban", token, { ip, reason });
+  }
+
+  function unbanIp(token: string, ip: string): Promise<{ ok: boolean; ip: string; banned: boolean }> {
+    return apiPost("/moderation/unban", token, { ip });
+  }
+
+  return { fetchOverview, fetchGames, fetchGameDetail, fetchModerationFlags, banIp, unbanIp };
 }

@@ -228,7 +228,7 @@ export function createGameRoutes(
               content: buildSceneTranscript(next),
               reason: groomingCheck.reason,
               ipAddress: req.ip ?? null,
-              banIp: false, // scene-level pattern check: flag + end session, don't permanently ban -- see moderation.ts
+              banIp: "repeat-offender", // scene-level pattern check: flag + end session on 1st, permanent ban on a 2nd flag in another game -- see moderation.ts
             });
             sseTerminated(res);
             return;

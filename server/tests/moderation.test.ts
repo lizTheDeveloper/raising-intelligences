@@ -198,4 +198,92 @@ describe("applyModerationBlock", () => {
     expect(flags).toHaveLength(1);
     expect(flags[0]).toMatchObject({ ipAddress: "8.8.8.8", reason: "grooming-pattern reason" });
   });
+
+  it("repeat-offender: a FIRST flag for this IP ends the session but does NOT ban", async () => {
+    const { repo, state, games } = setup();
+
+    await applyModerationBlock({
+      repo,
+      games,
+      state,
+      sender: "parent1",
+      content: "a whole scene transcript",
+      reason: "verbal-abuse pattern",
+      ipAddress: "4.4.4.4",
+      banIp: "repeat-offender",
+    });
+
+    expect(await repo.isIpBanned("4.4.4.4")).toBe(false);
+    expect(games.get(state.id)!.phase).toBe("ended");
+    expect(repo.getModerationFlags()).toHaveLength(1);
+  });
+
+  it("repeat-offender: a SECOND flag in a DIFFERENT game permanently bans the IP", async () => {
+    const { repo, state, games } = setup();
+    // A prior flag for the same IP in another game/session.
+    await repo.saveModerationFlag({
+      gameId: "an-earlier-game",
+      sender: "parent1",
+      content: "earlier scene",
+      reason: "verbal-abuse pattern",
+      ipAddress: "4.4.4.4",
+    });
+
+    await applyModerationBlock({
+      repo,
+      games,
+      state,
+      sender: "parent1",
+      content: "a whole scene transcript",
+      reason: "verbal-abuse pattern",
+      ipAddress: "4.4.4.4",
+      banIp: "repeat-offender",
+    });
+
+    expect(await repo.isIpBanned("4.4.4.4")).toBe(true);
+    expect(games.get(state.id)!.phase).toBe("ended");
+  });
+
+  it("repeat-offender: multiple flags within the SAME game do not count as repeat (no ban)", async () => {
+    const { repo, state, games } = setup();
+    // An earlier flag in THIS same game.
+    await repo.saveModerationFlag({
+      gameId: state.id,
+      sender: "parent1",
+      content: "earlier scene, same game",
+      reason: "verbal-abuse pattern",
+      ipAddress: "4.4.4.4",
+    });
+
+    await applyModerationBlock({
+      repo,
+      games,
+      state,
+      sender: "parent1",
+      content: "a later scene, same game",
+      reason: "verbal-abuse pattern",
+      ipAddress: "4.4.4.4",
+      banIp: "repeat-offender",
+    });
+
+    expect(await repo.isIpBanned("4.4.4.4")).toBe(false);
+  });
+
+  it("repeat-offender with no IP available: ends the session, never bans", async () => {
+    const { repo, state, games } = setup();
+
+    await applyModerationBlock({
+      repo,
+      games,
+      state,
+      sender: "parent1",
+      content: "a whole scene transcript",
+      reason: "verbal-abuse pattern",
+      ipAddress: null,
+      banIp: "repeat-offender",
+    });
+
+    expect(games.get(state.id)!.phase).toBe("ended");
+    expect(repo.getModerationFlags()).toHaveLength(1);
+  });
 });

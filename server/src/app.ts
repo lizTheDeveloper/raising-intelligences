@@ -175,7 +175,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   app.use("/api", createAlbumRoutes(repo));
   app.use("/api", supportCheckoutLimit, createSupportRoutes());
   if (adminQueries) {
-    app.use("/api", createAdminRoutes(adminQueries));
+    app.use("/api", createAdminRoutes(adminQueries, repo));
   }
 
   app.get(

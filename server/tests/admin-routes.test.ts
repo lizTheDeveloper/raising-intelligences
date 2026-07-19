@@ -111,4 +111,79 @@ describe("Admin API routes", () => {
     });
     expect(res.status).toBe(404);
   });
+
+  const authed = { Authorization: "Bearer test-admin-secret" };
+
+  it("lists moderation flags with per-IP ban state enrichment", async () => {
+    server.adminQueries.addGame({
+      id: "flagged-game",
+      childName: "Robin",
+      phase: "ended",
+      currentEventNumber: 3,
+      totalEvents: 10,
+      relationshipType: "co-parents",
+      identityDocument: "",
+      sidebarUsedParent1: false,
+      sidebarUsedParent2: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    server.adminQueries.addModerationFlag({
+      gameId: "flagged-game",
+      sender: "parent1",
+      reason: "sustained verbal abuse toward the child",
+      content: "the scene transcript",
+      ipAddress: "203.0.113.7",
+    });
+    server.adminQueries.addModerationFlag({
+      gameId: "flagged-game",
+      sender: "parent1",
+      reason: "another scene, different ip",
+      ipAddress: "203.0.113.99",
+    });
+    // Ban one of the two IPs directly in the repo.
+    await server.memRepo.banIp("203.0.113.7", "prior");
+
+    const res = await fetch(`${server.baseUrl}/api/admin/moderation-flags`, { headers: authed });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.total).toBeGreaterThanOrEqual(2);
+
+    const banned = data.flags.find((f: { ipAddress: string }) => f.ipAddress === "203.0.113.7");
+    const notBanned = data.flags.find((f: { ipAddress: string }) => f.ipAddress === "203.0.113.99");
+    expect(banned).toMatchObject({ banned: true, childName: "Robin", sender: "parent1" });
+    expect(notBanned).toMatchObject({ banned: false });
+  });
+
+  it("bans an IP via POST /admin/moderation/ban", async () => {
+    const res = await fetch(`${server.baseUrl}/api/admin/moderation/ban`, {
+      method: "POST",
+      headers: { ...authed, "Content-Type": "application/json" },
+      body: JSON.stringify({ ip: "198.51.100.5", reason: "manual review" }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data).toMatchObject({ ok: true, ip: "198.51.100.5", banned: true });
+    expect(await server.memRepo.isIpBanned("198.51.100.5")).toBe(true);
+  });
+
+  it("unbans an IP via POST /admin/moderation/unban", async () => {
+    await server.memRepo.banIp("198.51.100.6", "prior");
+    const res = await fetch(`${server.baseUrl}/api/admin/moderation/unban`, {
+      method: "POST",
+      headers: { ...authed, "Content-Type": "application/json" },
+      body: JSON.stringify({ ip: "198.51.100.6" }),
+    });
+    expect(res.status).toBe(200);
+    expect(await server.memRepo.isIpBanned("198.51.100.6")).toBe(false);
+  });
+
+  it("rejects a ban with no ip (400)", async () => {
+    const res = await fetch(`${server.baseUrl}/api/admin/moderation/ban`, {
+      method: "POST",
+      headers: { ...authed, "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "no ip here" }),
+    });
+    expect(res.status).toBe(400);
+  });
 });

@@ -62,10 +62,29 @@ export interface GameDetail extends GameSummary {
   endgame: { epilogue: string; reportCard: string } | null;
 }
 
+export interface ModerationFlagSummary {
+  id: string;
+  gameId: string;
+  childName: string | null;
+  sender: string;
+  reason: string;
+  content: string;
+  ipAddress: string | null;
+  createdAt: string;
+}
+
+export interface ListModerationFlagsOptions {
+  limit?: number;
+  offset?: number;
+}
+
 export interface AdminQueries {
   getOverview(abandonedThresholdDays?: number): Promise<OverviewStats>;
   listGames(opts?: ListGamesOptions): Promise<{ games: GameSummary[]; total: number }>;
   getGameDetail(gameId: string): Promise<GameDetail | null>;
+  listModerationFlags(
+    opts?: ListModerationFlagsOptions
+  ): Promise<{ flags: ModerationFlagSummary[]; total: number }>;
 }
 
 // ── In-Memory Implementation (tests / no-DB mode) ──────────────────────
@@ -113,6 +132,15 @@ export class InMemoryAdminQueries implements AdminQueries {
   private messages = new Map<string, StoredMessage[]>();
   private snapshots = new Map<string, { eventNumber: number; document: string }[]>();
   private endgames = new Map<string, { epilogue: string; reportCard: string }>();
+  private moderationFlags: Array<{
+    id: string;
+    gameId: string;
+    sender: string;
+    reason: string;
+    content: string;
+    ipAddress: string | null;
+    createdAt: Date;
+  }> = [];
 
   addGame(game: StoredGame): void {
     this.games.set(game.id, game);
@@ -144,6 +172,26 @@ export class InMemoryAdminQueries implements AdminQueries {
 
   addEndgame(gameId: string, endgame: { epilogue: string; reportCard: string }): void {
     this.endgames.set(gameId, endgame);
+  }
+
+  addModerationFlag(flag: {
+    id?: string;
+    gameId: string;
+    sender: string;
+    reason: string;
+    content?: string;
+    ipAddress: string | null;
+    createdAt?: Date;
+  }): void {
+    this.moderationFlags.push({
+      id: flag.id ?? `mf-${this.moderationFlags.length + 1}`,
+      gameId: flag.gameId,
+      sender: flag.sender,
+      reason: flag.reason,
+      content: flag.content ?? "",
+      ipAddress: flag.ipAddress,
+      createdAt: flag.createdAt ?? new Date(),
+    });
   }
 
   async getOverview(abandonedThresholdDays = ABANDONED_THRESHOLD_DAYS): Promise<OverviewStats> {
@@ -269,6 +317,30 @@ export class InMemoryAdminQueries implements AdminQueries {
         parent2: game.sidebarUsedParent2,
       },
       endgame: this.endgames.get(gameId) ?? null,
+    };
+  }
+
+  async listModerationFlags(
+    opts: ListModerationFlagsOptions = {}
+  ): Promise<{ flags: ModerationFlagSummary[]; total: number }> {
+    const { limit = 100, offset = 0 } = opts;
+    const sorted = [...this.moderationFlags].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
+    );
+    const total = sorted.length;
+    const page = sorted.slice(offset, offset + limit);
+    return {
+      total,
+      flags: page.map((f) => ({
+        id: f.id,
+        gameId: f.gameId,
+        childName: this.games.get(f.gameId)?.childName ?? null,
+        sender: f.sender,
+        reason: f.reason,
+        content: f.content,
+        ipAddress: f.ipAddress,
+        createdAt: f.createdAt.toISOString(),
+      })),
     };
   }
 }
@@ -504,6 +576,50 @@ export class PgAdminQueries implements AdminQueries {
       endgame: endgameRow
         ? { epilogue: endgameRow.epilogue, reportCard: endgameRow.report_card }
         : null,
+    };
+  }
+
+  async listModerationFlags(
+    opts: ListModerationFlagsOptions = {}
+  ): Promise<{ flags: ModerationFlagSummary[]; total: number }> {
+    const { limit = 100, offset = 0 } = opts;
+
+    const countRes = await query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM moderation_flags"
+    );
+    const total = parseInt(countRes.rows[0].count, 10);
+
+    const res = await query<{
+      id: string;
+      game_id: string;
+      child_name: string | null;
+      sender: string;
+      reason: string;
+      content: string;
+      ip_address: string | null;
+      created_at: Date;
+    }>(
+      `SELECT mf.id, mf.game_id, g.child_name, mf.sender, mf.reason, mf.content,
+              mf.ip_address, mf.created_at
+       FROM moderation_flags mf
+       LEFT JOIN games g ON g.id = mf.game_id
+       ORDER BY mf.created_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+
+    return {
+      total,
+      flags: res.rows.map((r) => ({
+        id: r.id,
+        gameId: r.game_id,
+        childName: r.child_name,
+        sender: r.sender,
+        reason: r.reason,
+        content: r.content,
+        ipAddress: r.ip_address,
+        createdAt: r.created_at.toISOString(),
+      })),
     };
   }
 }

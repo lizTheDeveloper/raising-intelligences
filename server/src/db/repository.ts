@@ -80,6 +80,15 @@ export interface GameRepository {
   }): Promise<void>;
   banIp(ipAddress: string, reason: string): Promise<void>;
   isIpBanned(ipAddress: string): Promise<boolean>;
+  /** Removes an IP from the ban list (admin unban). */
+  unbanIp(ipAddress: string): Promise<void>;
+  /**
+   * Number of DISTINCT games this IP has ever been flagged in. Used to
+   * escalate repeat offenders: a scene-level flag only ends the session on a
+   * first offense, but a second flag in a *different* game permanently bans
+   * the IP (see applyModerationBlock's "repeat-offender" policy).
+   */
+  countDistinctFlaggedGamesForIp(ipAddress: string): Promise<number>;
 }
 
 const DEFAULT_TOTAL_EVENTS = 10;
@@ -562,6 +571,18 @@ export class PgGameRepository implements GameRepository {
     const res = await this.db.query("SELECT 1 FROM banned_ips WHERE ip_address = $1", [ipAddress]);
     return res.rows.length > 0;
   }
+
+  async unbanIp(ipAddress: string): Promise<void> {
+    await this.db.query("DELETE FROM banned_ips WHERE ip_address = $1", [ipAddress]);
+  }
+
+  async countDistinctFlaggedGamesForIp(ipAddress: string): Promise<number> {
+    const res = await this.db.query<{ n: string }>(
+      "SELECT COUNT(DISTINCT game_id)::text AS n FROM moderation_flags WHERE ip_address = $1",
+      [ipAddress]
+    );
+    return parseInt(res.rows[0]?.n ?? "0", 10);
+  }
 }
 
 /**
@@ -850,6 +871,17 @@ export class InMemoryGameRepository implements GameRepository {
 
   async isIpBanned(ipAddress: string): Promise<boolean> {
     return this.bannedIps.has(ipAddress);
+  }
+
+  async unbanIp(ipAddress: string): Promise<void> {
+    this.bannedIps.delete(ipAddress);
+  }
+
+  async countDistinctFlaggedGamesForIp(ipAddress: string): Promise<number> {
+    const gameIds = new Set(
+      this.moderationFlags.filter((f) => f.ipAddress === ipAddress).map((f) => f.gameId)
+    );
+    return gameIds.size;
   }
 
   /** Test-only accessor — inspect persisted flags without a DB. */
