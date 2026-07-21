@@ -7,7 +7,7 @@ if (import.meta.env.PROD) {
   const s = document.createElement("script");
   s.defer = true;
   s.src = "https://analytics.multiversestudios.xyz/script.js";
-  s.dataset.websiteId = "38d680a7-28d1-42fd-9fd5-a66702675b88";
+  s.dataset.websiteId = "70687d81-c604-4643-a6b6-9d0bccdba970";
   document.head.appendChild(s);
 }
 
