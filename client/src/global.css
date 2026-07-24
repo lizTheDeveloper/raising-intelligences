@@ -304,8 +304,18 @@ body::after {
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 12px 0 4px;
+  padding: 12px 4px 4px;
   min-height: 24px;
+  width: 100%;
+  max-width: 560px;
+  /* Bounded + scrollable so accumulating fragments auto-scroll instead of
+     pushing the loading/readiness footer below the fold. */
+  max-height: 26vh;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 12px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 12px), transparent 100%);
 }
 
 .guardian-thought {
@@ -369,11 +379,74 @@ body::after {
 }
 
 .guardian-loading-hint {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--fg-dim);
   letter-spacing: 1px;
   opacity: 0;
+  margin: 0;
   animation: fadeIn 1.2s ease 0.6s forwards;
+}
+
+/* Sticky footer keeps the loading indicator + readiness controls in view even
+   as the cute fragments scroll in their own area above. */
+.guardian-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 0 22px;
+  margin-top: 4px;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0) 0%, var(--bg) 45%);
+}
+
+.guardian-waiting-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Three-dot bounce — an obvious "it's working" indicator. */
+.guardian-spinner {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.guardian-spinner span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--kid);
+  opacity: 0.35;
+  animation: guardian-bounce 1.2s ease-in-out infinite;
+}
+.guardian-spinner span:nth-child(2) { animation-delay: 0.18s; }
+.guardian-spinner span:nth-child(3) { animation-delay: 0.36s; }
+
+@keyframes guardian-bounce {
+  0%, 75%, 100% { transform: translateY(0); opacity: 0.3; }
+  35%          { transform: translateY(-7px); opacity: 1; }
+}
+
+/* Ready-toggle pending state (between-chapter gates) */
+.ready-waiting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.ready-waiting-label {
+  font-size: 13px;
+  color: var(--kid);
+  letter-spacing: 2px;
+  margin: 0;
+}
+.ready-cancel {
+  font-size: 11px;
 }
 
 /* ----- Guardian quiz ----- */

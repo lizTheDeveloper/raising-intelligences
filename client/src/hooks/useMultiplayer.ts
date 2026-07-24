@@ -136,6 +136,17 @@ export function useMultiplayer() {
         playerTokenRef.current = d.playerToken;
         saveResume(d.gameId, d.playerToken);
       }
+      // Reflect the gameId in the URL so the link is durable: a reload returns
+      // to this game, and the host can copy the address bar to invite a partner.
+      try {
+        const url = new URL(window.location.href);
+        if (url.searchParams.get("game") !== d.gameId) {
+          url.searchParams.set("game", d.gameId);
+          window.history.replaceState(null, "", url.toString());
+        }
+      } catch {
+        /* non-fatal: URL update is best-effort */
+      }
     });
 
     socket.on(E.LOBBY, (d: { players: PublicPlayer[] }) => setPlayers(d.players));
