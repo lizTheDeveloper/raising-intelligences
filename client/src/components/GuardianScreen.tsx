@@ -143,6 +143,13 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
   // Fragment list — accumulates up to 10, fade-in + append style
   const [visibleFragments, setVisibleFragments] = useState<string[]>([]);
   const fragmentPoolUsed = useRef(new Set<number>());
+  // Keep the (bounded, scrollable) phrase area pinned to the newest line so the
+  // cute fragments auto-scroll instead of pushing the ready button off-screen.
+  const thoughtsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = thoughtsRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [visibleFragments]);
 
   const variant = useMemo(pickVariant, []);
   const base = import.meta.env.BASE_URL;
@@ -434,7 +441,7 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
         currentStep.kind === "confessional" ||
         currentStep.kind === "waiting") &&
         visibleFragments.length > 0 && (
-          <div className="guardian-thoughts">
+          <div className="guardian-thoughts" ref={thoughtsRef}>
             {visibleFragments.map((text, i) => (
               <span key={`${text}-${i}`} className="guardian-thought">
                 {text}
@@ -443,23 +450,17 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
           </div>
         )}
 
-      {/* Waiting state — seed generation and/or event loading */}
+      {/* Waiting state — sticky footer so loading + readiness are always in view */}
       {currentStep.kind === "waiting" && (
-        <>
-          {seedError && (
+        <div className="guardian-footer">
+          {seedError ? (
             <div className="guardian-seed-error">
               <p className="dim">something went wrong generating their personality.</p>
               <button className="btn dim" onClick={handleRetry}>
                 try again
               </button>
             </div>
-          )}
-
-          {seedSubmitting && (
-            <p className="guardian-loading-hint">shaping who they'll become...</p>
-          )}
-
-          {canBegin && (
+          ) : canBegin ? (
             <div className="guardian-buttons">
               <button
                 className="btn"
@@ -471,7 +472,7 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
               >
                 I'm ready
               </button>
-              {!showMessage && (
+              {!showMessage ? (
                 <button
                   className="btn dim"
                   data-testid="btn-guardian-not-ready"
@@ -479,25 +480,23 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
                 >
                   I'm not ready
                 </button>
+              ) : (
+                <p className="guardian-not-ready-message">most people aren't</p>
               )}
             </div>
-          )}
-
-          {!canBegin && !seedError && !seedSubmitting && (
-            <p className="guardian-loading-hint">take your time. we're getting your story ready.</p>
-          )}
-
-          {showMessage && (
-            <div className="guardian-not-ready-block">
-              <p className="guardian-not-ready-message">most people aren't</p>
-              {(!eventReady || !seedReady) && (
-                <p className="guardian-loading-hint">
-                  take your time. we're getting your story ready.
-                </p>
-              )}
+          ) : (
+            <div className="guardian-waiting-indicator" role="status" aria-live="polite">
+              <div className="guardian-spinner" aria-hidden="true">
+                <span></span><span></span><span></span>
+              </div>
+              <p className="guardian-loading-hint">
+                {seedSubmitting
+                  ? "shaping who they'll become…"
+                  : "getting your story ready…"}
+              </p>
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );

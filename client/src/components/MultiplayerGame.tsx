@@ -235,6 +235,8 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
             messages={state.messages}
             streamingMessage={mp.streamingMessage}
             childName={state.childName}
+            players={mp.players}
+            mySlot={mySlot}
           />
           <MessageInput
             onSend={mp.sendMessage}
@@ -329,9 +331,21 @@ function ReadyToggle({
   const readyCount = players.filter((p) => p.ready).length;
   return (
     <div className="ready-toggle">
-      <button className="btn" onClick={() => onToggle(!ready)}>
-        {ready ? "waiting…" : label}
-      </button>
+      {ready ? (
+        <div className="ready-waiting" role="status" aria-live="polite">
+          <div className="guardian-spinner" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <p className="ready-waiting-label">you're ready</p>
+          <button className="btn dim ready-cancel" onClick={() => onToggle(false)}>
+            not yet
+          </button>
+        </div>
+      ) : (
+        <button className="btn" onClick={() => onToggle(true)}>
+          {label}
+        </button>
+      )}
       <p className="dim ready-count">{readyCount} of {players.length} ready</p>
     </div>
   );

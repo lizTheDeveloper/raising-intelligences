@@ -259,61 +259,73 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     });
 
     // ---- READY ----
+    // Serialized through the per-game lock so concurrent or duplicate READY
+    // events (e.g. a player clicking "ready" several times while a scenario is
+    // still generating) can't each fire their own event generation. Crucially,
+    // ready flags are cleared BEFORE the long generation await, so a re-entrant
+    // READY sees allReady=false and is a no-op. Previously this handler was
+    // lock-free and only reset ready AFTER loadEvent returned, so extra clicks
+    // spawned multiple loadEvent() calls whose scenarios clobbered each other
+    // (rapidly-swapping / stuck scenarios).
     socket.on(E.READY, async (payload: ReadyPayload) => {
       const gameId = data.gameId;
-      const session = gameId ? sessions.get(gameId) : undefined;
-      const state = currentState();
-      if (!gameId || !session || !state) return fail("Not in a game");
+      if (!gameId) return fail("Not in a game");
 
-      sessions.set(gameId, setReady(session, socket.id, !!payload?.ready));
-      broadcastLobby(gameId);
+      await lock(gameId, async () => {
+        const session = sessions.get(gameId);
+        const state = currentState();
+        if (!session || !state) return fail("Not in a game");
 
-      const updated = sessions.get(gameId)!;
-      if (!allReady(updated)) return;
+        sessions.set(gameId, setReady(session, socket.id, !!payload?.ready));
+        broadcastLobby(gameId);
 
-      try {
-        if (state.phase === "event_intro" && state.currentEvent === null) {
-          const next = await conversationEngine.loadEvent(state);
-          games.set(next.id, next);
-          if (next.currentEvent) await repo.saveEvent(next.id, next.currentEvent);
-          await repo.saveGame(next);
-          sessions.set(gameId, resetReady(updated));
-          broadcastState(gameId);
-          broadcastLobby(gameId);
-        } else if (state.phase === "event_intro" && state.currentEvent !== null) {
-          const next = conversationEngine.beginChat(state);
-          games.set(next.id, next);
-          await repo.saveGame(next);
-          sessions.set(gameId, resetReady(updated));
-          broadcastState(gameId);
-          broadcastLobby(gameId);
-          generateNextPortrait(gameId).catch(() => {});
-        } else if (state.phase === "debrief") {
-          if (state.currentEventNumber >= state.totalEvents) {
-            const emitChunk = (chunk: string) => {
-              io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
-            };
-            const result = await endgameEngine.generateEpilogue(state, emitChunk);
-            games.set(result.state.id, result.state);
-            await repo.saveGame(result.state);
-            sessions.set(gameId, resetReady(updated));
-            broadcastState(gameId);
-            broadcastLobby(gameId);
-            io.to(gameId).emit(E.EPILOGUE, { epilogue: result.epilogue });
-          } else {
-            const next = conversationEngine.endDebrief(state);
-            games.set(next.id, next);
-            await repo.saveGame(next);
-            sessions.set(gameId, resetReady(updated));
-            broadcastState(gameId);
-            broadcastLobby(gameId);
-          }
-        }
-      } catch (err) {
+        const updated = sessions.get(gameId)!;
+        if (!allReady(updated)) return;
+
+        // Both ready → advance exactly once. Clear ready flags up front so any
+        // duplicate READY arriving during the await below is a no-op.
         sessions.set(gameId, resetReady(updated));
         broadcastLobby(gameId);
-        fail(String(err));
-      }
+
+        try {
+          if (state.phase === "event_intro" && state.currentEvent === null) {
+            const next = await conversationEngine.loadEvent(state);
+            games.set(next.id, next);
+            if (next.currentEvent) await repo.saveEvent(next.id, next.currentEvent);
+            await repo.saveGame(next);
+            broadcastState(gameId);
+            broadcastLobby(gameId);
+          } else if (state.phase === "event_intro" && state.currentEvent !== null) {
+            const next = conversationEngine.beginChat(state);
+            games.set(next.id, next);
+            await repo.saveGame(next);
+            broadcastState(gameId);
+            broadcastLobby(gameId);
+            generateNextPortrait(gameId).catch(() => {});
+          } else if (state.phase === "debrief") {
+            if (state.currentEventNumber >= state.totalEvents) {
+              const emitChunk = (chunk: string) => {
+                io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
+              };
+              const result = await endgameEngine.generateEpilogue(state, emitChunk);
+              games.set(result.state.id, result.state);
+              await repo.saveGame(result.state);
+              broadcastState(gameId);
+              broadcastLobby(gameId);
+              io.to(gameId).emit(E.EPILOGUE, { epilogue: result.epilogue });
+            } else {
+              const next = conversationEngine.endDebrief(state);
+              games.set(next.id, next);
+              await repo.saveGame(next);
+              broadcastState(gameId);
+              broadcastLobby(gameId);
+            }
+          }
+        } catch (err) {
+          // Ready flags were already cleared above; just surface the error.
+          fail(String(err));
+        }
+      });
     });
 
     // ---- PARENT_MESSAGE ----
