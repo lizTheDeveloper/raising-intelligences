@@ -11,6 +11,7 @@
     "test:e2e:browser": "playwright test tests/e2e-invite-link.spec.ts"
   },
   "dependencies": {
+    "@sentry/node": "^10.68.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",
     "express-rate-limit": "^7.5.0",

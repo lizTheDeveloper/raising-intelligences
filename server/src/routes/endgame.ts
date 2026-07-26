@@ -4,7 +4,7 @@ import { EndgameEngine } from "../game/endgame-engine.js";
 import type { GameRepository } from "../db/repository.js";
 import type { GameState } from "../types.js";
 import { logger } from "../logger.js";
-import { generateMomentIllustrations } from "../portrait-gen.js";
+import { buildMomentsWithImages } from "../game/album-generator.js";
 import { withGameLock } from "../lib/game-lock.js";
 import { initSSE, sseChunk, sseDone, sseError } from "../lib/sse.js";
 import { resolveGame } from "../lib/resolve-game.js";
@@ -130,19 +130,7 @@ export function createEndgameRoutes(
                   relationshipSummary: albumData.relationshipSummary,
                 });
 
-                const illustrations = await generateMomentIllustrations(
-                  state.id,
-                  albumData.moments.map((m, i) => ({ visualPrompt: m.visualPrompt, sortOrder: i }))
-                );
-
-                const momentsWithImages = albumData.moments.map((m, i) => ({
-                  age: m.age,
-                  title: m.title,
-                  description: m.description,
-                  momentType: m.momentType,
-                  imagePath: illustrations[i]?.imagePath ?? null,
-                  sortOrder: i,
-                }));
+                const momentsWithImages = await buildMomentsWithImages(state.id, albumData);
 
                 await repo.saveAlbumMoments(state.id, momentsWithImages);
                 await repo.linkGameToPartner(userId, state.id, partnerId);

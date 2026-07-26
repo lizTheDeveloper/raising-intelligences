@@ -19,6 +19,7 @@ import type { LLMClient } from "./llm/client.js";
 import { registerSocketHandlers } from "./socket/handlers.js";
 import { PORTRAITS_DIR } from "./portrait-gen.js";
 import { logger } from "./logger.js";
+import { sentryExpressErrorHandler } from "./observability/sentry.js";
 import { getSocketIp } from "./lib/client-ip.js";
 import type { GameRepository } from "./db/repository.js";
 import type { Session } from "./game/session-manager.js";
@@ -195,6 +196,10 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
       res.sendFile(path.join(clientDist, "index.html"));
     });
   }
+
+  // Report the error to Sentry/GlitchTip (no-op unless SENTRY_DSN is set),
+  // then fall through to the response-producing handler below via next(err).
+  app.use(sentryExpressErrorHandler);
 
   // Global error handler — must have 4 params so Express recognises it as an
   // error-handling middleware. Never emits err.stack to clients.

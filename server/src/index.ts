@@ -10,6 +10,7 @@ import {
 import type { AdminQueries } from "./db/admin-queries.js";
 import { PgAdminQueries } from "./db/admin-queries.js";
 import { buildServer } from "./app.js";
+import { initSentry, isSentryEnabled, flushSentry } from "./observability/sentry.js";
 import { logger } from "./logger.js";
 
 const REQUIRED_ENV_VARS = ["OPENROUTER_API_KEY"];
@@ -27,6 +28,12 @@ function validateConfig(): void {
 }
 
 async function main() {
+  // Initialize error reporting as early as possible so startup errors are
+  // captured too. A complete no-op unless SENTRY_DSN is set — its default
+  // integrations also install the uncaughtException / unhandledRejection
+  // handlers, so no manual process.on wiring is needed here.
+  initSentry();
+
   validateConfig();
 
   // OpenRouter (OpenAI-compatible) drives all LLM calls, selecting a model per
@@ -73,7 +80,7 @@ async function main() {
     logger.info("persistence_mode", { mode: "in-memory", hint: "set DATABASE_URL to enable Postgres" });
   }
 
-  logger.info("observability", { langfuse: isLangfuseEnabled() });
+  logger.info("observability", { langfuse: isLangfuseEnabled(), sentry: isSentryEnabled() });
 
   // In production the app is deployed under the /raising-intelligences subpath.
   // Traefik has a dedicated router (ri-socket-io) that forwards
@@ -119,6 +126,7 @@ async function main() {
     httpServer.closeAllConnections();
     await close();
     await flushLangfuse();
+    await flushSentry();
     process.exit(0);
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));

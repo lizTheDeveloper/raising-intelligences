@@ -20,6 +20,8 @@ export interface PlayerRecord {
   slot: string;
   displayName: string;
   token: string;
+  /** Matrix user id, when the player was signed in; null/undefined otherwise. */
+  userId?: string;
 }
 
 export interface AlbumPartner {
@@ -59,8 +61,11 @@ export interface GameRepository {
   ): Promise<void>;
   /** Reconstruct an in-memory GameState from the latest checkpoint, or null. */
   loadGame(gameId: string): Promise<GameState | null>;
-  savePlayer(gameId: string, slot: string, displayName: string, token: string): Promise<void>;
+  savePlayer(gameId: string, slot: string, displayName: string, token: string, userId?: string): Promise<void>;
   loadPlayers(gameId: string): Promise<PlayerRecord[]>;
+  /** Associate a signed-in user with a game (the album's kid row). Idempotent —
+   * ON CONFLICT DO NOTHING so an existing row is left untouched. */
+  saveUserGame(userId: string, gameId: string, childName: string): Promise<void>;
 
   // Album methods
   saveAlbumPartner(partner: { userId: string; partnerName: string; partnerType: string; relationshipSummary: string }): Promise<string>;
@@ -268,14 +273,15 @@ export class PgGameRepository implements GameRepository {
     );
   }
 
-  async savePlayer(gameId: string, slot: string, displayName: string, token: string): Promise<void> {
+  async savePlayer(gameId: string, slot: string, displayName: string, token: string, userId?: string): Promise<void> {
     await this.db.query(
-      `INSERT INTO players (game_id, slot, display_name, token)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO players (game_id, slot, display_name, token, user_id)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (game_id, slot) DO UPDATE SET
          display_name = EXCLUDED.display_name,
-         token        = EXCLUDED.token`,
-      [gameId, slot, displayName, token]
+         token        = EXCLUDED.token,
+         user_id      = COALESCE(EXCLUDED.user_id, players.user_id)`,
+      [gameId, slot, displayName, token, userId ?? null]
     );
   }
 
@@ -284,15 +290,26 @@ export class PgGameRepository implements GameRepository {
       slot: string;
       display_name: string;
       token: string;
+      user_id: string | null;
     }>(
-      `SELECT slot, display_name, token FROM players WHERE game_id = $1`,
+      `SELECT slot, display_name, token, user_id FROM players WHERE game_id = $1`,
       [gameId]
     );
     return res.rows.map((r) => ({
       slot: r.slot,
       displayName: r.display_name,
       token: r.token,
+      userId: r.user_id ?? undefined,
     }));
+  }
+
+  async saveUserGame(userId: string, gameId: string, childName: string): Promise<void> {
+    await this.db.query(
+      `INSERT INTO user_games (user_id, game_id, child_name)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (user_id, game_id) DO NOTHING`,
+      [userId, gameId, childName]
+    );
   }
 
   async loadGame(gameId: string): Promise<GameState | null> {
@@ -670,14 +687,22 @@ export class InMemoryGameRepository implements GameRepository {
     this.endgames.set(gameId, { epilogue, reportCard });
   }
 
-  async savePlayer(gameId: string, slot: string, displayName: string, token: string): Promise<void> {
+  async savePlayer(gameId: string, slot: string, displayName: string, token: string, userId?: string): Promise<void> {
     const map = this.playerRecords.get(gameId) ?? new Map<string, PlayerRecord>();
-    map.set(slot, { slot, displayName, token });
+    const existing = map.get(slot);
+    map.set(slot, { slot, displayName, token, userId: userId ?? existing?.userId });
     this.playerRecords.set(gameId, map);
   }
 
   async loadPlayers(gameId: string): Promise<PlayerRecord[]> {
     return [...(this.playerRecords.get(gameId)?.values() ?? [])];
+  }
+
+  async saveUserGame(userId: string, gameId: string, childName: string): Promise<void> {
+    const key = `${userId}:${gameId}`;
+    if (!this.userGames.has(key)) {
+      this.userGames.set(key, { userId, gameId, childName, partnerId: null, createdAt: Date.now() });
+    }
   }
 
   async loadGame(gameId: string): Promise<GameState | null> {
