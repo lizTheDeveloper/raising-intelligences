@@ -1,5 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useMultiplayer, clearResume } from "../hooks/useMultiplayer";
+import { getSavedKids, saveKid, syncKidsToServer, fetchServerKids, mergeKids } from "../hooks/useGame";
+import type { SavedKid } from "../hooks/useGame";
 import { track } from "../analytics";
 import { Lobby } from "./Lobby";
 import { GuardianScreen } from "./GuardianScreen";
@@ -9,6 +11,7 @@ import { Endgame } from "./Endgame";
 import { ReportCard } from "./ReportCard";
 import { ProcessingScreen } from "./ProcessingScreen";
 import { ChildPortrait } from "./ChildPortrait";
+import { FamilyAlbum } from "./FamilyAlbum";
 
 const RELATIONSHIP_OPTIONS = [
   "romantic partners",
@@ -34,6 +37,16 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   const [guardianDismissed, setGuardianDismissed] = useState(false);
   const autoResumeAttempted = useRef(false);
 
+  // "Previous kids" — mirror the solo flow so a two-parent player can see and
+  // reopen the children they've raised, both in this browser and (when logged
+  // in) across devices via the family album.
+  const [matrixUser, setMatrixUser] = useState<string | null>(
+    () => window.matrixAuth?.getUserId() ?? null
+  );
+  const [cloudKids, setCloudKids] = useState<SavedKid[]>([]);
+  const [showAlbum, setShowAlbum] = useState(false);
+  const savedKidRef = useRef<string | null>(null);
+
   // On mount, if we have resume data in localStorage, connect the socket
   // to trigger auto-rejoin (the connect handler in useMultiplayer does the rest).
   useEffect(() => {
@@ -44,6 +57,44 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
       mp.ensureSocket();
     }
   }, [mp]);
+
+  const syncOnLogin = useCallback(async (userId: string) => {
+    setMatrixUser(userId);
+    await syncKidsToServer(userId);
+    const remote = await fetchServerKids(userId);
+    setCloudKids(mergeKids(getSavedKids(), remote));
+  }, []);
+
+  // Pick up Matrix login the same way SoloGame does, so the album/kids follow
+  // the signed-in user.
+  useEffect(() => {
+    const onReady = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.loggedIn && detail?.userId) syncOnLogin(detail.userId);
+    };
+    const onLogin = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.userId) syncOnLogin(detail.userId);
+    };
+    window.addEventListener("matrixAuthReady", onReady);
+    window.addEventListener("matrixAuthLogin", onLogin);
+    return () => {
+      window.removeEventListener("matrixAuthReady", onReady);
+      window.removeEventListener("matrixAuthLogin", onLogin);
+    };
+  }, [syncOnLogin]);
+
+  // Record the child once we know both the gameId and its name — for both the
+  // creator and the joining partner. Solo does this in useGame.createGame; the
+  // multiplayer flow never did, which is why previous kids weren't showing.
+  useEffect(() => {
+    const gid = mp.gameId;
+    const childName = mp.state?.childName;
+    if (!gid || !childName || savedKidRef.current === gid) return;
+    savedKidRef.current = gid;
+    saveKid(gid, childName);
+    if (matrixUser) syncKidsToServer(matrixUser).catch(() => {});
+  }, [mp.gameId, mp.state?.childName, matrixUser]);
 
   const state = mp.state;
   const mySlot = mp.slot;
@@ -69,6 +120,19 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
       prevEventNumberRef.current = cur;
     }
   }, [state?.currentEventNumber]);
+
+  // ---- Family album (logged-in): browse previously-raised children ----
+  if (showAlbum && matrixUser) {
+    return (
+      <div className="app">
+        <FamilyAlbum userId={matrixUser} onBack={() => setShowAlbum(false)} />
+      </div>
+    );
+  }
+
+  // Previous kids to offer on the setup screen: server-backed when signed in,
+  // otherwise this browser's local history.
+  const galleryKids = cloudKids.length > 0 ? cloudKids : getSavedKids();
 
   // ---- Setup: create or join ----
   if (!mp.gameId) {
@@ -135,6 +199,35 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
                 create game
               </button>
             </form>
+          )}
+
+          {!joinGameId && galleryKids.length > 0 && (
+            <div className="saved-kids">
+              <p className="dim">or return to...</p>
+              {galleryKids.map((kid) => (
+                <button
+                  key={kid.gameId}
+                  className="btn btn-secondary saved-kid-btn"
+                  onClick={() => {
+                    const url = new URL(window.location.href);
+                    url.searchParams.set("game", kid.gameId);
+                    window.location.href = url.toString();
+                  }}
+                >
+                  {kid.childName}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {!joinGameId && matrixUser && (
+            <button
+              className="btn btn-secondary"
+              style={{ marginTop: "1rem" }}
+              onClick={() => setShowAlbum(true)}
+            >
+              family album
+            </button>
           )}
         </div>
       </div>

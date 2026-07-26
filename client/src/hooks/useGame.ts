@@ -17,7 +17,7 @@ export function getSavedKids(): SavedKid[] {
   }
 }
 
-function saveKid(gameId: string, childName: string) {
+export function saveKid(gameId: string, childName: string) {
   const kids = getSavedKids().filter((k) => k.gameId !== gameId);
   kids.unshift({ gameId, childName, createdAt: Date.now() });
   localStorage.setItem(STORAGE_KEY, JSON.stringify(kids));
