@@ -34,6 +34,7 @@ import { generatePersonalitySeed } from "../game/personality.js";
 import { moderateParentMessage, applyModerationBlock } from "../safety/moderation.js";
 import { getSocketIp } from "../lib/client-ip.js";
 import { buildSceneTranscript } from "../game/context-assembler.js";
+import { captureException } from "../observability/sentry.js";
 
 export interface SocketDeps {
   io: Server;
@@ -154,6 +155,15 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
     function fail(message: string): void {
       socket.emit(E.ERROR, { error: message });
+    }
+
+    // Report an unexpected socket-handler error to Sentry/GlitchTip (no-op
+    // unless SENTRY_DSN is set), then surface it to the client via `fail`.
+    // These handlers catch their own exceptions, so the global uncaught/
+    // unhandled handlers never see them — capture must happen here.
+    function failWithError(err: unknown, event: string): void {
+      captureException(err, { tags: { component: "socket", event } });
+      fail(String(err));
     }
 
     function currentState(): GameState | undefined {
@@ -323,7 +333,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           }
         } catch (err) {
           // Ready flags were already cleared above; just surface the error.
-          fail(String(err));
+          failWithError(err, "READY");
         }
       });
     });
@@ -429,7 +439,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           io.to(gameId).emit(E.SCENE_ENDED, {});
           await endChat(gameId, getSocketIp(socket));
         }
-      }).catch((err) => fail(String(err)));
+      }).catch((err) => failWithError(err, "PARENT_MESSAGE"));
     });
 
     socket.on(E.START_SIDEBAR, () => {
@@ -442,7 +452,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         games.set(next.id, next);
         broadcastState(gameId);
       } catch (err) {
-        fail(String(err));
+        failWithError(err, "START_SIDEBAR");
       }
     });
 
@@ -455,7 +465,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         games.set(next.id, next);
         broadcastState(gameId);
       } catch (err) {
-        fail(String(err));
+        failWithError(err, "END_SIDEBAR");
       }
     });
 
@@ -465,7 +475,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
       lock(gameId, async () => {
         await endChat(gameId, getSocketIp(socket));
-      }).catch((err) => fail(String(err)));
+      }).catch((err) => failWithError(err, "END_CHAT"));
     });
 
     socket.on(E.START_EPILOGUE, async () => {
@@ -482,7 +492,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         broadcastState(gameId);
         io.to(gameId).emit(E.EPILOGUE, { epilogue: result.epilogue });
       } catch (err) {
-        fail(String(err));
+        failWithError(err, "START_EPILOGUE");
       }
     });
 
@@ -497,7 +507,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         await repo.saveGame(next);
         broadcastState(gameId);
       } catch (err) {
-        fail(String(err));
+        failWithError(err, "ADULT_CHAT");
       }
     });
 
@@ -516,7 +526,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         broadcastState(gameId);
         io.to(gameId).emit(E.REPORT_CARD_READY, { reportCard: result.reportCard });
       } catch (err) {
-        fail(String(err));
+        failWithError(err, "REPORT_CARD");
       }
     });
 
@@ -590,7 +600,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         } else {
           await repo.saveGame(updatedState);
         }
-      }).catch((err) => fail(String(err)));
+      }).catch((err) => failWithError(err, "SUBMIT_PERSONALITY"));
     });
 
     // ---- DISCONNECT: mark disconnected, don't remove ----
