@@ -229,6 +229,19 @@ export function createGameRoutes(
         try {
           const state = await resolveGame(req.params.id as string);
           if (!state) { sseError(res, "Game not found"); return; }
+          // Idempotency guard (RI's #1 production error). end-chat runs a slow
+          // multi-LLM step under a per-game lock; a double-click, a retry, or a
+          // dropped-then-reconnected SSE re-issues this POST after the first call
+          // already advanced the game past family_chat. Re-running END_FAMILY_CHAT
+          // then threw "Invalid transition ... from phase debrief" and surfaced a
+          // bogus error (often looping several times/min) to a user whose game had
+          // actually progressed fine. Treat an already-advanced game as a success
+          // reporting the current phase — before the redundant world_manager
+          // prefetch and psychologist calls below, so duplicates cost nothing.
+          if (state.phase !== "family_chat") {
+            sseDone(res, { phase: state.phase });
+            return;
+          }
           // Kick off next-event prefetch immediately — runs in parallel with the
           // psychologist so the event is ready before the player finishes reading debrief.
           // Uses the current identity doc (one conversation behind) which is fine;
