@@ -11,11 +11,16 @@ export interface CreateGamePayload {
   childName: string;
   relationshipType?: string;
   displayName?: string;
+  /** Matrix user id of the creating player, when signed in. Server-side only —
+   * never echoed back in lobby/public player views. */
+  userId?: string;
 }
 export interface JoinGamePayload {
   gameId: string;
   displayName?: string;
   playerToken?: string;
+  /** Matrix user id of the joining player, when signed in. */
+  userId?: string;
 }
 export interface ReadyPayload {
   ready: boolean;

@@ -198,14 +198,16 @@ export function useMultiplayer() {
 
   const createGame = useCallback(
     (childName: string, relationshipType: string, displayName: string) => {
-      ensureSocket().emit(E.CREATE_GAME, { childName, relationshipType, displayName });
+      const userId = window.matrixAuth?.getUserId() ?? undefined;
+      ensureSocket().emit(E.CREATE_GAME, { childName, relationshipType, displayName, userId });
     },
     [ensureSocket]
   );
 
   const joinGame = useCallback(
     (id: string, displayName: string) => {
-      ensureSocket().emit(E.JOIN_GAME, { gameId: id, displayName });
+      const userId = window.matrixAuth?.getUserId() ?? undefined;
+      ensureSocket().emit(E.JOIN_GAME, { gameId: id, displayName, userId });
     },
     [ensureSocket]
   );

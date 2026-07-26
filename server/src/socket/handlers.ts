@@ -35,6 +35,8 @@ import { moderateParentMessage, applyModerationBlock } from "../safety/moderatio
 import { getSocketIp } from "../lib/client-ip.js";
 import { buildSceneTranscript } from "../game/context-assembler.js";
 import { captureException } from "../observability/sentry.js";
+import { generateMultiplayerAlbums } from "../game/album-generator.js";
+import { logger } from "../logger.js";
 
 export interface SocketDeps {
   io: Server;
@@ -87,6 +89,11 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           gameLocks = new Map<string, Promise<void>>() } = deps;
 
   const lock = <T>(gameId: string, fn: () => Promise<T>) => withGameLock(gameLocks, gameId, fn);
+
+  // Games whose multiplayer album generation has already been kicked off, so a
+  // duplicate REPORT_CARD (either client may emit it) triggers it only once —
+  // album moments are a bare INSERT and would otherwise be duplicated.
+  const albumGenerated = new Set<string>();
 
   function broadcastState(gameId: string): void {
     const state = games.get(gameId);
@@ -178,7 +185,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       await repo.saveGame(state);
 
       let session = createSession(state.id);
-      const added = addPlayer(session, socket.id, payload.displayName);
+      const added = addPlayer(session, socket.id, payload.displayName, payload.userId);
       session = added.session;
       sessions.set(state.id, session);
 
@@ -186,7 +193,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       data.slot = added.player.slot;
       await socket.join(state.id);
 
-      await repo.savePlayer(state.id, added.player.slot, added.player.displayName, added.player.token);
+      await repo.savePlayer(state.id, added.player.slot, added.player.displayName, added.player.token, added.player.userId);
       socket.emit(E.JOINED, { gameId: state.id, slot: added.player.slot, playerToken: added.player.token });
       broadcastLobby(state.id);
       generateFirstPortrait(state.id).catch(() => {});
@@ -224,6 +231,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
                 ready: false,
                 connected: false,
                 token: rec.token,
+                userId: rec.userId,
               },
             ],
           };
@@ -251,7 +259,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       // New player: assign to first free slot
       let added;
       try {
-        added = addPlayer(session, socket.id, payload.displayName);
+        added = addPlayer(session, socket.id, payload.displayName, payload.userId);
       } catch {
         return fail("This game already has two players");
       }
@@ -262,7 +270,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       data.slot = added.player.slot;
       await socket.join(gameId);
 
-      await repo.savePlayer(gameId, added.player.slot, added.player.displayName, added.player.token);
+      await repo.savePlayer(gameId, added.player.slot, added.player.displayName, added.player.token, added.player.userId);
       socket.emit(E.JOINED, { gameId, slot: added.player.slot, playerToken: added.player.token });
       broadcastLobby(gameId);
       socket.emit(E.STATE, viewerState(state, added.player.slot));
@@ -525,6 +533,26 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         await repo.saveGame(result.state);
         broadcastState(gameId);
         io.to(gameId).emit(E.REPORT_CARD_READY, { reportCard: result.reportCard });
+
+        // Fire-and-forget: build each signed-in player's Family Album, grouping
+        // this game under their co-parent. Guarded so a duplicate REPORT_CARD
+        // (either client can emit it) kicks it off only once. Never blocks or
+        // throws into the handler; per-player failures are isolated inside.
+        const session = sessions.get(gameId);
+        if (session && !albumGenerated.has(gameId)) {
+          albumGenerated.add(gameId);
+          const players = session.players.map((p) => ({ userId: p.userId, displayName: p.displayName }));
+          void generateMultiplayerAlbums({
+            engine: endgameEngine,
+            repo,
+            state: result.state,
+            epilogue: payload?.epilogue ?? "",
+            reportCard: result.reportCard,
+            players,
+          }).catch((e) => {
+            logger.error("mp_album_generation_failed", { gameId, error: (e as Error).message });
+          });
+        }
       } catch (err) {
         failWithError(err, "REPORT_CARD");
       }
