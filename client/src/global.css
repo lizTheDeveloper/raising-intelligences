@@ -1138,3 +1138,43 @@ body::after {
   color: var(--kid);
   border-bottom: 1px solid var(--kid);
 }
+
+/* Credits — studio and collaborator attribution. Deliberately quiet: it sits
+   under everything else and never competes with the screen it's closing. */
+.credits {
+  width: 100%;
+  text-align: center;
+  padding: 24px 8px 8px;
+}
+
+.credits-page {
+  /* .app is a flex column, so this pins the footer to the very bottom. */
+  margin-top: auto;
+}
+
+.credits-endgame {
+  opacity: 0;
+  animation: fadeIn 900ms ease both;
+  padding-top: 8px;
+}
+
+.credits-line {
+  font-size: 11px;
+  line-height: 1.8;
+  letter-spacing: 0.5px;
+  color: var(--fg-dim);
+  margin: 0;
+}
+
+.credits-line a {
+  color: var(--fg-dim);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(136, 136, 136, 0.35);
+  transition: color 200ms ease, border-color 200ms ease;
+}
+
+.credits-line a:hover,
+.credits-line a:focus-visible {
+  color: var(--kid);
+  border-bottom-color: var(--kid);
+}
