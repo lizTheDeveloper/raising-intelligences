@@ -1,5 +1,6 @@
 import "../styles/endgame.css";
 import { SupportPrompt } from "./SupportPrompt";
+import { Credits } from "./Credits";
 
 interface Props {
   epilogue: string;
@@ -42,6 +43,7 @@ export function Endgame({ epilogue, onContinue }: Props) {
           continue
         </button>
       </div>
+      <Credits variant="endgame" style={{ animationDelay: `${lastParaDelay + 1300}ms` }} />
     </div>
   );
 }

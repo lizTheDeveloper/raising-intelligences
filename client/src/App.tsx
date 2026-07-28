@@ -5,6 +5,7 @@ import { AdminApp } from "./components/admin/AdminApp";
 import { clearResume } from "./hooks/useMultiplayer";
 import { track } from "./analytics";
 import { useMatrixAuth } from "./hooks/useMatrixAuth";
+import { Credits } from "./components/Credits";
 
 const TAGLINES = [
   // funny
@@ -241,6 +242,7 @@ export function App() {
           ))}
         </div>
       </div>
+      <Credits />
     </div>
   );
 }
