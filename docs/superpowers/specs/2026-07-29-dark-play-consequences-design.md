@@ -163,10 +163,34 @@ ignored, escalating pattern does):
   offering concrete alternatives. If the parent engages, the child's trajectory can bend
   back. **Co-parent-aware:** in a two-parent game it is a joint session; solo, it is
   parent-and-child. This is the deepest repair mechanism.
-- **Rung 3 — CPS / an outside adult.** Only after earlier rungs are ignored *and* harm keeps
-  escalating: a caseworker intervenes — supervision, and ultimately the child can be
-  **removed into care**, a specific, sobering epilogue branch. This is consequence with
-  teeth that is *not* a ban: the system protects the child. It is the hard floor of Tier A.
+- **Rung 3 — CPS review (a deliberated, protocol-grounded decision).** Only after earlier
+  rungs are ignored *and* harm keeps escalating does a child-welfare review convene. Removal
+  is **not** a meter crossing a line: a **CPS caseworker** and the **Psychologist** confer —
+  each an LLM role, both reading the actual scene transcripts and the child's Identity
+  Document — and reach a determination using the real frameworks child-welfare workers use:
+  - **Safety vs. risk (Structured Decision Making, SDM):** is there a *present or impending
+    danger* of serious harm — distinct from longer-term risk?
+  - **Reasonable efforts / least-restrictive intervention:** removal is a *last resort*,
+    permitted only when the danger is serious **and** cannot be controlled in the home. The
+    earlier rungs (psychologist consult, family therapy) **are** the game's reasonable
+    efforts — a parent who engaged them and whose child is still reachable keeps the child on
+    an **in-home safety plan**; a parent who ignored them while danger escalated has
+    exhausted them.
+  - **Outcomes:** *stays home* (in-home safety plan / monitoring), or *removal into care* (a
+    specific, sobering epilogue branch).
+
+  This models real due process — the child's protection follows a considered judgment, not an
+  arbitrary meter — which is both more powerful and more responsible. It is still a
+  consequence with teeth that is *not* a ban: the system protects the child. Hard floor of
+  Tier A.
+
+  **Implementation note:** the CPS↔Psychologist deliberation is a short multi-turn LLM
+  exchange between two roles that read the scene transcript + Identity Document and apply the
+  criteria above, producing a structured verdict
+  `{ outcome: "stay" | "safety_plan" | "removal", rationale }`. The frameworks (SDM
+  safety/risk, present-vs-impending danger, reasonable-efforts, least-restrictive-intervention)
+  are encoded in the role prompts; the game **adapts** them — it is not a certified training
+  tool, and player-facing text never cites the frameworks by name.
 
 Each rung is simultaneously a consequence and a healing beat — it models what real support
 and accountability look like, delivered with compassion, always leaving a door back (until
