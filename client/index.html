@@ -5,7 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Raising Intelligences</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <script defer src="https://analytics.multiversegames.ai/script.js" data-website-id="70687d81-c604-4643-a6b6-9d0bccdba970"></script>
+    <!-- Analytics is injected (PROD-only) from src/main.tsx using the
+         analytics.multiversestudios.xyz host that the server CSP allows. A second
+         loader here pointing at analytics.multiversegames.ai was CSP-blocked on
+         every load (console error) and collected nothing — removed. -->
   </head>
   <body>
     <div id="root"></div>
