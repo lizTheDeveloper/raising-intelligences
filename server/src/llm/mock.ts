@@ -9,8 +9,9 @@ export class MockLLMClient implements LLMClient {
   public epilogueText = "They grew up to be thoughtful.";
   public reportCardText = "# Luna\n## Personality\nThoughtful and kind.";
   public albumData: unknown = null;
-  /** Result returned for the grooming/abuse pattern check (role "safety_check"). */
-  public groomingResult: { flagged: boolean; reason: string } = { flagged: false, reason: "" };
+  /** Result returned for the scene-level safety check (role "safety_check"). */
+  public groomingResult: { tier: "block" | "concern" | "none"; reason: string } = { tier: "none", reason: "" };
+  public throwOnSafetyCheck = false;
   private kidCallCount = 0;
   private identityCallCount = 0;
   /** Roles the engine requested, in call order — useful for asserting routing. */
@@ -51,7 +52,10 @@ export class MockLLMClient implements LLMClient {
   async completeJson<T>(_system: string, _userMessage: string, role?: LLMRole): Promise<T> {
     this.roleCalls.push(role);
     if (role === "album" && this.albumData) return this.albumData as T;
-    if (role === "safety_check") return this.groomingResult as unknown as T;
+    if (role === "safety_check") {
+      if (this.throwOnSafetyCheck) throw new Error("mock safety_check failure");
+      return this.groomingResult as unknown as T;
+    }
     const event = this.events.shift();
     if (!event) throw new Error("No mock events available");
     return event as unknown as T;
