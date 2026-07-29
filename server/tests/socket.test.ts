@@ -23,6 +23,33 @@ function waitFor<T = any>(socket: ClientSocket, event: string): Promise<T> {
   return new Promise((resolve) => socket.once(event, resolve));
 }
 
+/**
+ * Resolve with the first `event` payload that satisfies `predicate`, ignoring
+ * non-matching ones. A plain `once` is racy here: strays (e.g. a portrait
+ * generation finishing) can land on the freshly-registered listener, which made
+ * this file fail only under the parallel full-suite run.
+ */
+function waitUntil<T = any>(
+  socket: ClientSocket,
+  event: string,
+  predicate: (payload: T) => boolean,
+  timeoutMs = 10_000
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      socket.off(event, handler);
+      reject(new Error(`Timed out waiting for "${event}"`));
+    }, timeoutMs);
+    function handler(payload: T) {
+      if (!predicate(payload)) return;
+      clearTimeout(timer);
+      socket.off(event, handler);
+      resolve(payload);
+    }
+    socket.on(event, handler);
+  });
+}
+
 describe("socket multiplayer flow", () => {
   let httpServer: HttpServer;
   let io: SocketServer;
@@ -75,29 +102,30 @@ describe("socket multiplayer flow", () => {
     expect((await joined2).slot).toBe("parent2");
     expect((await lobbyAfterJoin).players).toHaveLength(2);
 
-    // Step 1: both ready → server generates the event preview, stays in event_intro.
-    const preview1 = waitFor<{ phase: string; currentEvent: { description: string } }>(p1, E.STATE);
-    const preview2 = waitFor<{ phase: string }>(p2, E.STATE);
+    // One ready gate: the server generates the scenario AND begins family chat.
+    // (This was two separate both-ready rounds; requiring two synchronised
+    // rounds across a slow model call stranded real games in event_intro.)
+    const chat1 = waitUntil<{ phase: string; currentEvent: { description: string } }>(
+      p1,
+      E.STATE,
+      (s) => s.phase === "family_chat"
+    );
+    const chat2 = waitUntil<{ phase: string }>(p2, E.STATE, (s) => s.phase === "family_chat");
     p1.emit(E.READY, { ready: true });
     p2.emit(E.READY, { ready: true });
-    const previewState = await preview1;
-    await preview2;
-    expect(previewState.phase).toBe("event_intro");
-    expect(previewState.currentEvent.description).toContain("broke a vase");
-
-    // Step 2: both ready again → server starts family chat.
-    const state1 = waitFor<{ phase: string; currentEvent: { description: string } }>(p1, E.STATE);
-    const state2 = waitFor<{ phase: string }>(p2, E.STATE);
-    p1.emit(E.READY, { ready: true });
-    p2.emit(E.READY, { ready: true });
-    const s1 = await state1;
-    await state2;
+    const s1 = await chat1;
+    await chat2;
     expect(s1.phase).toBe("family_chat");
     expect(s1.currentEvent.description).toContain("broke a vase");
 
     // P1 sends a message; both clients see the message_done + updated state.
+    // Wait for the state that actually carries the pair, not merely the next one.
     const done = waitFor(p2, E.MESSAGE_DONE);
-    const stateAfterMsg = waitFor<{ messages: unknown[] }>(p2, E.STATE);
+    const stateAfterMsg = waitUntil<{ messages: unknown[] }>(
+      p2,
+      E.STATE,
+      (s) => s.messages.length >= 2
+    );
     p1.emit(E.PARENT_MESSAGE, { content: "It's okay, accidents happen." });
     await done;
     const afterMsg = await stateAfterMsg;

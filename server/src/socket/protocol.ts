@@ -87,6 +87,10 @@ export const SOCKET_EVENTS = {
   STATE: "state",
   KID_CHUNK: "kid_chunk",
   MESSAGE_DONE: "message_done",
+  /** Server is generating the next scenario. Emitted `true` before the (long)
+   * world-manager call and `false` once it settles, so the ready flags being
+   * cleared reads as progress rather than as the click having been undone. */
+  GENERATING: "generating",
   /** Generic doc chunk — streamed Psychologist / Epilogue / Report Card text. */
   DOC_CHUNK: "doc_chunk",
   /** Final event after a doc stream completes (psychologist done). */

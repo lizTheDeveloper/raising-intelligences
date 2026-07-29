@@ -287,15 +287,33 @@ export function createGameRoutes(
   });
 
   router.post("/game/:id/end-debrief", async (req: Request, res: Response) => {
-    const state = await resolveGame(req.params.id as string);
-    if (!state) {
+    const gameId = req.params.id as string;
+    if (!(await resolveGame(gameId))) {
       res.status(404).json({ error: "Game not found" });
       return;
     }
-    const next = engine.endDebrief(state);
-    games.set(next.id, next);
-    await repo.saveGame(next);
-    res.json({ phase: next.phase });
+
+    // Serialized through the same per-game lock as the other mutating routes and
+    // the socket handlers, so a double-submit can't read the same state twice
+    // and apply END_DEBRIEF on top of itself.
+    await lock(gameId, async () => {
+      const state = await resolveGame(gameId);
+      if (!state) {
+        res.status(404).json({ error: "Game not found" });
+        return;
+      }
+      // Out-of-phase calls (a stale client, a retry after the phase already
+      // advanced) previously threw "Invalid transition" out of the reducer and
+      // surfaced as a 500. Reject cleanly and leave the game untouched.
+      if (state.phase !== "debrief") {
+        res.status(409).json({ error: `Cannot end the debrief from the ${state.phase} phase` });
+        return;
+      }
+      const next = engine.endDebrief(state);
+      games.set(next.id, next);
+      await repo.saveGame(next);
+      res.json({ phase: next.phase });
+    });
   });
 
   // Submit a parent's personality (OCEAN scores + confessionals). When all

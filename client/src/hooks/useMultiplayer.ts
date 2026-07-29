@@ -26,6 +26,7 @@ const E = {
   EPILOGUE: "epilogue",
   REPORT_CARD_READY: "report_card_ready",
   SCENE_ENDED: "scene_ended",
+  GENERATING: "generating",
   ERROR: "error",
 } as const;
 
@@ -106,6 +107,9 @@ export function useMultiplayer() {
   const [inLobby, setInLobby] = useState(false);
   const [seedReady, setSeedReady] = useState(false);
   const [sceneEnding, setSceneEnding] = useState(false);
+  /** True while the server is generating the next scenario. Lets the UI show
+   * progress instead of the ready flags appearing to reset for no reason. */
+  const [generating, setGenerating] = useState(false);
   const playerTokenRef = useRef<string | null>(null);
 
   const ensureSocket = useCallback((): Socket => {
@@ -156,6 +160,7 @@ export function useMultiplayer() {
       if (s.phase !== "family_chat" && s.phase !== "sidebar") setSceneEnding(false);
     });
     socket.on(E.SCENE_ENDED, () => setSceneEnding(true));
+    socket.on(E.GENERATING, (d: { generating: boolean }) => setGenerating(!!d.generating));
     socket.on(E.KID_CHUNK, (d: { text: string }) => {
       setIsStreaming(true);
       setStreamingMessage((prev) => prev + d.text);
@@ -267,6 +272,7 @@ export function useMultiplayer() {
     inLobby,
     seedReady,
     sceneEnding,
+    generating,
     streamingMessage,
     streamingDocText,
     isStreaming,

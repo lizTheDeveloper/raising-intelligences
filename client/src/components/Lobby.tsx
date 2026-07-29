@@ -6,11 +6,13 @@ interface Props {
   players: PublicPlayer[];
   childName: string;
   error: string | null;
+  /** Server is building the first scenario after both players readied. */
+  generating?: boolean;
   onReady: (ready: boolean) => void;
   onLeave: () => void;
 }
 
-export function Lobby({ gameId, slot, players, childName, error, onReady, onLeave }: Props) {
+export function Lobby({ gameId, slot, players, childName, error, generating, onReady, onLeave }: Props) {
   const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   const link = `${window.location.origin}${base}/?game=${gameId}`;
   const me = players.find((p) => p.slot === slot);
@@ -61,9 +63,18 @@ export function Lobby({ gameId, slot, players, childName, error, onReady, onLeav
 
       {error && <p className="error">{error}</p>}
 
-      <button className="btn" onClick={toggle} disabled={!bothConnected}>
-        {ready ? "waiting for the other parent…" : bothConnected ? "ready" : "waiting for player 2…"}
-      </button>
+      {generating ? (
+        // Both players have readied and the server cleared the ready flags to
+        // keep generation single-flight. Without this the reset looks like the
+        // click was undone, which is what stalled real games.
+        <p className="dim" role="status" aria-live="polite">
+          building your first scene…
+        </p>
+      ) : (
+        <button className="btn" onClick={toggle} disabled={!bothConnected}>
+          {ready ? "waiting for the other parent…" : bothConnected ? "ready" : "waiting for player 2…"}
+        </button>
+      )}
 
       <button className="btn btn-secondary" onClick={onLeave} style={{ marginTop: 12 }}>
         leave game

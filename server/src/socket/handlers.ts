@@ -307,13 +307,30 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
         try {
           if (state.phase === "event_intro" && state.currentEvent === null) {
-            const next = await conversationEngine.loadEvent(state);
-            games.set(next.id, next);
-            if (next.currentEvent) await repo.saveEvent(next.id, next.currentEvent);
-            await repo.saveGame(next);
-            broadcastState(gameId);
-            broadcastLobby(gameId);
+            // One gate takes the pair all the way into the chat: generate the
+            // scenario, then begin the chat inside the same lock.
+            //
+            // This used to stop after loadEvent and demand a SECOND both-ready
+            // round. In production that stranded 9 of 13 fully-joined games in
+            // event_intro with zero messages and no exception logged — two
+            // people cannot reliably re-synchronise across a ~20s model call
+            // while the UI silently clears the ready flags they just set.
+            io.to(gameId).emit(E.GENERATING, { generating: true });
+            try {
+              const loaded = await conversationEngine.loadEvent(state);
+              if (loaded.currentEvent) await repo.saveEvent(loaded.id, loaded.currentEvent);
+              const next = conversationEngine.beginChat(loaded);
+              games.set(next.id, next);
+              await repo.saveGame(next);
+              broadcastState(gameId);
+              broadcastLobby(gameId);
+              generateNextPortrait(gameId).catch(() => {});
+            } finally {
+              io.to(gameId).emit(E.GENERATING, { generating: false });
+            }
           } else if (state.phase === "event_intro" && state.currentEvent !== null) {
+            // Recovery path: games left mid-handshake by the old two-round gate
+            // still have a scenario but no chat. One gate finishes them.
             const next = conversationEngine.beginChat(state);
             games.set(next.id, next);
             await repo.saveGame(next);

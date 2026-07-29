@@ -105,10 +105,14 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   // Guardian screen: show on the first event intro (eventNumber === 1, event loaded).
   // Derived from state so reconnects to later phases skip it correctly.
   const inLobbyView = !state || (state.phase === "event_intro" && state.currentEventNumber === 0);
+  // Not gated on `event_intro`: one ready gate now carries the pair straight
+  // from the lobby into `family_chat`, so requiring that phase would skip the
+  // guardian intro entirely. It's a local, per-player overlay — dismissing it
+  // doesn't touch shared state.
   const showGuardian =
     !guardianDismissed &&
     !!state &&
-    state.phase === "event_intro" &&
+    (state.phase === "event_intro" || state.phase === "family_chat") &&
     state.currentEventNumber === 1 &&
     state.currentEvent !== null;
 
@@ -244,6 +248,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
           players={mp.players}
           childName={state?.childName ?? childInput}
           error={mp.error}
+          generating={mp.generating}
           onReady={mp.ready}
           onLeave={mp.leaveGame}
         />
@@ -267,7 +272,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     );
   }
 
-  // ---- Between chapters: two-step ready gate ----
+  // ---- Between chapters: one ready gate straight into the next chapter ----
   if (state.phase === "event_intro") {
     return (
       <div className="app fade-in">
@@ -280,15 +285,21 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
           ) : (
             <p className="dim">the story continues…</p>
           )}
-          <ReadyToggle
-            ready={gateReady}
-            onToggle={(v) => {
-              setGateReady(v);
-              mp.ready(v);
-            }}
-            label={state.currentEvent ? "ready to begin" : "ready for the next chapter"}
-            players={mp.players}
-          />
+          {mp.generating ? (
+            <p className="dim" role="status" aria-live="polite">
+              building the next scene…
+            </p>
+          ) : (
+            <ReadyToggle
+              ready={gateReady}
+              onToggle={(v) => {
+                setGateReady(v);
+                mp.ready(v);
+              }}
+              label={state.currentEvent ? "ready to begin" : "ready for the next chapter"}
+              players={mp.players}
+            />
+          )}
         </div>
       </div>
     );
