@@ -31,7 +31,7 @@ import {
   type ViewerState,
 } from "./protocol.js";
 import { generatePersonalitySeed } from "../game/personality.js";
-import { moderateParentMessage, applyModerationBlock } from "../safety/moderation.js";
+import { moderateParentMessage, applyModerationBlock, recordConcern } from "../safety/moderation.js";
 import { getSocketIp } from "../lib/client-ip.js";
 import { buildSceneTranscript } from "../game/context-assembler.js";
 import { captureException } from "../observability/sentry.js";
@@ -128,11 +128,11 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     const emitChunk = (chunk: string) => {
       io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
     };
-    const { state: next, groomingCheck } = await conversationEngine.endFamilyChat(state, emitChunk);
+    const { state: next, sceneSafety } = await conversationEngine.endFamilyChat(state, emitChunk);
     const snap = next.identitySnapshots[next.identitySnapshots.length - 1];
     if (snap) await repo.saveSnapshot(next.id, snap);
 
-    if (groomingCheck.flagged) {
+    if (sceneSafety.tier === "block") {
       const lastParentMessage = [...next.messages].reverse().find((m) => m.sender !== "kid");
       await applyModerationBlock({
         repo,
@@ -140,13 +140,26 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         state: next,
         sender: lastParentMessage?.sender ?? "parent1",
         content: buildSceneTranscript(next),
-        reason: groomingCheck.reason,
+        reason: sceneSafety.reason,
         ipAddress,
-        banIp: "repeat-offender", // scene-level pattern check: flag + end session on 1st, permanent ban on a 2nd flag in another game -- see moderation.ts
+        banIp: true, // Tier B bright line — reliable, so ban immediately.
       });
       io.to(gameId).emit(E.ERROR, { error: "This session has ended." });
       broadcastState(gameId);
       return;
+    }
+
+    if (sceneSafety.tier === "concern") {
+      const lastParentMessage = [...next.messages].reverse().find((m) => m.sender !== "kid");
+      await recordConcern({
+        repo,
+        state: next,
+        sender: lastParentMessage?.sender ?? "parent1",
+        reason: sceneSafety.reason,
+        ipAddress,
+      });
+      // NOTE: session continues. In-fiction consequences are handled by the
+      // trajectory system today and the intervention ladder (Plan 3) later.
     }
 
     games.set(next.id, next);
@@ -402,9 +415,10 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           emitChunk
         );
 
-        // Mid-scene abuse interception: terminate immediately rather than
-        // letting a bad-faith actor keep going until the scene ends.
-        if (result.abuse) {
+        // Mid-scene safety interception: a "block" verdict terminates
+        // immediately rather than letting a bad-faith actor keep going until
+        // the scene ends; a "concern" verdict records and continues.
+        if (result.sceneSafety?.tier === "block") {
           const lastParent = [...result.state.messages].reverse().find((m) => m.sender !== "kid");
           await applyModerationBlock({
             repo,
@@ -412,13 +426,25 @@ export function registerSocketHandlers(deps: SocketDeps): void {
             state: result.state,
             sender: lastParent?.sender ?? slot,
             content: buildSceneTranscript(result.state),
-            reason: result.abuse.reason,
+            reason: result.sceneSafety.reason,
             ipAddress: getSocketIp(socket),
-            banIp: "repeat-offender",
+            banIp: true, // Tier B bright line — reliable, so ban immediately.
           });
           fail("This session has ended.");
           broadcastState(gameId);
           return;
+        }
+
+        if (result.sceneSafety?.tier === "concern") {
+          const lastParent = [...result.state.messages].reverse().find((m) => m.sender !== "kid");
+          await recordConcern({
+            repo,
+            state: result.state,
+            sender: lastParent?.sender ?? slot,
+            reason: result.sceneSafety.reason,
+            ipAddress: getSocketIp(socket),
+          });
+          // NOTE: session continues — fall through to the normal message flow below.
         }
 
         // Detect and strip the [SCENE_END] sentinel before saving/broadcasting

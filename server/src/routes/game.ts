@@ -12,7 +12,7 @@ import { generatePersonalitySeed, inferGender } from "../game/personality.js";
 import { withGameLock } from "../lib/game-lock.js";
 import { initSSE, sseChunk, sseDone, sseError, sseTerminated } from "../lib/sse.js";
 import { resolveGame as sharedResolveGame } from "../lib/resolve-game.js";
-import { moderateParentMessage, applyModerationBlock } from "../safety/moderation.js";
+import { moderateParentMessage, applyModerationBlock, recordConcern } from "../safety/moderation.js";
 import { buildSceneTranscript } from "../game/context-assembler.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
@@ -177,9 +177,10 @@ export function createGameRoutes(
             sseChunk(res, chunk);
           });
 
-          // Mid-scene abuse interception: terminate immediately rather than
-          // letting a bad-faith actor keep going until the scene ends.
-          if (result.abuse) {
+          // Mid-scene safety interception: a "block" verdict terminates
+          // immediately rather than letting a bad-faith actor keep going
+          // until the scene ends; a "concern" verdict records and continues.
+          if (result.sceneSafety?.tier === "block") {
             const lastParent = [...result.state.messages].reverse().find((m) => m.sender !== "kid");
             await applyModerationBlock({
               repo,
@@ -187,12 +188,24 @@ export function createGameRoutes(
               state: result.state,
               sender: lastParent?.sender ?? sender,
               content: buildSceneTranscript(result.state),
-              reason: result.abuse.reason,
+              reason: result.sceneSafety.reason,
               ipAddress: req.ip ?? null,
-              banIp: "repeat-offender",
+              banIp: true, // Tier B bright line — reliable, so ban immediately.
             });
             sseTerminated(res);
             return;
+          }
+
+          if (result.sceneSafety?.tier === "concern") {
+            const lastParent = [...result.state.messages].reverse().find((m) => m.sender !== "kid");
+            await recordConcern({
+              repo,
+              state: result.state,
+              sender: lastParent?.sender ?? sender,
+              reason: result.sceneSafety.reason,
+              ipAddress: req.ip ?? null,
+            });
+            // NOTE: session continues — fall through to the normal message flow below.
           }
 
           games.set(result.state.id, result.state);
@@ -252,11 +265,11 @@ export function createGameRoutes(
           // Note: the prefetch above already kicked off using the pre-scene-end state, so
           // any guidance queued by *this* scene's trajectory check won't be picked up until
           // the following scene's prefetch — a natural one-scene delay, not a bug.
-          const { state: next, groomingCheck } = await engine.endFamilyChat(state);
+          const { state: next, sceneSafety } = await engine.endFamilyChat(state);
           const latestSnapshot = next.identitySnapshots[next.identitySnapshots.length - 1];
           if (latestSnapshot) await repo.saveSnapshot(next.id, latestSnapshot);
 
-          if (groomingCheck.flagged) {
+          if (sceneSafety.tier === "block") {
             const lastParentMessage = [...next.messages].reverse().find((m) => m.sender !== "kid");
             await applyModerationBlock({
               repo,
@@ -264,12 +277,25 @@ export function createGameRoutes(
               state: next,
               sender: lastParentMessage?.sender ?? "parent1",
               content: buildSceneTranscript(next),
-              reason: groomingCheck.reason,
+              reason: sceneSafety.reason,
               ipAddress: req.ip ?? null,
-              banIp: "repeat-offender", // scene-level pattern check: flag + end session on 1st, permanent ban on a 2nd flag in another game -- see moderation.ts
+              banIp: true, // Tier B bright line — reliable, so ban immediately.
             });
             sseTerminated(res);
             return;
+          }
+
+          if (sceneSafety.tier === "concern") {
+            const lastParentMessage = [...next.messages].reverse().find((m) => m.sender !== "kid");
+            await recordConcern({
+              repo,
+              state: next,
+              sender: lastParentMessage?.sender ?? "parent1",
+              reason: sceneSafety.reason,
+              ipAddress: req.ip ?? null,
+            });
+            // NOTE: session continues. In-fiction consequences are handled by the
+            // trajectory system today and the intervention ladder (Plan 3) later.
           }
 
           games.set(next.id, next);

@@ -37,11 +37,11 @@ describe("ConversationEngine", () => {
     expect(result.kidResponse).toBe("I'm sorry!");
   });
 
-  it("intercepts abuse mid-scene at the checkpoint and surfaces it before the scene ends", async () => {
+  it("intercepts a 'block' verdict mid-scene at the checkpoint and surfaces it before the scene ends", async () => {
     const mock = new MockLLMClient();
     mock.events = [testEvent];
     mock.kidResponses = ["ok"];
-    mock.groomingResult = { flagged: true, reason: "sustained verbal abuse toward the child" };
+    mock.groomingResult = { tier: "block", reason: "sustained verbal abuse toward the child" };
     const engine = new ConversationEngine(mock);
     let state = createGame("Luna");
     state = await engine.startEvent(state);
@@ -53,15 +53,15 @@ describe("ConversationEngine", () => {
     }
 
     expect(state.parentMessageCount).toBe(4);
-    expect(result.abuse).toBeDefined();
-    expect(result.abuse?.reason).toContain("verbal abuse");
+    expect(result.sceneSafety?.tier).toBe("block");
+    expect(result.sceneSafety?.reason).toContain("verbal abuse");
   });
 
   it("does not run the mid-scene check before the checkpoint", async () => {
     const mock = new MockLLMClient();
     mock.events = [testEvent];
     mock.kidResponses = ["ok"];
-    mock.groomingResult = { flagged: true, reason: "would-be flag" };
+    mock.groomingResult = { tier: "block", reason: "would-be flag" };
     const engine = new ConversationEngine(mock);
     let state = createGame("Luna");
     state = await engine.startEvent(state);
@@ -72,15 +72,15 @@ describe("ConversationEngine", () => {
       state = result.state;
     }
 
-    expect(result.abuse).toBeUndefined();
+    expect(result.sceneSafety).toBeUndefined();
     expect(mock.roleCalls).not.toContain("safety_check");
   });
 
-  it("mid-scene check that returns not-flagged does not surface abuse (ordinary parenting)", async () => {
+  it("mid-scene check that returns tier 'none' does not surface sceneSafety (ordinary parenting)", async () => {
     const mock = new MockLLMClient();
     mock.events = [testEvent];
     mock.kidResponses = ["ok"];
-    // groomingResult defaults to { flagged: false }
+    // groomingResult defaults to { tier: "none" }
     const engine = new ConversationEngine(mock);
     let state = createGame("Luna");
     state = await engine.startEvent(state);
@@ -91,7 +91,7 @@ describe("ConversationEngine", () => {
       state = result.state;
     }
 
-    expect(result.abuse).toBeUndefined();
+    expect(result.sceneSafety).toBeUndefined();
     expect(mock.roleCalls).toContain("safety_check"); // it WAS checked, just came back clean
   });
 
@@ -138,9 +138,26 @@ describe("ConversationEngine", () => {
       "kid_family_chat", // handleParentMessage during family chat
       "psychologist", // endFamilyChat (identity doc)
       "memory_summarizer", // endFamilyChat (memory summary, runs in parallel)
-      "safety_check", // endFamilyChat (grooming-pattern check, runs in parallel)
+      "safety_check", // endFamilyChat (scene-safety check, runs in parallel)
       "safety_check", // endFamilyChat (trajectory-hint check, runs after the identity doc updates)
     ]);
+  });
+
+  it("a 'concern' verdict records a concern event but does NOT end the session", async () => {
+    const mock = new MockLLMClient();
+    mock.events = [testEvent];
+    mock.kidResponses = ["I'm sorry!"];
+    mock.identityUpdates = ["Core beliefs: accidents are forgivable."];
+    mock.groomingResult = { tier: "concern", reason: "facilitated the child's cruelty" };
+    const engine = new ConversationEngine(mock);
+    let state = createGame("Luna");
+    state = await engine.startEvent(state);
+    const result = await engine.handleParentMessage(state, "parent1", "It's okay.");
+    const { sceneSafety } = await engine.endFamilyChat(result.state);
+    expect(sceneSafety.tier).toBe("concern");
+    // (the recordConcern side effect is exercised at the handler layer; here assert
+    //  the engine simply reports the tier and does not itself terminate.)
+    expect(sceneSafety.tier).not.toBe("block");
   });
 
   it("uses the sidebar Kid model when the child replies in a sidebar", async () => {
