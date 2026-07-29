@@ -100,14 +100,17 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", "https://analytics.multiversestudios.xyz"],
+          // Both analytics hosts: the client loads whichever matches the domain
+          // the user reached (Comcast SNI-blocks .xyz, so .ai users need .ai) —
+          // see the domain-aware loader in client/src/main.tsx.
+          scriptSrc: ["'self'", "https://analytics.multiversestudios.xyz", "https://analytics.multiversegames.ai"],
           // Inline styles used by React component library; Google Fonts stylesheet
           styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
           // Portrait images arrive as data URIs and blob: URLs during generation
           imgSrc: ["'self'", "data:", "blob:"],
-          // SSE and API calls go back to the same origin; analytics goes to the
-          // configured domain if present.
-          connectSrc: ["'self'", allowedOrigin, "https://analytics.multiversestudios.xyz"],
+          // SSE and API calls go back to the same origin; the analytics script
+          // POSTs events back to whichever host it loaded from, so allow both.
+          connectSrc: ["'self'", allowedOrigin, "https://analytics.multiversestudios.xyz", "https://analytics.multiversegames.ai"],
           fontSrc: ["'self'", "https://fonts.gstatic.com"],
           mediaSrc: ["'self'"],
         },
