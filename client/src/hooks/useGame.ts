@@ -125,7 +125,17 @@ export function useGame() {
   const [error, setError] = useState<string | null>(null);
 
   const setTrackedError = useCallback((msg: string | null, step?: string) => {
-    if (msg) track("error_occurred", { step: step ?? "unknown" });
+    if (msg) {
+      // Capture the message + any HTTP status alongside the step so failures are
+      // diagnosable from analytics alone, without SSH-ing to server logs. The
+      // client-built messages carry no user PII (status + generic server text).
+      const statusMatch = msg.match(/\b([45]\d{2})\b/);
+      track("error_occurred", {
+        step: step ?? "unknown",
+        message: msg.slice(0, 120),
+        ...(statusMatch ? { status: Number(statusMatch[1]) } : {}),
+      });
+    }
     setError(msg);
   }, []);
 
@@ -305,8 +315,12 @@ export function useGame() {
       if (!res.ok || !res.body) {
         const body = await res.text().catch(() => "");
         setTrackedError(`Failed to end chat: ${res.status}${body ? ` — ${body}` : ""}`, "end_chat");
-        setPhase("family_chat");
         setStreamingDocText("");
+        // Reconcile with the server instead of assuming family_chat — end-chat
+        // often succeeded server-side (the phase already advanced), and assuming
+        // family_chat is what let users re-click into the "Invalid transition"
+        // loop. Fall back to family_chat only if the state fetch also fails.
+        if (!(await loadGame(gameId))) setPhase("family_chat");
         return;
       }
       // Psychologist output is internal — fragments show on processing screen instead.
@@ -314,10 +328,10 @@ export function useGame() {
       setPhase(data.phase);
     } catch (err) {
       setTrackedError(`Failed to end chat: ${err instanceof Error ? err.message : String(err)}`, "end_chat");
-      setPhase("family_chat");
       setStreamingDocText("");
+      if (!(await loadGame(gameId))) setPhase("family_chat");
     }
-  }, [gameId, messagesRemaining, currentEvent]);
+  }, [gameId, messagesRemaining, currentEvent, loadGame]);
 
   const endDebrief = useCallback(async () => {
     if (!gameId) return;
