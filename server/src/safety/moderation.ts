@@ -104,6 +104,24 @@ export async function applyModerationBlock(params: {
 }
 
 /**
+ * Tier A side effect: persist a concern event for the intervention system.
+ * Unlike applyModerationBlock, this NEVER ends the session or bans — the point
+ * of the redesign is that dark-but-in-fiction parenting is met with in-fiction
+ * consequences, not a ban.
+ */
+export async function recordConcern(params: {
+  repo: GameRepository;
+  state: GameState;
+  sender: Sender;
+  reason: string;
+  ipAddress: string | null;
+}): Promise<void> {
+  const { repo, state, sender, reason, ipAddress } = params;
+  await repo.saveConcernEvent({ gameId: state.id, sender, reason, ipAddress });
+  logger.info("concern_event", { gameId: state.id, sender, reason });
+}
+
+/**
  * Runs the per-message content check before a parent message reaches the
  * child-LLM. On a flag: blocks the message and terminates the session via
  * applyModerationBlock. Skips entirely in the `adult_chat` phase — that
