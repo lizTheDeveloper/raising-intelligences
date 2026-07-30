@@ -6,7 +6,7 @@
 
 ## Commit range
 
-`99a733f..007cb4d` (6 commits: Tasks 1–4 + Task 6 + ledger update; Task 5 is verification-only, no commit)
+`99a733f..f92bcfa` (7 commits: Tasks 1–4 + Task 6 + ledger update + this report; Task 5 is verification-only, no commit)
 
 ```
 99a733f feat(safety): three-outcome scene classifier (block/concern/none) replacing boolean grooming flag
@@ -15,6 +15,7 @@ b9d72fe feat(safety): route scene classifier — block bans, concern records + c
 39f1377 test(safety): regression — concern keeps session alive, block terminates + bans
 8230875 chore(safety): script to reverse false-positive repeat-offender bans (dry-run default)
 007cb4d docs: check off Plan 1 tasks in the SDD progress ledger
+f92bcfa docs: Plan 1 implementation report
 ```
 
 ## Verification (final)
