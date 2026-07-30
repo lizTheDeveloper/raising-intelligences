@@ -6,6 +6,10 @@ import {
   EPILOGUE_SYSTEM_PROMPT,
   REPORT_CARD_SYSTEM_PROMPT,
   ALBUM_SYSTEM_PROMPT,
+  PSYCHOLOGIST_CONSULT_SYSTEM_PROMPT,
+  FAMILY_THERAPIST_SYSTEM_PROMPT,
+  CPS_CASEWORKER_SYSTEM_PROMPT,
+  REMOVAL_EPILOGUE_SYSTEM_PROMPT,
 } from "../llm/prompts.js";
 import { getAgeSpecificPrompt } from "../llm/kid-prompts-by-age.js";
 import { PARENT_MESSAGE_CAP } from "./state-machine.js";
@@ -213,6 +217,126 @@ export function buildPsychologistContext(state: GameState): {
     userMessage += `## Current Identity Document\n${state.identityDocument}\n\n`;
   }
   userMessage += `## Conversation\n${transcript}\n\nWrite the updated Identity Document for ${state.childName} after this event.`;
+
+  return { system, userMessage };
+}
+
+/**
+ * Dark Play intervention ladder — Rung 1. The Psychologist steps out of the
+ * narration to speak directly to the parent between scenes.
+ */
+export function buildConsultContext(state: GameState): {
+  system: string;
+  userMessage: string;
+} {
+  const system = fillTemplate(PSYCHOLOGIST_CONSULT_SYSTEM_PROMPT, {
+    childName: state.childName,
+  });
+
+  const transcript = buildSceneTranscript(state);
+
+  let userMessage = "";
+  if (state.identityDocument) {
+    userMessage += `## Identity Document\n${state.identityDocument}\n\n`;
+  }
+  userMessage += `## Recent scene\n${transcript}\n\nSpeak to the parent now.`;
+
+  return { system, userMessage };
+}
+
+/**
+ * Dark Play intervention ladder — Rung 2. Serves both the opening turn
+ * (opening=true, therapist speaks first) and every reply turn (opening=false,
+ * responding to the parent's latest message), so the therapy session is
+ * built from a single context shape.
+ */
+export function buildTherapyContext(
+  state: GameState,
+  opening: boolean
+): {
+  system: string;
+  userMessage: string;
+} {
+  const age = String(state.currentEvent?.age ?? 4);
+  const system = fillTemplate(FAMILY_THERAPIST_SYSTEM_PROMPT, {
+    childName: state.childName,
+    age,
+  });
+
+  const transcript = buildSceneTranscript(state);
+  const { parent1Label, parent2Label } = parentLabels(state.relationshipType);
+  const coParentNote = parent2Label
+    ? `This family has two parents in session: ${parent1Label} and ${parent2Label}. Hold space for both.`
+    : `This is a solo-parent household; you are speaking with ${parent1Label}.`;
+
+  const sessionSoFar = state.therapyMessages
+    .map((m) => `${m.speaker === "therapist" ? "Therapist" : "Parent"}: ${m.content}`)
+    .join("\n");
+
+  let userMessage = "";
+  if (state.identityDocument) {
+    userMessage += `## Identity Document\n${state.identityDocument}\n\n`;
+  }
+  userMessage += `## Recent scene\n${transcript}\n\n${coParentNote}\n\n`;
+  if (sessionSoFar) {
+    userMessage += `## Therapy session so far\n${sessionSoFar}\n\n`;
+  }
+  userMessage += opening
+    ? "OPEN the session now — speak first, with a brief, warm welcome."
+    : "Respond now to the parent's latest message above.";
+
+  return { system, userMessage };
+}
+
+/**
+ * Dark Play intervention ladder — Rung 3. The CPS deliberation, using every
+ * piece of evidence gathered so far: identity document, memory summary, the
+ * triggering scene, and the family-therapy session if one happened.
+ */
+export function buildCpsContext(state: GameState): {
+  system: string;
+  userMessage: string;
+} {
+  const age = String(state.currentEvent?.age ?? 4);
+  const system = fillTemplate(CPS_CASEWORKER_SYSTEM_PROMPT, {
+    childName: state.childName,
+    age,
+  });
+
+  const transcript = buildSceneTranscript(state);
+  const sessionSoFar = state.therapyMessages
+    .map((m) => `${m.speaker === "therapist" ? "Therapist" : "Parent"}: ${m.content}`)
+    .join("\n");
+
+  let userMessage = "";
+  if (state.identityDocument) {
+    userMessage += `## Identity Document\n${state.identityDocument}\n\n`;
+  }
+  if (state.memorySummary) {
+    userMessage += `## Memory Summary\n${state.memorySummary}\n\n`;
+  }
+  userMessage += `## Recent scene\n${transcript}\n\n`;
+  if (sessionSoFar) {
+    userMessage += `## Family therapy session\n${sessionSoFar}\n\n`;
+  }
+  userMessage += `Deliberate now and return the JSON determination for ${state.childName}.`;
+
+  return { system, userMessage };
+}
+
+/**
+ * Terminal removal epilogue — used instead of buildEpilogueContext when
+ * cpsOutcome === "removal".
+ */
+export function buildRemovalEpilogueContext(state: GameState): {
+  system: string;
+  userMessage: string;
+} {
+  const system = fillTemplate(REMOVAL_EPILOGUE_SYSTEM_PROMPT, {
+    childName: state.childName,
+  });
+
+  const userMessage = `Identity Document:\n${state.identityDocument}\n\nWrite the story of ${state.childName}'s life after being removed from the home into care.`;
 
   return { system, userMessage };
 }
