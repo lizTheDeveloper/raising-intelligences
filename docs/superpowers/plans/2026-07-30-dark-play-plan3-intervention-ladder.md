@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **Read-and-advance, not interactive (v1 scope).** Each intervention phase generates text the player reads, then advances with a single action — the same interaction shape as `debrief`. No new chat/typing flow. (Interactive therapy responses are an explicit future enhancement, out of scope here.)
+- **Interaction shapes (v1 scope).** Rung 1 `consult` and Rung 3 `cps_review` are **read-and-advance** (the player reads generated text, then advances with a single action — same shape as `debrief`). Rung 2 `therapy` is a **bounded interactive session**: the therapist opens, the parent types replies, the therapist responds turn by turn, capped at `THERAPY_TURN_CAP` parent messages, with a "conclude session" advance. Therapy turns live in a dedicated `therapyMessages` store on the game (NOT in `state.messages`, so the `Sender` union and the family-chat plumbing are untouched).
 - **Removal is terminal and fully decoupled from the IP-ban path.** A CPS `removal` outcome ends the game in a removal epilogue. It MUST NEVER call `applyModerationBlock`, `repo.banIp`, or set any ban. It is an in-fiction child-protection outcome, not a moderation action.
 - **The ladder never bans and never blocks a session.** No path added in this plan calls `applyModerationBlock` or `repo.banIp`. (Tier B block+ban remains only the pre-existing per-message OpenAI check and scene-level block from Plans 1–2, untouched here.)
 - **Concern is server-only.** Do not expose `concernLevel`, `highestRungFired`, or any raw accumulator/verdict field to clients via `ViewerState` or the REST `/state` projection. Screens receive only the generated human-facing text and the beat's outcome label where needed.
@@ -33,10 +33,13 @@
 - Consumes: `concernLevel` (Plan 2), `CONCERN_MAX`.
 - Produces:
   - `GamePhase` gains `"consult" | "therapy" | "cps_review"`.
-  - `GameState` gains: `highestRungFired: number` (0 none, 1 consult, 2 therapy, 3 cps — persisted), `interventionText: string | null` (the generated beat text for the current intervention phase; ephemeral, not persisted), `cpsOutcome: "stay" | "safety_plan" | "removal" | null` (last CPS determination; persisted for the epilogue branch).
+  - `GameState` gains: `highestRungFired: number` (0 none, 1 consult, 2 therapy, 3 cps — persisted), `interventionText: string | null` (the generated beat text for the read-and-advance phases, consult/cps; ephemeral, not persisted), `cpsOutcome: "stay" | "safety_plan" | "removal" | null` (last CPS determination; persisted for the epilogue branch), and `therapyMessages: Array<{ speaker: "therapist" | "parent"; content: string }>` (the Rung-2 session transcript; persisted as JSONB so a mid-session reconnect resumes; cleared on `END_INTERVENTION`).
+  - `TherapyMessage` type exported from `types.ts`: `export interface TherapyMessage { speaker: "therapist" | "parent"; content: string }`.
+  - Constant `THERAPY_TURN_CAP = 3` (max parent messages in a therapy session).
   - Constants `CONSULT_THRESHOLD`, `THERAPY_THRESHOLD`, `CPS_THRESHOLD`, `CONSULT_DECAY`, `THERAPY_DECAY`, `CPS_STAY_DECAY` (all exported).
   - `export function selectDueRung(concernLevel: number, highestRungFired: number): 0 | 1 | 2 | 3` — the highest rung whose threshold is met and whose number exceeds `highestRungFired`; `0` if none due.
-  - `GameAction` variants: `{ type: "ENTER_INTERVENTION"; rung: 1 | 2 | 3; text: string }` (debrief → the matching phase, stores `interventionText`, sets `highestRungFired = rung`); `{ type: "SET_CPS_OUTCOME"; outcome: "stay" | "safety_plan" | "removal" }`; `{ type: "END_INTERVENTION" }` (any intervention phase → `event_intro`, applies nothing itself — decay is applied via `CONCERN_ACCRUED` by the caller; clears `interventionText`, resets `currentEvent`/`parentMessageCount`/sidebar like `END_DEBRIEF`).
+  - `GameAction` variants: `{ type: "ENTER_INTERVENTION"; rung: 1 | 2 | 3; text: string }` (debrief → the matching phase, stores `interventionText` — for therapy `text` is the therapist's opening, appended to `therapyMessages` instead; sets `highestRungFired = rung`); `{ type: "APPEND_THERAPY_MESSAGE"; speaker: "therapist" | "parent"; content: string }` (append one turn; allowed only in `therapy`); `{ type: "SET_CPS_OUTCOME"; outcome: "stay" | "safety_plan" | "removal" }`; `{ type: "END_INTERVENTION" }` (any intervention phase → `event_intro`, applies no decay itself — decay is applied via `CONCERN_ACCRUED` by the caller; clears `interventionText` AND `therapyMessages`, resets `currentEvent`/`parentMessageCount`/sidebar like `END_DEBRIEF`).
+  - Decision for `ENTER_INTERVENTION` rung 2: it sets `phase: "therapy"` and appends the opening to `therapyMessages` (`[{ speaker: "therapist", content: text }]`) rather than setting `interventionText`. For rungs 1/3 it sets `interventionText: text` and leaves `therapyMessages` empty.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -75,13 +78,29 @@ describe("intervention ladder — phase transitions", () => {
     expect(next.interventionText).toBe("the psychologist speaks");
     expect(next.highestRungFired).toBe(1);
   });
-  it("END_INTERVENTION returns to event_intro and clears the beat text", () => {
+  it("ENTER_INTERVENTION rung 2 seeds the therapy session with the therapist opening", () => {
+    const s = { ...createGame("Kai"), phase: "debrief" as const };
+    const next = transition(s, { type: "ENTER_INTERVENTION", rung: 2, text: "welcome, let's talk" });
+    expect(next.phase).toBe("therapy");
+    expect(next.interventionText).toBeNull();
+    expect(next.therapyMessages).toEqual([{ speaker: "therapist", content: "welcome, let's talk" }]);
+    expect(next.highestRungFired).toBe(2);
+  });
+  it("APPEND_THERAPY_MESSAGE adds a parent then therapist turn", () => {
+    let s = { ...createGame("Kai"), phase: "debrief" as const };
+    s = transition(s, { type: "ENTER_INTERVENTION", rung: 2, text: "open" });
+    s = transition(s, { type: "APPEND_THERAPY_MESSAGE", speaker: "parent", content: "I hear you" });
+    s = transition(s, { type: "APPEND_THERAPY_MESSAGE", speaker: "therapist", content: "thank you" });
+    expect(s.therapyMessages.map((m) => m.speaker)).toEqual(["therapist", "parent", "therapist"]);
+  });
+  it("END_INTERVENTION returns to event_intro and clears text + therapy transcript", () => {
     let s = { ...createGame("Kai"), phase: "debrief" as const };
     s = transition(s, { type: "ENTER_INTERVENTION", rung: 2, text: "therapy" });
-    expect(s.phase).toBe("therapy");
+    s = transition(s, { type: "APPEND_THERAPY_MESSAGE", speaker: "parent", content: "ok" });
     const next = transition(s, { type: "END_INTERVENTION" });
     expect(next.phase).toBe("event_intro");
     expect(next.interventionText).toBeNull();
+    expect(next.therapyMessages).toEqual([]);
   });
   it("SET_CPS_OUTCOME records the determination", () => {
     let s = { ...createGame("Kai"), phase: "debrief" as const };
@@ -99,20 +118,28 @@ Expected: FAIL — exports/actions/fields do not exist.
 
 - [ ] **Step 3: Extend `GamePhase` and `GameState`**
 
-In `server/src/types.ts`, add to the `GamePhase` union: `| "consult" | "therapy" | "cps_review"` (place after `"debrief"`). In `GameState`, after the `concernLevel` field, add:
+In `server/src/types.ts`, add to the `GamePhase` union: `| "consult" | "therapy" | "cps_review"` (place after `"debrief"`). Add the `TherapyMessage` type near `Message`. In `GameState`, after the `concernLevel` field, add:
 
 ```ts
   /** Dark Play Plan 3 — highest intervention rung that has fired (0 none, 1
    * consult, 2 therapy, 3 cps). Persisted; gates the ladder so each rung fires
    * at most once and reaching the next requires new dark play. Server-only. */
   highestRungFired: number;
-  /** The generated text for the intervention phase currently on screen
-   * (psychologist consult / therapy session / CPS determination). Ephemeral —
-   * regenerated per beat, not persisted. Null outside an intervention phase. */
+  /** The generated read-and-advance text on screen (psychologist consult or CPS
+   * determination). Ephemeral — regenerated per beat, not persisted. Null
+   * outside consult/cps_review. */
   interventionText: string | null;
+  /** Rung-2 family-therapy session transcript. Persisted so a mid-session
+   * reconnect resumes; cleared on END_INTERVENTION. Empty outside therapy. */
+  therapyMessages: TherapyMessage[];
   /** Last CPS determination, if Rung 3 has run. "removal" routes the game to a
    * terminal removal epilogue. Persisted (drives the epilogue branch). */
   cpsOutcome: "stay" | "safety_plan" | "removal" | null;
+```
+
+And near `Message`:
+```ts
+export interface TherapyMessage { speaker: "therapist" | "parent"; content: string }
 ```
 
 - [ ] **Step 4: Constants, selector, actions, createGame init, guards, reducer**
@@ -128,6 +155,8 @@ export const CPS_THRESHOLD = 9;
 export const CONSULT_DECAY = 2;
 export const THERAPY_DECAY = 3;
 export const CPS_STAY_DECAY = 4;
+/** Max parent messages in a Rung-2 therapy session before it must be concluded. */
+export const THERAPY_TURN_CAP = 3;
 
 /** The highest intervention rung whose threshold concernLevel has crossed and
  * whose number exceeds the highest already fired. 0 = none due. */
@@ -144,6 +173,7 @@ Add to `GameAction`:
 
 ```ts
   | { type: "ENTER_INTERVENTION"; rung: 1 | 2 | 3; text: string }
+  | { type: "APPEND_THERAPY_MESSAGE"; speaker: "therapist" | "parent"; content: string }
   | { type: "SET_CPS_OUTCOME"; outcome: "stay" | "safety_plan" | "removal" }
   | { type: "END_INTERVENTION" };
 ```
@@ -153,6 +183,7 @@ In `createGame`, after `concernLevel: 0,` add:
 ```ts
     highestRungFired: 0,
     interventionText: null,
+    therapyMessages: [],
     cpsOutcome: null,
 ```
 
@@ -161,6 +192,8 @@ In `canTransition`, add cases:
 ```ts
     case "ENTER_INTERVENTION":
       return state.phase === "debrief";
+    case "APPEND_THERAPY_MESSAGE":
+      return state.phase === "therapy";
     case "SET_CPS_OUTCOME":
       return state.phase === "cps_review";
     case "END_INTERVENTION":
@@ -178,15 +211,29 @@ In `transition`, add cases (place before `default`):
 
 ```ts
     case "ENTER_INTERVENTION": {
-      const phase =
-        action.rung === 1 ? "consult" : action.rung === 2 ? "therapy" : "cps_review";
+      const highestRungFired = Math.max(state.highestRungFired, action.rung);
+      if (action.rung === 2) {
+        // Therapy: the text is the therapist's opening turn; seed the session.
+        return {
+          ...state,
+          phase: "therapy",
+          interventionText: null,
+          therapyMessages: [{ speaker: "therapist", content: action.text }],
+          highestRungFired,
+        };
+      }
       return {
         ...state,
-        phase,
+        phase: action.rung === 1 ? "consult" : "cps_review",
         interventionText: action.text,
-        highestRungFired: Math.max(state.highestRungFired, action.rung),
+        highestRungFired,
       };
     }
+    case "APPEND_THERAPY_MESSAGE":
+      return {
+        ...state,
+        therapyMessages: [...state.therapyMessages, { speaker: action.speaker, content: action.content }],
+      };
     case "SET_CPS_OUTCOME":
       return { ...state, cpsOutcome: action.outcome };
     case "END_INTERVENTION":
@@ -194,6 +241,7 @@ In `transition`, add cases (place before `default`):
         ...state,
         phase: "event_intro",
         interventionText: null,
+        therapyMessages: [],
         currentEvent: null,
         parentMessageCount: 0,
         sidebarUsed: { parent1: false, parent2: false },
@@ -204,19 +252,20 @@ In `transition`, add cases (place before `default`):
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npx vitest run server/tests/intervention-ladder.test.ts`
-Expected: PASS (7 tests).
+Expected: PASS (all rung-selection + phase-transition tests).
 
-- [ ] **Step 6: Persist `highestRungFired` + `cpsOutcome` (mirror Plan 2's `concernLevel` wiring)**
+- [ ] **Step 6: Persist `highestRungFired` + `cpsOutcome` + `therapyMessages` (mirror Plan 2's `concernLevel` wiring)**
 
-`interventionText` is ephemeral — do NOT persist it. Persist the other two. Migration `server/src/db/migrations/016-intervention-ladder.sql`:
+`interventionText` is ephemeral — do NOT persist it. Persist `highestRungFired`, `cpsOutcome`, and `therapyMessages`. Migration `server/src/db/migrations/016-intervention-ladder.sql`:
 
 ```sql
 -- Dark Play Plan 3: intervention-ladder state persisted per game.
 ALTER TABLE games ADD COLUMN IF NOT EXISTS highest_rung_fired INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE games ADD COLUMN IF NOT EXISTS cps_outcome TEXT;
+ALTER TABLE games ADD COLUMN IF NOT EXISTS therapy_messages JSONB NOT NULL DEFAULT '[]'::jsonb;
 ```
 
-In `server/src/db/repository.ts`: thread `highest_rung_fired` and `cps_outcome` through pg `saveGame` (column list, `$N` placeholders, `ON CONFLICT DO UPDATE SET`, params — exactly as `concern_level`), pg `loadGame` (SELECT with `COALESCE(highest_rung_fired,0)` and `cps_outcome`; typed row; pass to `reconstructState`), `reconstructState` (add `highestRungFired?: number` and `cpsOutcome?: ...` to its input type; return `highestRungFired: input.highestRungFired ?? 0`, `interventionText: null`, `cpsOutcome: input.cpsOutcome ?? null`), and the in-memory repo's stored-row type + `saveGame`/`loadGame`.
+In `server/src/db/repository.ts`: thread `highest_rung_fired`, `cps_outcome`, and `therapy_messages` (`::jsonb`, `JSON.stringify(state.therapyMessages)` in params — mirror how `parent_personalities` is stored) through pg `saveGame` (column list, `$N` placeholders, `ON CONFLICT DO UPDATE SET`, params), pg `loadGame` (SELECT with `COALESCE(highest_rung_fired,0)`, `cps_outcome`, `COALESCE(therapy_messages, '[]'::jsonb)`; typed row where `therapy_messages` is `TherapyMessage[]`; pass to `reconstructState`), `reconstructState` (add `highestRungFired?: number`, `cpsOutcome?: ...`, `therapyMessages?: TherapyMessage[]` to its input type; return `highestRungFired: input.highestRungFired ?? 0`, `interventionText: null`, `therapyMessages: input.therapyMessages ?? []`, `cpsOutcome: input.cpsOutcome ?? null`), and the in-memory repo's stored-row type + `saveGame`/`loadGame` (deep-copy the array). Note `pg` returns JSONB columns already parsed to JS objects — no `JSON.parse` on load.
 
 - [ ] **Step 7: Persistence test + typecheck**
 
@@ -262,11 +311,11 @@ Write 2–4 short paragraphs, second person, to the parent. Rules:
 - Leave the door open: this is reachable; children whose parents noticed and changed turned out okay.
 - Grief, not spectacle. Warm, unflinching, never cool. No emojis. Do not mention scores, meters, levels, or that this is a game system.`;
 
-export const FAMILY_THERAPIST_SYSTEM_PROMPT = `You are a family therapist NPC in a parenting game, running a short session between scenes. Present are the parent(s) (the human player) and {childName}, age {age}. A worrying pattern in the parenting has persisted past an earlier gentle check-in.
+export const FAMILY_THERAPIST_SYSTEM_PROMPT = `You are a family therapist NPC in a parenting game, in a live session with the parent(s) (the human player) and {childName}, age {age}. A worrying pattern in the parenting has persisted past an earlier gentle check-in. This is a back-and-forth conversation: you speak, the parent responds, you respond to them. Keep each of your turns SHORT (2–5 sentences) so it reads like real dialogue, not a monologue.
 
-Write a brief, readable scene of the session (250–400 words): the therapist speaking, the child given room to speak in their own small voice, and the therapist offering concrete, usable alternatives and naming the child's experience without blame. If there are two parents, address them both. End on a genuine, earned possibility of repair — not a bow, a door.
+Each turn: meet what the parent just said without judgment; when useful, give {childName} a small voice in their own words; offer one concrete, usable alternative; and keep a door to repair open. If there are two parents, hold space for both. This is the deepest repair beat before a formal review — earn the possibility of change, don't hand it over.
 
-Rules: compassionate, specific to the material, no clinical jargon dumped on the reader, no shame, no emojis, never mention scores/meters/levels or that this is a game system. This is the deepest repair beat before a formal review.`;
+Rules: compassionate, specific to the material, no clinical jargon, no shame, no emojis, never mention scores/meters/levels or that this is a game system. When you are given the instruction to OPEN the session, speak first with a brief, warm welcome that gently names why everyone is here.`;
 
 export const CPS_CASEWORKER_SYSTEM_PROMPT = `You are a child-welfare caseworker and a child psychologist, together reviewing whether {childName} (age {age}) is safe to remain in the home, after earlier supports (a psychologist consult and a family-therapy session) did not stop an escalating pattern of harmful parenting.
 
@@ -290,7 +339,7 @@ Also add a `REMOVAL_EPILOGUE_SYSTEM_PROMPT` mirroring `EPILOGUE_SYSTEM_PROMPT` b
 In `server/src/game/context-assembler.ts`, add (mirroring `buildPsychologistContext`/`buildEpilogueContext`), using `buildSceneTranscript(state)`, `state.identityDocument`, `state.memorySummary`, `state.childName`, `state.currentEvent?.age`, and `parentLabels(state.relationshipType)` for co-parent awareness:
 
 - `buildConsultContext(state)` — system from `PSYCHOLOGIST_CONSULT_SYSTEM_PROMPT` (fill `childName`); userMessage = the Identity Document + the recent scene transcript.
-- `buildTherapyContext(state)` — system from `FAMILY_THERAPIST_SYSTEM_PROMPT` (fill `childName`, `age`); userMessage = Identity Document + recent transcript + a co-parent note derived from `parentLabels`.
+- `buildTherapyContext(state, opening: boolean)` — system from `FAMILY_THERAPIST_SYSTEM_PROMPT` (fill `childName`, `age`). userMessage = Identity Document + recent scene transcript + co-parent note (from `parentLabels`) + the therapy session so far (render `state.therapyMessages` as `Therapist:`/`Parent:` lines). If `opening` is true, append the instruction to OPEN the session (speak first); otherwise append the instruction to respond to the parent's latest message. This one builder serves both the opening turn and each reply.
 - `buildCpsContext(state)` — system from `CPS_CASEWORKER_SYSTEM_PROMPT` (fill `childName`, `age`); userMessage = Identity Document + `memorySummary` + the full available transcript. (This is the deliberation's evidence.)
 - `buildRemovalEpilogueContext(state)` — system from `REMOVAL_EPILOGUE_SYSTEM_PROMPT` (fill `childName`); userMessage mirrors `buildEpilogueContext` but frames the removal.
 
@@ -317,7 +366,8 @@ git commit -m "feat(ladder): consult/therapist/CPS + removal-epilogue roles, pro
 **Interfaces:**
 - Produces:
   - `conversationEngine.generateConsult(state, onChunk?): Promise<{ state: GameState; text: string }>` — builds consult context, streams role `"psychologist_consult"`, dispatches `ENTER_INTERVENTION { rung: 1, text }`.
-  - `conversationEngine.generateTherapy(state, onChunk?): Promise<{ state: GameState; text: string }>` — same for role `"family_therapist"`, `ENTER_INTERVENTION { rung: 2, text }`.
+  - `conversationEngine.openTherapy(state, onChunk?): Promise<{ state: GameState; text: string }>` — builds therapy context with `opening: true`, streams role `"family_therapist"`, dispatches `ENTER_INTERVENTION { rung: 2, text }` (which seeds `therapyMessages` with the opening). Called when the debrief routes into Rung 2.
+  - `conversationEngine.therapistReply(state, parentContent, onChunk?): Promise<{ state: GameState; text: string }>` — dispatches `APPEND_THERAPY_MESSAGE { speaker: "parent", content: parentContent }`, then builds therapy context with `opening: false`, streams role `"family_therapist"`, dispatches `APPEND_THERAPY_MESSAGE { speaker: "therapist", content: reply }`. Returns the reply text. The caller enforces `THERAPY_TURN_CAP` (count of `speaker === "parent"` turns) before calling this.
   - `endgameEngine.runCpsReview(state, onChunk?): Promise<{ state: GameState; text: string; outcome: "stay"|"safety_plan"|"removal" }>` — builds CPS context, calls the LLM for a JSON `{ outcome, determination }` (use `completeJson` with role `"cps_caseworker"`; validate `outcome` ∈ the three values, default `"safety_plan"` if malformed — NEVER default to `"removal"`), dispatches `ENTER_INTERVENTION { rung: 3, text: determination }` then `SET_CPS_OUTCOME { outcome }`; returns text = determination.
   - `endgameEngine.generateRemovalEpilogue(state, onChunk?): Promise<{ state: GameState; epilogue: string }>` — builds removal-epilogue context, streams role `"epilogue"` (reuse the epilogue role/model), dispatches `START_EPILOGUE { epilogue }`.
 
@@ -325,7 +375,8 @@ git commit -m "feat(ladder): consult/therapist/CPS + removal-epilogue roles, pro
 
 Create `server/tests/intervention-engine.test.ts`. Use `MockLLMClient`. Add a mock field for the CPS JSON result (mirror `groomingResult`): e.g. `public cpsResult = { outcome: "stay", determination: "..." }` returned from `completeJson` when `role === "cps_caseworker"`. Tests:
 - `generateConsult` from a `debrief` state → returns non-empty text, `state.phase === "consult"`, `state.highestRungFired === 1`.
-- `generateTherapy` → `phase === "therapy"`, `highestRungFired === 2`.
+- `openTherapy` from a `debrief` state → `phase === "therapy"`, `highestRungFired === 2`, `therapyMessages` has one `therapist` turn.
+- `therapistReply(state, "I want to do better")` from a `therapy` state → `therapyMessages` gains a `parent` then a `therapist` turn (3 total after the opening), returns non-empty reply.
 - `runCpsReview` with `cpsResult.outcome = "removal"` → `phase === "cps_review"`, `state.cpsOutcome === "removal"`, returns `outcome === "removal"`.
 - `runCpsReview` with a malformed outcome (e.g. `"banish"`) → falls back to `"safety_plan"`, NEVER `"removal"`.
 - `generateRemovalEpilogue` — **the test MUST start from a realistic `cps_review` state** (`{ ...createGame("Kai"), phase: "cps_review", cpsOutcome: "removal" }`), because that is the phase production calls it from. Starting from a fresh `event_intro` state would let the `START_EPILOGUE` transition pass while production (from `cps_review`) throws — a false green. Assert `phase === "epilogue"`, non-empty epilogue. (This test is what proves the Task 1 `START_EPILOGUE` guard widening is present.)
@@ -344,21 +395,26 @@ Create `server/tests/intervention-engine.test.ts`. Use `MockLLMClient`. Add a mo
 
 **The routing rule (apply identically in both transports), evaluated when leaving `debrief`:**
 1. Compute `rung = selectDueRung(state.concernLevel, state.highestRungFired)`.
-2. If `rung > 0`: generate that beat (`generateConsult`/`generateTherapy`/`runCpsReview`) and enter its phase. Do NOT advance to `event_intro` yet.
+2. If `rung > 0`: generate that beat (`generateConsult` / `openTherapy` / `runCpsReview`) and enter its phase. Do NOT advance to `event_intro` yet.
 3. If `rung === 0` and `currentEventNumber >= totalEvents`: existing epilogue path (unchanged).
 4. If `rung === 0` and story continues: existing `endDebrief` → `event_intro` (unchanged).
 
+**Therapy session turns (Rung 2 only), a new endpoint/handler:**
+- REST `POST /game/:id/therapy-message` (SSE, mirror `/game/:id/message`): guard `state.phase === "therapy"`; reject if the count of `speaker === "parent"` turns in `therapyMessages` already `>= THERAPY_TURN_CAP` (respond that the session must be concluded); else `conversationEngine.therapistReply(state, content)`, persist, stream the therapist reply.
+- Socket: a `THERAPY_MESSAGE` event (add to `SOCKET_EVENTS`) handled the same way, streaming via `DOC_CHUNK`/a reply event and broadcasting state. (Reusing `PARENT_MESSAGE` is rejected — it is guarded to `family_chat`; a distinct event keeps the two flows unambiguous.)
+
 **Advancing OUT of an intervention phase:**
-- `consult` / `therapy`: apply the decay (`transition(state, { type: "CONCERN_ACCRUED", delta: -CONSULT_DECAY | -THERAPY_DECAY })`), then `END_INTERVENTION` → `event_intro`, persist. (Consult/therapy never end the story here — they always return to a scene so the repaired parent gets to parent again.)
+- `consult`: apply `transition(state, { type: "CONCERN_ACCRUED", delta: -CONSULT_DECAY })`, then `END_INTERVENTION` → `event_intro`, persist.
+- `therapy` (the "conclude session" advance): apply `-THERAPY_DECAY`, then `END_INTERVENTION` → `event_intro`, persist. (Concluding is allowed at any point ≥1 parent turn, and is forced once the cap is hit.) Consult/therapy never end the story — they return to a scene so the repaired parent gets to parent again.
 - `cps_review`: branch on `state.cpsOutcome`:
   - `"stay"` / `"safety_plan"`: apply `-CPS_STAY_DECAY`, `END_INTERVENTION` → `event_intro` (child stays; `safety_plan` is recorded on `cpsOutcome` and reflected by the normal epilogue later).
   - `"removal"`: call `endgameEngine.generateRemovalEpilogue(state)` → terminal `epilogue` phase. Do NOT decay, do NOT ban, do NOT call `applyModerationBlock`.
 
-- [ ] **Step 1** Write `server/tests/intervention-ladder-rest.test.ts` (mirror `concern-accrual-rest.test.ts`'s harness). Drive a game so `concernLevel` reaches `CONSULT_THRESHOLD` (repeated concern scenes via `/end-chat` with `mock.groomingResult = concern` + a message per scene), then `/end-debrief` and assert `repo.loadGame(gameId).phase === "consult"` and `highestRungFired === 1`; then `/end-consult` and assert phase back to `event_intro` and `concernLevel` dropped by `CONSULT_DECAY`. Add a second test forcing `cpsResult.outcome = "removal"` at `CPS_THRESHOLD` and asserting the CPS→removal path reaches `phase === "epilogue"` with `cpsOutcome === "removal"` and the IP is NOT banned (`repo.isIpBanned(ip) === false`).
+- [ ] **Step 1** Write `server/tests/intervention-ladder-rest.test.ts` (mirror `concern-accrual-rest.test.ts`'s harness). Test A: drive a game so `concernLevel` reaches `CONSULT_THRESHOLD` (repeated concern scenes via `/end-chat` with `mock.groomingResult = concern` + a message per scene), then `/end-debrief` and assert `repo.loadGame(gameId).phase === "consult"` and `highestRungFired === 1`; then `/end-consult` and assert phase back to `event_intro` and `concernLevel` dropped by `CONSULT_DECAY`. Test B (therapy): reach `THERAPY_THRESHOLD` (with `highestRungFired` already 1 so Rung 2 is due), `/end-debrief` → `phase === "therapy"` with one therapist turn in `therapyMessages`; POST `/therapy-message` once → `therapyMessages` gains parent+therapist turns; POST it past `THERAPY_TURN_CAP` → rejected; `/end-therapy` → `event_intro`, `concernLevel` dropped by `THERAPY_DECAY`, `therapyMessages` cleared. Test C (removal): force `cpsResult.outcome = "removal"` at `CPS_THRESHOLD`, drive to `cps_review`, `/end-cps` → `phase === "epilogue"`, `cpsOutcome === "removal"`, `repo.isIpBanned(ip) === false`.
 
-- [ ] **Step 2** Verify failing. **Step 3** Implement: add the routing rule to the socket READY-in-debrief branch and the REST `/end-debrief` route; add REST routes `/end-consult`, `/end-therapy`, `/end-cps` (mirror `/end-debrief`, each applying the decay/branch above and streaming the *next* beat is not required — the beat text was already generated on entry and lives in `interventionText`, delivered by the state/STATE payload; see Task 5 for how the client reads it). For socket, extend the READY handler with `else if (state.phase === "consult"|"therapy"|"cps_review")` branches applying the same logic. **Guard idempotency** exactly like `/end-chat` (`if (state.phase !== "<expected>") return current phase`), since these run LLM calls under the per-game lock.
+- [ ] **Step 2** Verify failing. **Step 3** Implement: add the routing rule to the socket READY-in-debrief branch and the REST `/end-debrief` route (calling `generateConsult`/`openTherapy`/`runCpsReview` on the due rung); add REST routes `/end-consult`, `/end-therapy`, `/end-cps` (mirror `/end-debrief`, each applying the decay/branch above) and `/therapy-message` (mirror `/message`, calling `therapistReply` under the cap). The consult/CPS beat text was generated on entry and lives in `interventionText`; therapy turns live in `therapyMessages` — both delivered via the state payload (Task 5). For socket, extend the READY handler with `else if (state.phase === "consult"|"therapy"|"cps_review")` branches applying the same advance logic, and add a `THERAPY_MESSAGE` handler. **Guard idempotency** exactly like `/end-chat` (`if (state.phase !== "<expected>") return current phase`), since these run LLM calls under the per-game lock.
 
-- [ ] **Step 4** The beat text delivery: the socket path must send `interventionText` to clients. Add `interventionText` to `ViewerState` (`protocol.ts`) — **exception to the server-only rule is limited to this human-facing generated text**, which is the whole point of the screen; do NOT add `highestRungFired`/`concernLevel`/`cpsOutcome`. For REST, include `interventionText` (and, for `cps_review`, a coarse `cpsOutcome`-free rendering — the determination text already conveys it) in the `/state` projection by NOT stripping `interventionText` (keep stripping `concernLevel`/`highestRungFired`/`cpsOutcome`/`concerningStreak`/`pendingGuidance`).
+- [ ] **Step 4** Human-facing beat delivery: the socket path must send `interventionText` AND `therapyMessages` to clients. Add both to `ViewerState` (`protocol.ts`) — **the server-only exception is limited to these human-facing generated texts**, which are the whole point of the screens; do NOT add `highestRungFired`/`concernLevel`/`cpsOutcome`. For REST, keep `interventionText` and `therapyMessages` in the `/state` projection (do not strip them) while still stripping `concernLevel`/`highestRungFired`/`cpsOutcome`/`concerningStreak`/`pendingGuidance`. (The determination text in `interventionText` conveys the CPS outcome to the player; the raw `cpsOutcome` label stays server-only.)
 
 - [ ] **Step 5** Run `npm run test -w server` (all pass; the new REST ladder test is gated), `npx tsc -b server`. **Step 6 Commit** `feat(ladder): route debrief into interventions + advance handlers (both transports)`.
 
@@ -367,13 +423,20 @@ Create `server/tests/intervention-engine.test.ts`. Use `MockLLMClient`. Add a mo
 ### Task 5: Client — solo (REST/SSE) screens and wiring
 
 **Files:**
-- Create: `client/src/components/ConsultScreen.tsx`, `client/src/components/TherapyScreen.tsx`, `client/src/components/CpsScreen.tsx` (mirror `Debrief.tsx`/`EventIntro.tsx` — props-driven, advance callback injected)
-- Modify: `client/src/hooks/useGame.ts` (add `endConsult`, `endTherapy`, `endCps` actions mirroring `endDebrief`; expose `interventionText` from `/state`)
+- Create: `client/src/components/ConsultScreen.tsx`, `client/src/components/CpsScreen.tsx` (read-and-advance — mirror `Debrief.tsx`: props `{ text, onContinue }`), and `client/src/components/TherapyScreen.tsx` (**interactive** — a message list + input + "conclude session" button)
+- Modify: `client/src/hooks/useGame.ts` (add `endConsult`, `endCps` mirroring `endDebrief`; `sendTherapyMessage` mirroring `sendMessage` streaming; `endTherapy`; expose `interventionText` and `therapyMessages` from `/state`)
 - Modify: `client/src/components/SoloGame.tsx` (add `if (phase === "consult"|"therapy"|"cps_review")` dispatch branches near the `debrief` branch at ~255)
 
-**Interfaces:** each screen takes `{ text: string; onContinue: () => void }` (CPS screen may show a slightly more formal frame but still just text + continue). `useGame` exposes `interventionText` and the three advance actions; the debrief `handleDebrief` in `SoloGame` stays as-is (server decides whether debrief routes to an intervention — the client just renders whatever `phase` comes back).
+**Interfaces:**
+- `ConsultScreen`/`CpsScreen`: `{ text: string; onContinue: () => void }`.
+- `TherapyScreen`: `{ messages: TherapyMessage[]; streamingReply?: string; canSend: boolean; onSend: (content: string) => void; onConclude: () => void }` — renders the transcript (therapist/parent turns styled distinctly), a text input calling `onSend` (disabled while a reply streams or when `canSend` is false, i.e. cap reached), and a "conclude session" button calling `onConclude`.
+- `useGame` exposes `interventionText`, `therapyMessages`, and actions `endConsult`, `sendTherapyMessage`, `endTherapy`, `endCps`. The debrief `handleDebrief` stays as-is — the server decides whether debrief routes to an intervention; the client renders whatever `phase` comes back.
 
-- [ ] **Step 1** Write a client test if the harness supports it (check `client/` for existing component tests; if none, rely on the screens being pure presentational + a manual smoke via the deploy). Create the three screen components (full JSX, mirroring `Debrief.tsx`: a titled text block rendering `text` as paragraphs, and a `next` button calling `onContinue`; `data-testid` per screen). **Step 2** Add `endConsult`/`endTherapy`/`endCps` to `useGame` (each `POST ${API}/game/${gameId}/end-<x>`, then `setPhase(data.phase)`, and for consult/therapy `setCurrentEvent(null)`), and surface `interventionText` from the `/state` and end-chat/debrief responses. **Step 3** Add the three dispatch branches to `SoloGame` rendering the matching screen with `text={interventionText ?? ""}` and `onContinue={async () => { await endConsult(); await nextEvent(); }}` (consult/therapy advance into the next event; CPS `stay/safety_plan` likewise; CPS `removal` returns `phase: "epilogue"` from the server, so `onContinue` for cps should branch: if the server already moved to epilogue, render Endgame — but since the server sets phase on the advance response, simply `await endCps(); ` and let the returned phase drive rendering, calling `nextEvent()` only if the returned phase is `event_intro`). **Step 4** `npm run build -w client` succeeds. **Step 5 Commit** `feat(ladder): solo client intervention screens + wiring`.
+- [ ] **Step 1** Create `ConsultScreen`/`CpsScreen` (full JSX mirroring `Debrief.tsx`: a titled block rendering `text` as paragraphs + a `next` button calling `onContinue`; `data-testid` per screen). Create `TherapyScreen` (message list rendering `messages` with therapist/parent styling + optional `streamingReply` bubble, a text input wired to `onSend` — disabled when `!canSend` or streaming — and a "conclude session" button calling `onConclude`; reuse existing chat CSS classes from `Chat.tsx` where possible). **Step 2** In `useGame`: add `endConsult`/`endCps` (`POST ${API}/game/${gameId}/end-<x>` → `setPhase(data.phase)`, and for consult `setCurrentEvent(null)`); add `sendTherapyMessage(content)` mirroring `sendMessage` (`POST .../therapy-message`, consume SSE, append the streamed therapist reply to a local `therapyMessages`); add `endTherapy` (`POST .../end-therapy` → `setPhase`, `setCurrentEvent(null)`); surface `interventionText` and `therapyMessages` from `/state` and the advance responses. **Step 3** Add the three dispatch branches to `SoloGame`:
+  - `consult` → `<ConsultScreen text={interventionText ?? ""} onContinue={async () => { await endConsult(); await nextEvent(); }} />`
+  - `therapy` → `<TherapyScreen messages={therapyMessages} streamingReply={streamingDocText} canSend={therapyMessages.filter(m=>m.speaker==="parent").length < THERAPY_TURN_CAP} onSend={sendTherapyMessage} onConclude={async () => { await endTherapy(); await nextEvent(); }} />` (import `THERAPY_TURN_CAP` — expose it to the client via a shared constant or hardcode with a comment referencing the server constant).
+  - `cps_review` → `<CpsScreen text={interventionText ?? ""} onContinue={async () => { await endCps(); }} />` — see Step 3a for removal handling.
+  **Step 4** `npm run build -w client` succeeds. **Step 5 Commit** `feat(ladder): solo client intervention screens + interactive therapy wiring`.
 
 - [ ] **Step 3a (removal handling detail — PINNED mechanism):** the removal epilogue is generated inside the `/end-cps` advance (server Task 4), which calls `generateRemovalEpilogue` and returns, in the SSE/`/end-cps` response, BOTH `phase: "epilogue"` AND the generated `epilogue` text — exactly the shape the socket epilogue path already emits (`E.EPILOGUE { epilogue }`) and the shape `useGame.generateEpilogue` already sets into its `epilogue` state. So the client does NOT open a second epilogue code path: `endCps` sets `phase` and, when present, `epilogue` from the response, and `SoloGame` renders the existing `Endgame` component off that `epilogue` state. In `SoloGame`, CPS `onContinue`: `await endCps()`; if the returned `phase === "epilogue"` render `Endgame` (already wired), else if `event_intro` call `nextEvent()`. This reuses the existing epilogue-display path; only the *generation trigger* differs (inside `/end-cps` rather than `/epilogue`), which is unavoidable and contained to one server method.
 
@@ -382,12 +445,12 @@ Create `server/tests/intervention-engine.test.ts`. Use `MockLLMClient`. Add a mo
 ### Task 6: Client — multiplayer (socket) screens reuse and wiring
 
 **Files:**
-- Modify: `client/src/hooks/useMultiplayer.ts` (advance via `E.READY` in the new phases; expose `interventionText` from `ViewerState`)
+- Modify: `client/src/hooks/useMultiplayer.ts` (advance via `E.READY` in `consult`/`cps_review`; add `sendTherapyMessage` emitting `E.THERAPY_MESSAGE` for `therapy`; expose `interventionText` and `therapyMessages` from `ViewerState`)
 - Modify: `client/src/components/MultiplayerGame.tsx` (add dispatch branches near the `debrief` block at ~379, rendering the SAME three screen components from Task 5)
 
-**Interfaces:** multiplayer advances through interventions with the existing ready mechanic (`mp.ready(true)`), because the server's READY handler now branches on the new phases (Task 4). Both players ready-up to advance, consistent with debrief. The screens are shared with solo (Task 5) — render them with `text={mp.state.interventionText ?? ""}` and `onContinue`/ready wired to `mp.ready(true)` (or a `ReadyToggle` like the debrief block for the two-player case).
+**Interfaces:** `consult` and `cps_review` advance with the existing ready mechanic (`mp.ready(true)`) since the server READY handler branches on the new phases (Task 4). `therapy` uses `mp.sendTherapyMessage(content)` (emits `E.THERAPY_MESSAGE`, server streams the reply and broadcasts state) for turns, and `mp.ready(true)` to conclude (the server's READY-in-therapy branch applies `-THERAPY_DECAY` + `END_INTERVENTION`). Screens are shared with solo (Task 5) — `text`/`messages` come from `mp.state.interventionText`/`mp.state.therapyMessages`.
 
-- [ ] **Step 1** Add the three dispatch branches to `MultiplayerGame` reusing `ConsultScreen`/`TherapyScreen`/`CpsScreen`. For the two-player interventions, mirror the debrief block's `ReadyToggle` pattern so both players advance. **Step 2** Ensure `interventionText` is read from `mp.state` (it's on `ViewerState` per Task 4 Step 4). **Step 3** `npm run build -w client` succeeds. **Step 4 Commit** `feat(ladder): multiplayer client intervention screens + wiring`.
+- [ ] **Step 1** Add the three dispatch branches to `MultiplayerGame` reusing `ConsultScreen`/`TherapyScreen`/`CpsScreen`. For `consult`/`cps_review`, mirror the debrief block's `ReadyToggle` so both players advance. For `therapy`, wire `onSend={mp.sendTherapyMessage}` and `onConclude` to a `ReadyToggle`/`mp.ready(true)`; `canSend` from the parent-turn count vs `THERAPY_TURN_CAP`. **Step 2** Add `sendTherapyMessage` to `useMultiplayer` (emit `E.THERAPY_MESSAGE, { content }`); ensure `interventionText`/`therapyMessages` are read from `mp.state`. **Step 3** `npm run build -w client` succeeds. **Step 4 Commit** `feat(ladder): multiplayer client intervention screens + interactive therapy wiring`.
 
 ---
 
@@ -408,7 +471,7 @@ Create `server/tests/intervention-engine.test.ts`. Use `MockLLMClient`. Add a mo
 - **Open questions (§12) resolved with documented defaults:** thresholds 3/6/9, decays 2/3/4, rung-1-folds-into-a-new-phase (not the debrief), escalation window is Plan 4's not this plan's, removal terminal. All tunable constants in one place.
 - **Placeholder scan:** Tasks 3/5/6 compress repetitive per-transport steps but every logic decision (the routing rule, the CPS defensive parse, the removal branch, the decay values) is fully specified; the React screens mirror an existing component whose full source is the template. No "add error handling"-class placeholders.
 - **Type consistency:** `selectDueRung`, `ENTER_INTERVENTION/SET_CPS_OUTCOME/END_INTERVENTION`, the three roles, and `interventionText`/`highestRungFired`/`cpsOutcome` are named identically across all tasks.
-- **The one scope decision for reviewer/Liz:** intervention phases are read-and-advance, not interactive; therapy engagement = completion. Flagged in Global Constraints.
+- **Scope (decided with Liz):** consult + CPS are read-and-advance; **Rung 2 therapy is interactive** — a bounded back-and-forth (therapist ↔ parent, capped at `THERAPY_TURN_CAP`) in a dedicated `therapyMessages` store, reusing chat UI but not the `Sender`/family-chat plumbing. Concluding decays concern (`THERAPY_DECAY`).
 - **Deliberate v1 limitation (accepted, not an omission):** the ladder is single-shot — once Rung 3 (CPS) fires with a `stay`/`safety_plan` outcome, `highestRungFired` pins at 3 and no further rung can fire even if the parent keeps escalating (concern just pins at `CONCERN_MAX`). Real child welfare would return a failed safety plan to review→removal; that re-review loop is deferred. The bad-faith backstop for continued escalation is Plan 4 (escalation detection). Decided deliberately for v1.
 - **Removal-epilogue delivery pinned:** generated inside `/end-cps`, delivered via the existing epilogue-display path (Task 5 Step 3a) — no second epilogue code path.
 - **Correctness guard verified against source:** `START_EPILOGUE`'s `canTransition` guard (state-machine.ts:106) is `event_intro || debrief` today; Task 1 widens it to include `cps_review`, and the Task 3 removal test starts from `cps_review` to prove it.
