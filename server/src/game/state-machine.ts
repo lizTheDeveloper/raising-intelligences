@@ -19,7 +19,11 @@ export type GameAction =
   | { type: "START_ADULT_CHAT"; event: GameEvent }
   | { type: "SHOW_REPORT_CARD"; reportCard: string }
   | { type: "TRAJECTORY_CHECKED"; concerning: boolean; guidanceSeed: string }
-  | { type: "CONCERN_ACCRUED"; delta: number };
+  | { type: "CONCERN_ACCRUED"; delta: number }
+  | { type: "ENTER_INTERVENTION"; rung: 1 | 2 | 3; text: string }
+  | { type: "APPEND_THERAPY_MESSAGE"; speaker: "therapist" | "parent"; content: string }
+  | { type: "SET_CPS_OUTCOME"; outcome: "stay" | "safety_plan" | "removal" }
+  | { type: "END_INTERVENTION" };
 
 /** Consecutive "notable"/"significant" scenes before guidance queues for the World Manager. */
 const CONCERNING_STREAK_THRESHOLD = 2;
@@ -38,6 +42,27 @@ export function concernDeltaForTier(tier: "block" | "concern" | "none"): number 
   if (tier === "concern") return CONCERN_INCREMENT;
   if (tier === "none") return -CONCERN_DECAY;
   return 0;
+}
+
+/** Dark Play Plan 3 — intervention ladder thresholds on concernLevel (of CONCERN_MAX). */
+export const CONSULT_THRESHOLD = 3;
+export const THERAPY_THRESHOLD = 6;
+export const CPS_THRESHOLD = 9;
+/** Concern decayed when a parent completes each rung (engagement = reasonable efforts working). */
+export const CONSULT_DECAY = 2;
+export const THERAPY_DECAY = 3;
+export const CPS_STAY_DECAY = 4;
+/** Max parent messages in a Rung-2 therapy session before it must be concluded. */
+export const THERAPY_TURN_CAP = 3;
+
+/** The highest intervention rung whose threshold concernLevel has crossed and
+ * whose number exceeds the highest already fired. 0 = none due. */
+export function selectDueRung(concernLevel: number, highestRungFired: number): 0 | 1 | 2 | 3 {
+  let due: 0 | 1 | 2 | 3 = 0;
+  if (concernLevel >= CONSULT_THRESHOLD) due = 1;
+  if (concernLevel >= THERAPY_THRESHOLD) due = 2;
+  if (concernLevel >= CPS_THRESHOLD) due = 3;
+  return due > highestRungFired ? due : 0;
 }
 
 export function createGame(childName: string, relationshipType = "co-parents"): GameState {
@@ -62,6 +87,10 @@ export function createGame(childName: string, relationshipType = "co-parents"): 
     sidebarActive: null,
     concerningStreak: 0,
     concernLevel: 0,
+    highestRungFired: 0,
+    interventionText: null,
+    therapyMessages: [],
+    cpsOutcome: null,
     pendingGuidance: null,
     lastActivityAt: Date.now(),
   };
@@ -103,7 +132,15 @@ export function canTransition(state: GameState, action: GameAction): boolean {
     case "END_DEBRIEF":
       return state.phase === "debrief";
     case "START_EPILOGUE":
-      return state.phase === "event_intro" || state.phase === "debrief";
+      return state.phase === "event_intro" || state.phase === "debrief" || state.phase === "cps_review";
+    case "ENTER_INTERVENTION":
+      return state.phase === "debrief";
+    case "APPEND_THERAPY_MESSAGE":
+      return state.phase === "therapy";
+    case "SET_CPS_OUTCOME":
+      return state.phase === "cps_review";
+    case "END_INTERVENTION":
+      return state.phase === "consult" || state.phase === "therapy" || state.phase === "cps_review";
     case "START_ADULT_CHAT":
       return state.phase === "epilogue" || state.phase === "event_intro";
     case "SHOW_REPORT_CARD":
@@ -277,6 +314,44 @@ function applyTransition(state: GameState, action: GameAction): GameState {
       const clamped = Math.max(0, Math.min(CONCERN_MAX, raw));
       return { ...state, concernLevel: clamped };
     }
+
+    case "ENTER_INTERVENTION": {
+      const highestRungFired = Math.max(state.highestRungFired, action.rung);
+      if (action.rung === 2) {
+        // Therapy: the text is the therapist's opening turn; seed the session.
+        return {
+          ...state,
+          phase: "therapy",
+          interventionText: null,
+          therapyMessages: [{ speaker: "therapist", content: action.text }],
+          highestRungFired,
+        };
+      }
+      return {
+        ...state,
+        phase: action.rung === 1 ? "consult" : "cps_review",
+        interventionText: action.text,
+        highestRungFired,
+      };
+    }
+    case "APPEND_THERAPY_MESSAGE":
+      return {
+        ...state,
+        therapyMessages: [...state.therapyMessages, { speaker: action.speaker, content: action.content }],
+      };
+    case "SET_CPS_OUTCOME":
+      return { ...state, cpsOutcome: action.outcome };
+    case "END_INTERVENTION":
+      return {
+        ...state,
+        phase: "event_intro",
+        interventionText: null,
+        therapyMessages: [],
+        currentEvent: null,
+        parentMessageCount: 0,
+        sidebarUsed: { parent1: false, parent2: false },
+        sidebarActive: null,
+      };
 
     default:
       return state;

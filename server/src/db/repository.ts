@@ -7,6 +7,7 @@ import type {
   Message,
   ParentPersonality,
   Sender,
+  TherapyMessage,
 } from "../types.js";
 import { pool } from "./pool.js";
 import type pg from "pg";
@@ -125,6 +126,9 @@ function reconstructState(input: {
   sidebarUsed: { parent1: boolean; parent2: boolean };
   sidebarActive?: string | null;
   concernLevel?: number;
+  highestRungFired?: number;
+  cpsOutcome?: "stay" | "safety_plan" | "removal" | null;
+  therapyMessages?: TherapyMessage[];
 }): GameState {
   const currentEvent =
     input.events.find((e) => e.eventNumber === input.currentEventNumber) ??
@@ -164,6 +168,10 @@ function reconstructState(input: {
     sidebarActive: (input.sidebarActive as GameState["sidebarActive"]) ?? null,
     concerningStreak: 0,
     concernLevel: input.concernLevel ?? 0,
+    highestRungFired: input.highestRungFired ?? 0,
+    interventionText: null,
+    therapyMessages: input.therapyMessages ?? [],
+    cpsOutcome: input.cpsOutcome ?? null,
     pendingGuidance: null,
     lastActivityAt: Date.now(),
   };
@@ -177,8 +185,10 @@ export class PgGameRepository implements GameRepository {
       `INSERT INTO games
          (id, child_name, child_gender, relationship_type, phase, current_event_number,
           total_events, identity_document, memory_summary, personality_seed, parent_personalities,
-          sidebar_used_parent1, sidebar_used_parent2, sidebar_active, concern_level, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15, now())
+          sidebar_used_parent1, sidebar_used_parent2, sidebar_active, concern_level,
+          highest_rung_fired, cps_outcome, therapy_messages, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15,
+               $16, $17, $18::jsonb, now())
        ON CONFLICT (id) DO UPDATE SET
          child_name            = EXCLUDED.child_name,
          child_gender          = EXCLUDED.child_gender,
@@ -194,6 +204,9 @@ export class PgGameRepository implements GameRepository {
          sidebar_used_parent2  = EXCLUDED.sidebar_used_parent2,
          sidebar_active        = EXCLUDED.sidebar_active,
          concern_level         = EXCLUDED.concern_level,
+         highest_rung_fired    = EXCLUDED.highest_rung_fired,
+         cps_outcome           = EXCLUDED.cps_outcome,
+         therapy_messages      = EXCLUDED.therapy_messages,
          updated_at            = now()`,
       [
         state.id,
@@ -211,6 +224,9 @@ export class PgGameRepository implements GameRepository {
         state.sidebarUsed.parent2,
         state.sidebarActive ?? null,
         state.concernLevel,
+        state.highestRungFired,
+        state.cpsOutcome,
+        JSON.stringify(state.therapyMessages),
       ]
     );
   }
@@ -337,6 +353,9 @@ export class PgGameRepository implements GameRepository {
       sidebar_used_parent2: boolean;
       sidebar_active: string | null;
       concern_level: number;
+      highest_rung_fired: number;
+      cps_outcome: "stay" | "safety_plan" | "removal" | null;
+      therapy_messages: TherapyMessage[];
     }>(
       `SELECT id, child_name,
               COALESCE(child_gender, 'nonbinary') AS child_gender,
@@ -348,7 +367,10 @@ export class PgGameRepository implements GameRepository {
               COALESCE(sidebar_used_parent1, false) AS sidebar_used_parent1,
               COALESCE(sidebar_used_parent2, false) AS sidebar_used_parent2,
               sidebar_active,
-              COALESCE(concern_level, 0) AS concern_level
+              COALESCE(concern_level, 0) AS concern_level,
+              COALESCE(highest_rung_fired, 0) AS highest_rung_fired,
+              cps_outcome,
+              COALESCE(therapy_messages, '[]'::jsonb) AS therapy_messages
        FROM games WHERE id = $1`,
       [gameId]
     );
@@ -433,6 +455,9 @@ export class PgGameRepository implements GameRepository {
       },
       sidebarActive: game.sidebar_active,
       concernLevel: game.concern_level,
+      highestRungFired: game.highest_rung_fired,
+      cpsOutcome: game.cps_outcome,
+      therapyMessages: game.therapy_messages,
     });
   }
 
@@ -651,6 +676,9 @@ export class InMemoryGameRepository implements GameRepository {
       sidebarUsedParent2: boolean;
       sidebarActive: string | null;
       concernLevel: number;
+      highestRungFired: number;
+      cpsOutcome: "stay" | "safety_plan" | "removal" | null;
+      therapyMessages: TherapyMessage[];
     }
   >();
   private messages = new Map<string, Message[]>();
@@ -683,6 +711,9 @@ export class InMemoryGameRepository implements GameRepository {
       sidebarUsedParent2: state.sidebarUsed.parent2,
       sidebarActive: state.sidebarActive ?? null,
       concernLevel: state.concernLevel,
+      highestRungFired: state.highestRungFired,
+      cpsOutcome: state.cpsOutcome,
+      therapyMessages: state.therapyMessages.map((m) => ({ ...m })),
     });
   }
 
@@ -769,6 +800,9 @@ export class InMemoryGameRepository implements GameRepository {
       },
       sidebarActive: game.sidebarActive,
       concernLevel: game.concernLevel,
+      highestRungFired: game.highestRungFired,
+      cpsOutcome: game.cpsOutcome,
+      therapyMessages: game.therapyMessages.map((m) => ({ ...m })),
     });
   }
 
