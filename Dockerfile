@@ -16,6 +16,10 @@ COPY client/package.json ./client/
 COPY server/package.json ./server/
 RUN npm ci
 COPY client/ ./client/
+# GlitchTip DSN must be present at build time — Vite inlines import.meta.env
+# into the bundle, so a runtime env var would arrive too late to have any effect.
+ARG VITE_SENTRY_DSN
+ENV VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
 RUN npm run build -w client
 
 # ── Stage 3: build server ─────────────────────────────────────────────────────

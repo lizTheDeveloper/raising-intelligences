@@ -1,7 +1,33 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import * as Sentry from "@sentry/browser";
 import { App } from "./App";
 import "./global.css";
+
+/**
+ * Browser error reporting to GlitchTip (project 6). The server has reported via
+ * @sentry/node since 2026-07-26, but the client had none at all — so every
+ * crash in this SPA was invisible, which is most of what players actually hit.
+ *
+ * Guarded on the build-time DSN: unset (local dev, or a build without the
+ * VITE_SENTRY_DSN arg) means no init and no network calls.
+ */
+if (import.meta.env.VITE_SENTRY_DSN) {
+  Sentry.init({
+    dsn: import.meta.env.VITE_SENTRY_DSN,
+    environment: import.meta.env.MODE,
+    sendDefaultPii: false,
+    sampleRate: 1.0,
+    // This game's transcripts are intimate parent/child roleplay. Never let a
+    // crash report carry user identity or the conversation itself.
+    beforeSend(event) {
+      delete event.user;
+      return event;
+    },
+  });
+  window.addEventListener("error", (e) => Sentry.captureException(e.error));
+  window.addEventListener("unhandledrejection", (e) => Sentry.captureException(e.reason));
+}
 
 if (import.meta.env.PROD) {
   // Load analytics from the host matching the domain the user actually reached.
