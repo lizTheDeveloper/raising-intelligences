@@ -1,23 +1,11 @@
-# SDD Progress Ledger — Dark Play Plan 1 (classifier reroute)
+# SDD Progress Ledger — Dark Play Plan 2 (concern accumulator)
 
-Plan: docs/superpowers/plans/2026-07-29-dark-play-plan1-classifier-reroute.md
-Branch: feat/dark-play-plan1  (base: origin/main b065f8d)
-Started: 2026-07-29
+Plan: docs/superpowers/plans/2026-07-30-dark-play-plan2-concern-accumulator.md
+Branch: feat/dark-play-plan2  (base: 9571e68)
+Started: 2026-07-30
+Execution: direct implementation (fully-specified mechanical plan) + final reviewer subagent before deploy.
 
 ## Tasks
-- [x] Task 1: tiered SceneSafetyResult + rewritten classifier (99a733f)
-- [x] Task 2: recordConcern + concern_events (d299a94)
-- [x] Task 3: reroute callers (endFamilyChat + handlers) — also fixed the REST
-      route mirror (server/src/routes/game.ts) which the plan's file list
-      omitted but which called the now-removed detectGroomingPattern (b9d72fe)
-- [x] Task 4: regression test (39f1377)
-- [x] Task 5: deploy verification (build+suite) — all green, no commit (build/test only)
-- [x] Task 6: false-ban reversal script (reversal itself already done manually
-      in prod); script committed dry-run-default, NOT executed against any DB
-      per explicit instruction (8230875)
-
-## Final verification (2026-07-29)
-- `npx tsc -b server`: exit 0
-- `npm run test -w server`: 24 test files, 201 tests, all passing
-- `npm run build -w client`: succeeds
-- Commit range: 99a733f..8230875
+- [ ] Task 1: concernLevel field + constants + concernDeltaForTier + CONCERN_ACCRUED reducer
+- [ ] Task 2: persist concernLevel (migration 015 + repo save/load)
+- [ ] Task 3: wire scene-end accrual into both endChat paths (socket + REST)
