@@ -153,11 +153,16 @@ describe("ConversationEngine", () => {
     let state = createGame("Luna");
     state = await engine.startEvent(state);
     const result = await engine.handleParentMessage(state, "parent1", "It's okay.");
-    const { sceneSafety } = await engine.endFamilyChat(result.state);
+    const { state: nextState, sceneSafety } = await engine.endFamilyChat(result.state);
     expect(sceneSafety.tier).toBe("concern");
-    // (the recordConcern side effect is exercised at the handler layer; here assert
-    //  the engine simply reports the tier and does not itself terminate.)
-    expect(sceneSafety.tier).not.toBe("block");
+    // The engine layer only classifies — it has no repo/IP-ban access, so it
+    // can't itself persist the concern_events row (that's the handler's job,
+    // covered by the routing-layer test in dark-play-reroute.test.ts). What it
+    // MUST do is what a miswire could silently break: never end the session
+    // on a "concern" verdict. Assert that directly instead of just re-checking
+    // the tier we already asserted above.
+    expect(nextState.phase).not.toBe("ended");
+    expect(nextState.phase).toBe("debrief");
   });
 
   it("uses the sidebar Kid model when the child replies in a sidebar", async () => {

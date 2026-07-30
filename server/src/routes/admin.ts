@@ -60,9 +60,13 @@ export function createAdminRoutes(adminQueries: AdminQueries, repo: GameReposito
   });
 
   // ── Moderation review queue ──────────────────────────────────────────
-  // Lists flagged sessions (both the per-message and scene-level checks
-  // persist here) and enriches each with the current ban state of its IP,
-  // so a human can review and one-click ban/unban. See safety/moderation.ts.
+  // Lists flagged sessions: per-message checks and scene-level "block"
+  // verdicts both persist to moderation_flags. Scene-level "concern"
+  // verdicts never land here — those are logged separately in
+  // concern_events (never a ban, session continues; see recordConcern in
+  // safety/moderation.ts) and are not part of this review queue.
+  // Enriches each flag with the current ban state of its IP, so a human
+  // can review and one-click ban/unban. See safety/moderation.ts.
   router.get("/admin/moderation-flags", async (req: Request, res: Response) => {
     try {
       const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
