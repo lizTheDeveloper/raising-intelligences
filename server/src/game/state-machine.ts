@@ -18,10 +18,27 @@ export type GameAction =
   | { type: "START_EPILOGUE"; epilogue: string }
   | { type: "START_ADULT_CHAT"; event: GameEvent }
   | { type: "SHOW_REPORT_CARD"; reportCard: string }
-  | { type: "TRAJECTORY_CHECKED"; concerning: boolean; guidanceSeed: string };
+  | { type: "TRAJECTORY_CHECKED"; concerning: boolean; guidanceSeed: string }
+  | { type: "CONCERN_ACCRUED"; delta: number };
 
 /** Consecutive "notable"/"significant" scenes before guidance queues for the World Manager. */
 const CONCERNING_STREAK_THRESHOLD = 2;
+
+/** Dark Play Plan 2 — bounded concern accumulator (all tunable). */
+export const CONCERN_MAX = 10;
+/** Added to concernLevel when a scene ends in a Tier A "concern" verdict. */
+export const CONCERN_INCREMENT = 2;
+/** Subtracted from concernLevel when a scene ends clean (tier "none").
+ * Smaller than the increment: repair is slower than harm (spec §7). */
+export const CONCERN_DECAY = 1;
+
+/** Signed change to concernLevel implied by a scene-end safety tier.
+ * "block" ends the session and never accrues, so it maps to 0. */
+export function concernDeltaForTier(tier: "block" | "concern" | "none"): number {
+  if (tier === "concern") return CONCERN_INCREMENT;
+  if (tier === "none") return -CONCERN_DECAY;
+  return 0;
+}
 
 export function createGame(childName: string, relationshipType = "co-parents"): GameState {
   return {
@@ -44,6 +61,7 @@ export function createGame(childName: string, relationshipType = "co-parents"): 
     sidebarUsed: { parent1: false, parent2: false },
     sidebarActive: null,
     concerningStreak: 0,
+    concernLevel: 0,
     pendingGuidance: null,
     lastActivityAt: Date.now(),
   };
@@ -92,6 +110,9 @@ export function canTransition(state: GameState, action: GameAction): boolean {
       return state.phase === "event_intro" || state.phase === "epilogue";
     case "TRAJECTORY_CHECKED":
       return state.phase === "debrief";
+    case "CONCERN_ACCRUED":
+      // Not phase-gated: accrual is applied at scene end regardless of phase.
+      return true;
     default:
       return false;
   }
@@ -249,6 +270,12 @@ function applyTransition(state: GameState, action: GameAction): GameState {
         return { ...state, concerningStreak: 0, pendingGuidance: action.guidanceSeed };
       }
       return { ...state, concerningStreak: streak };
+    }
+
+    case "CONCERN_ACCRUED": {
+      const raw = state.concernLevel + action.delta;
+      const clamped = Math.max(0, Math.min(CONCERN_MAX, raw));
+      return { ...state, concernLevel: clamped };
     }
 
     default:

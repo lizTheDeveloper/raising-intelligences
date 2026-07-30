@@ -67,6 +67,11 @@ export interface GameState {
    * once this crosses a threshold does the pattern queue guidance for the
    * World Manager, so a single ambiguous scene doesn't trigger anything. */
   concerningStreak: number;
+  /** Bounded [0, CONCERN_MAX] accumulator of net dark-parenting concern across
+   * scenes (Dark Play Plan 2). Rises on a scene-end Tier A "concern" verdict,
+   * decays on a clean scene; persisted. Server-only — never sent to clients;
+   * the drift is surfaced later (report card / epilogue), never in-scene. */
+  concernLevel: number;
   /** Queued for the next World Manager call: weave a supportive side
    * character into the next scene giving genuinely good, actionable advice
    * relevant to this (never naming or diagnosing the pattern). Cleared once

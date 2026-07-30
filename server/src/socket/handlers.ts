@@ -3,7 +3,7 @@ import type { GameState, Sender, ParentPersonality } from "../types.js";
 import type { ConversationEngine } from "../game/conversation-engine.js";
 import type { EndgameEngine } from "../game/endgame-engine.js";
 import type { GameRepository } from "../db/repository.js";
-import { createGame, PARENT_MESSAGE_CAP } from "../game/state-machine.js";
+import { createGame, PARENT_MESSAGE_CAP, transition, concernDeltaForTier } from "../game/state-machine.js";
 import { generateFirstPortrait, generateNextPortrait } from "../portrait-gen.js";
 import { withGameLock } from "../lib/game-lock.js";
 import {
@@ -162,8 +162,16 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       // trajectory system today and the intervention ladder (Plan 3) later.
     }
 
-    games.set(next.id, next);
-    await repo.saveGame(next);
+    // Dark Play Plan 2: net concern accrues once per scene, at scene end.
+    // The "block" path already returned above; here the tier is "concern" or
+    // "none", so this raises (concern) or decays (clean) the accumulator.
+    const accrued = transition(next, {
+      type: "CONCERN_ACCRUED",
+      delta: concernDeltaForTier(sceneSafety.tier),
+    });
+
+    games.set(accrued.id, accrued);
+    await repo.saveGame(accrued);
     sessions.set(gameId, resetReady(session));
     io.to(gameId).emit(E.DOC_DONE, { documentType: "identity" });
     broadcastState(gameId);
