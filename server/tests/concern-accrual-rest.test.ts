@@ -104,6 +104,23 @@ describe("concern accumulator — accrual through the real REST scene-end route"
     expect(loaded?.concernLevel).toBe(CONCERN_INCREMENT);
   });
 
+  it("GET /state never leaks concernLevel to clients (server-only, spec §5)", async () => {
+    mock.groomingResult = { tier: "concern", reason: "facilitated the child's cruelty" };
+    const ip = "62.62.62.3";
+    const gameId = await createGameAndReachFamilyChat(ip);
+    await sendOneMessage(gameId, ip);
+    await endChat(gameId, ip);
+    // Sanity: it really did accrue server-side.
+    expect((await repo.loadGame(gameId))?.concernLevel).toBe(CONCERN_INCREMENT);
+
+    const stateRes = await fetch(`${baseUrl}/api/game/${gameId}/state`);
+    const body = (await stateRes.json()) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("concernLevel");
+    expect(body).not.toHaveProperty("concerningStreak");
+    expect(body).not.toHaveProperty("pendingGuidance");
+    expect(body).not.toHaveProperty("identityDocument");
+  });
+
   it("a clean 'none' scene does not raise concernLevel (floored at 0)", async () => {
     mock.groomingResult = { tier: "none", reason: "" };
     const ip = "62.62.62.2";

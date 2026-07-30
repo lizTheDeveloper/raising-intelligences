@@ -88,7 +88,19 @@ export function createGameRoutes(
       res.status(404).json({ error: "Game not found" });
       return;
     }
-    const { identityDocument, identitySnapshots, ...publicState } = state;
+    // Strip server-only fields before serializing: the identity doc/snapshots,
+    // and the safety/guidance internals (concernLevel is Dark Play Plan 2's
+    // silent accumulator — spec §5 requires it stay invisible in-play;
+    // concerningStreak/pendingGuidance are World-Manager internals). The client
+    // reads none of these.
+    const {
+      identityDocument,
+      identitySnapshots,
+      concernLevel,
+      concerningStreak,
+      pendingGuidance,
+      ...publicState
+    } = state;
     res.json({
       ...publicState,
       messagesRemaining: PARENT_MESSAGE_CAP - state.parentMessageCount,
