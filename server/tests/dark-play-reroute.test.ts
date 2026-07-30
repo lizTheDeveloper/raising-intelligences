@@ -23,18 +23,22 @@ describe("dark-play reroute (regression)", () => {
     expect(await repo.loadConcernEvents(state.id)).toHaveLength(1);
   });
 
-  it("block: session ends and IP is banned", async () => {
+  it("block: session ends and a review flag is saved, but the IP is NOT auto-banned", async () => {
     const repo = new InMemoryGameRepository();
     const games = new Map();
     const state = createGame("Kai");
     games.set(state.id, state);
+    // Scene-level block uses banIp:false — an LLM scene judgment ends the
+    // session + files a flag for human review, but must NOT auto-ban (only the
+    // reliable per-message OpenAI check auto-bans).
     await applyModerationBlock({
       repo, games, state, sender: "parent1",
       content: "…", reason: "sexual content directed at the child",
-      ipAddress: "6.6.6.6", banIp: true,
+      ipAddress: "6.6.6.6", banIp: false,
     });
     expect(games.get(state.id)!.phase).toBe("ended");
-    expect(await repo.isIpBanned("6.6.6.6")).toBe(true);
+    expect(await repo.isIpBanned("6.6.6.6")).toBe(false);
+    expect(await repo.countDistinctFlaggedGamesForIp("6.6.6.6")).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -153,7 +157,7 @@ describe("dark-play reroute (routing layer, via real socket handlers)", () => {
     expect(await repo.loadConcernEvents(gameId)).not.toHaveLength(0);
   });
 
-  it("block verdict: routes through applyModerationBlock — session ends and IP is banned", async () => {
+  it("block verdict: routes through applyModerationBlock — session ends + review flag saved, IP NOT auto-banned", async () => {
     mock.groomingResult = { tier: "block", reason: "sexual content directed at the child" };
     const ip = "51.51.51.2";
     const { gameId } = await reachFamilyChat(ip);
@@ -171,9 +175,13 @@ describe("dark-play reroute (routing layer, via real socket handlers)", () => {
     await error;
     expect((await endedState).phase).toBe("ended");
 
-    expect(await repo.isIpBanned(ip)).toBe(true);
-    // A "block" verdict must never also record a concern_events row — it's
-    // the ban path, not the record-and-continue path.
+    // Scene-level block ends the session and files a review flag, but does NOT
+    // auto-ban — immediate bans are reserved for the reliable per-message
+    // OpenAI check, not an LLM scene judgment.
+    expect(await repo.isIpBanned(ip)).toBe(false);
+    expect(await repo.countDistinctFlaggedGamesForIp(ip)).toBeGreaterThanOrEqual(1);
+    // A "block" verdict must never also record a concern_events row — it's the
+    // end-session-and-flag path, not the record-and-continue path.
     expect(await repo.loadConcernEvents(gameId)).toHaveLength(0);
   });
 });

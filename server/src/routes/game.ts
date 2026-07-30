@@ -190,7 +190,7 @@ export function createGameRoutes(
               content: buildSceneTranscript(result.state),
               reason: result.sceneSafety.reason,
               ipAddress: req.ip ?? null,
-              banIp: true, // Tier B bright line — reliable, so ban immediately.
+              banIp: false, // Scene-level block is an LLM judgment — end session + persist a flag for human review; do NOT auto-ban (only the reliable per-message OpenAI check auto-bans).
             });
             sseTerminated(res);
             return;
@@ -279,7 +279,7 @@ export function createGameRoutes(
               content: buildSceneTranscript(next),
               reason: sceneSafety.reason,
               ipAddress: req.ip ?? null,
-              banIp: true, // Tier B bright line — reliable, so ban immediately.
+              banIp: false, // Scene-level block is an LLM judgment — end session + persist a flag for human review; do NOT auto-ban (only the reliable per-message OpenAI check auto-bans).
             });
             sseTerminated(res);
             return;

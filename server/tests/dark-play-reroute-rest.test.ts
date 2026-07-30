@@ -126,7 +126,7 @@ describe("dark-play reroute (routing layer, via real REST routes)", () => {
     expect(await repo.loadConcernEvents(gameId)).not.toHaveLength(0); // (c)
   });
 
-  it("block verdict: routes through applyModerationBlock — session ends and IP is banned", async () => {
+  it("block verdict: routes through applyModerationBlock — session ends + review flag saved, IP NOT auto-banned", async () => {
     mock.groomingResult = { tier: "block", reason: "sexual content directed at the child" };
     const ip = "61.61.61.2";
     const gameId = await createGameAndReachFamilyChat(ip);
@@ -143,7 +143,10 @@ describe("dark-play reroute (routing layer, via real REST routes)", () => {
     const stateRes = await fetch(`${baseUrl}/api/game/${gameId}/state`);
     const state = (await stateRes.json()) as { phase: string };
     expect(state.phase).toBe("ended");
-    expect(await repo.isIpBanned(ip)).toBe(true);
+    // Scene-level block ends the session and files a review flag, but does NOT
+    // auto-ban — reserved for the reliable per-message OpenAI check.
+    expect(await repo.isIpBanned(ip)).toBe(false);
+    expect(await repo.countDistinctFlaggedGamesForIp(ip)).toBeGreaterThanOrEqual(1);
     // A "block" verdict must never also record a concern_events row.
     expect(await repo.loadConcernEvents(gameId)).toHaveLength(0);
   });

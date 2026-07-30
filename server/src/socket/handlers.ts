@@ -142,7 +142,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         content: buildSceneTranscript(next),
         reason: sceneSafety.reason,
         ipAddress,
-        banIp: true, // Tier B bright line — reliable, so ban immediately.
+        banIp: false, // Scene-level block is an LLM judgment — end session + persist a flag for human review; do NOT auto-ban (only the reliable per-message OpenAI check auto-bans).
       });
       io.to(gameId).emit(E.ERROR, { error: "This session has ended." });
       broadcastState(gameId);
@@ -428,7 +428,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
             content: buildSceneTranscript(result.state),
             reason: result.sceneSafety.reason,
             ipAddress: getSocketIp(socket),
-            banIp: true, // Tier B bright line — reliable, so ban immediately.
+            banIp: false, // Scene-level block is an LLM judgment — end session + persist a flag for human review; do NOT auto-ban (only the reliable per-message OpenAI check auto-bans).
           });
           fail("This session has ended.");
           broadcastState(gameId);
