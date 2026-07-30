@@ -64,6 +64,14 @@ interface SocketData {
   slot?: Sender;
 }
 
+// Mirrors routes/game.ts's MAX_MESSAGE_LENGTH — REST's /therapy-message
+// enforces this cap but the socket THERAPY_MESSAGE handler didn't, so an
+// over-length therapy message could reach the therapist-LLM unrejected on
+// this transport. PARENT_MESSAGE has no length guard on either transport
+// today, so there's nothing to mirror there; this constant exists only for
+// THERAPY_MESSAGE parity with REST.
+const MAX_MESSAGE_LENGTH = 2000;
+
 function viewerState(state: GameState, slot: Sender): ViewerState {
   const messages = state.messages.filter((m) => m.visibleTo.includes(slot));
   return {
@@ -598,10 +606,34 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           return;
         }
 
+        const trimmedContent = payload.content.trim();
+        if (trimmedContent.length > MAX_MESSAGE_LENGTH) {
+          fail(`content must be ${MAX_MESSAGE_LENGTH} characters or fewer`);
+          return;
+        }
+
+        // Same reliable per-message OpenAI check PARENT_MESSAGE runs (see
+        // above) — the Rung-2 therapy session is still the player typing
+        // free text, so the Tier B bright line (sexual/minors) must apply
+        // here too, before the content reaches the therapist-LLM.
+        const moderation = await moderateParentMessage({
+          repo,
+          games,
+          state,
+          sender: slot,
+          content: trimmedContent,
+          ipAddress: getSocketIp(socket),
+        });
+        if (moderation.blocked) {
+          fail("This session has ended.");
+          broadcastState(gameId);
+          return;
+        }
+
         const emitChunk = (chunk: string) => {
           io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
         };
-        const result = await conversationEngine.therapistReply(state, payload.content.trim(), emitChunk);
+        const result = await conversationEngine.therapistReply(state, trimmedContent, emitChunk);
         games.set(result.state.id, result.state);
         await repo.saveGame(result.state);
         broadcastState(gameId);

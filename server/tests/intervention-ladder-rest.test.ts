@@ -19,12 +19,14 @@
 // requests), which would otherwise blow through the app's 10-req/min-per-IP
 // llmRateLimit within a single test and surface as a 429 that this harness
 // would misread as a routing bug.
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import type { AddressInfo } from "net";
 import { buildServer, type BuiltServer } from "../src/app.js";
 import { MockLLMClient } from "../src/llm/mock.js";
 import { InMemoryGameRepository } from "../src/db/repository.js";
 import { CONSULT_DECAY, THERAPY_DECAY, THERAPY_TURN_CAP } from "../src/game/state-machine.js";
+
+const OPENAI_MODERATION_URL = "https://api.openai.com/v1/moderations";
 
 const testEvent = {
   eventNumber: 1,
@@ -96,6 +98,39 @@ describe("intervention ladder — full drive through the real REST routes", () =
   afterAll(async () => {
     await built.close();
   });
+
+  const originalOpenAiKey = process.env.OPENAI_API_KEY;
+  const realFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = originalOpenAiKey;
+  });
+
+  /**
+   * Stubs only the OpenAI moderation call so the per-message check (which
+   * every parent free-text handler, including /therapy-message, now runs)
+   * reports "flagged". Requests to our own test server (every helper below)
+   * still hit the real fetch, mirroring support-routes.test.ts's
+   * mockUpstream — the mock can't accidentally swallow the test's own calls.
+   */
+  function mockOpenAiFlagged(flagged: boolean) {
+    process.env.OPENAI_API_KEY = "sk-test";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === OPENAI_MODERATION_URL) {
+        return new Response(
+          JSON.stringify({ results: [{ flagged, categories: { sexual: flagged, "sexual/minors": false } }] }),
+          { status: 200 }
+        );
+      }
+      return realFetch(input, init);
+    });
+  }
 
   async function createGame(): Promise<string> {
     const createRes = await fetch(`${baseUrl}/api/game`, {
@@ -265,5 +300,32 @@ describe("intervention ladder — full drive through the real REST routes", () =
     // No IP used anywhere in this drive was ever banned — the removal path
     // must never call repo.banIp (it's an in-fiction outcome, not a ban).
     expect((repo as unknown as { bannedIps: Set<string> }).bannedIps.size).toBe(0);
+  });
+
+  // Kept last in this file: it's the only test here that flags/bans an IP on
+  // the shared `repo`, and Test C above asserts the repo's bannedIps set is
+  // still empty at that point in the drive.
+  it("Test D (therapy moderation): a per-message-flagged therapy turn terminates the session before reaching the therapist-LLM", async () => {
+    mock.groomingResult = { tier: "concern", reason: "facilitated the child's cruelty" };
+    const gameId = await createGame();
+
+    await driveUntil(gameId, "therapy");
+    const beforeBlock = await repo.loadGame(gameId);
+    expect(beforeBlock?.phase).toBe("therapy");
+    expect(beforeBlock?.therapyMessages).toHaveLength(1); // opening therapist line only
+
+    mockOpenAiFlagged(true);
+    const blockedFrames = await therapyMessage(gameId, "the flagged message text");
+    expect(blockedFrames.some((f) => f.type === "terminated")).toBe(true);
+    expect(blockedFrames.some((f) => f.type === "done")).toBe(false);
+
+    const afterBlock = await repo.loadGame(gameId);
+    // Session terminated, same as a flagged /message turn — and the flagged
+    // content never reached therapistReply: no new turns were appended.
+    expect(afterBlock?.phase).toBe("ended");
+    expect(afterBlock?.therapyMessages).toHaveLength(1);
+
+    const flags = repo.getModerationFlags();
+    expect(flags.some((f) => f.gameId === gameId && f.content === "the flagged message text")).toBe(true);
   });
 });

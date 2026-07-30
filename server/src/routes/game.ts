@@ -556,6 +556,27 @@ export function createGameRoutes(
             return;
           }
 
+          // Same reliable per-message OpenAI check every other parent free-text
+          // surface runs (see /message above) — the Rung-2 therapy session is
+          // still the player typing free text, so the Tier B bright line
+          // (sexual/minors) must apply here too, before the content reaches
+          // the therapist-LLM. There's no per-parent sender in this REST
+          // surface (no `sender` field on the request), so we attribute the
+          // flag to "parent1" — matching this file's existing fallback
+          // convention (see `lastParentMessage?.sender ?? "parent1"` above).
+          const moderation = await moderateParentMessage({
+            repo,
+            games,
+            state,
+            sender: "parent1",
+            content,
+            ipAddress: req.ip ?? null,
+          });
+          if (moderation.blocked) {
+            sseTerminated(res);
+            return;
+          }
+
           const result = await engine.therapistReply(state, content, (chunk) => {
             sseChunk(res, chunk);
           });
