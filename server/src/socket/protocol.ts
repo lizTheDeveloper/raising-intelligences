@@ -1,4 +1,4 @@
-import type { ChildGender, GamePhase, GameEvent, Message, Sender } from "../types.js";
+import type { ChildGender, GamePhase, GameEvent, Message, Sender, TherapyMessage } from "../types.js";
 import type { PlayerSlot } from "../game/session-manager.js";
 
 /**
@@ -26,6 +26,9 @@ export interface ReadyPayload {
   ready: boolean;
 }
 export interface ParentMessagePayload {
+  content: string;
+}
+export interface TherapyMessagePayload {
   content: string;
 }
 export interface AdultChatPayload {
@@ -66,6 +69,13 @@ export interface ViewerState {
   messagesRemaining: number;
   sidebarActive: Sender | null;
   sidebarUsed: { parent1: boolean; parent2: boolean };
+  /** Dark Play Plan 3 — the human-facing beat text (psychologist consult /
+   * CPS determination). The whole point of the consult/cps_review screens;
+   * server-only fields that drive it (concernLevel, highestRungFired,
+   * cpsOutcome) stay out of ViewerState. Null outside consult/cps_review. */
+  interventionText: string | null;
+  /** Rung-2 family-therapy session transcript, for the therapy screen. */
+  therapyMessages: TherapyMessage[];
 }
 
 export const SOCKET_EVENTS = {
@@ -74,6 +84,10 @@ export const SOCKET_EVENTS = {
   JOIN_GAME: "join_game",
   READY: "ready",
   PARENT_MESSAGE: "parent_message",
+  /** Dark Play Plan 3 — a parent's turn during a Rung-2 therapy session.
+   * Distinct from PARENT_MESSAGE (guarded to family_chat) so the two flows
+   * stay unambiguous. */
+  THERAPY_MESSAGE: "therapy_message",
   START_SIDEBAR: "start_sidebar",
   END_SIDEBAR: "end_sidebar",
   END_CHAT: "end_chat",

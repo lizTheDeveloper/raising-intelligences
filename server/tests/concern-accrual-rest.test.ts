@@ -119,6 +119,11 @@ describe("concern accumulator — accrual through the real REST scene-end route"
     expect(body).not.toHaveProperty("concerningStreak");
     expect(body).not.toHaveProperty("pendingGuidance");
     expect(body).not.toHaveProperty("identityDocument");
+    // Dark Play Plan 3 — the ladder-gating internals are server-only for the
+    // same reason concernLevel is: they must never leak the player's own
+    // dark-parenting score back to them.
+    expect(body).not.toHaveProperty("highestRungFired");
+    expect(body).not.toHaveProperty("cpsOutcome");
   });
 
   it("a clean 'none' scene does not raise concernLevel (floored at 0)", async () => {

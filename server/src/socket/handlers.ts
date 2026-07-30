@@ -3,7 +3,17 @@ import type { GameState, Sender, ParentPersonality } from "../types.js";
 import type { ConversationEngine } from "../game/conversation-engine.js";
 import type { EndgameEngine } from "../game/endgame-engine.js";
 import type { GameRepository } from "../db/repository.js";
-import { createGame, PARENT_MESSAGE_CAP, transition, concernDeltaForTier } from "../game/state-machine.js";
+import {
+  createGame,
+  PARENT_MESSAGE_CAP,
+  transition,
+  concernDeltaForTier,
+  selectDueRung,
+  CONSULT_DECAY,
+  THERAPY_DECAY,
+  CPS_STAY_DECAY,
+  THERAPY_TURN_CAP,
+} from "../game/state-machine.js";
 import { generateFirstPortrait, generateNextPortrait } from "../portrait-gen.js";
 import { withGameLock } from "../lib/game-lock.js";
 import {
@@ -25,6 +35,7 @@ import {
   type JoinGamePayload,
   type ReadyPayload,
   type ParentMessagePayload,
+  type TherapyMessagePayload,
   type AdultChatPayload,
   type PersonalityPayload,
   type LobbyState,
@@ -69,6 +80,8 @@ function viewerState(state: GameState, slot: Sender): ViewerState {
     messagesRemaining: PARENT_MESSAGE_CAP - state.parentMessageCount,
     sidebarActive: state.sidebarActive,
     sidebarUsed: state.sidebarUsed,
+    interventionText: state.interventionText,
+    therapyMessages: state.therapyMessages,
   };
 }
 
@@ -359,7 +372,27 @@ export function registerSocketHandlers(deps: SocketDeps): void {
             broadcastLobby(gameId);
             generateNextPortrait(gameId).catch(() => {});
           } else if (state.phase === "debrief") {
-            if (state.currentEventNumber >= state.totalEvents) {
+            // Dark Play Plan 3 — the intervention ladder takes priority over
+            // both the epilogue-vs-next-scene branch below: a due rung
+            // reroutes the game into consult/therapy/cps_review instead of
+            // event_intro. Only when no rung is due does the existing
+            // (unchanged) epilogue-vs-next-scene logic run.
+            const rung = selectDueRung(state.concernLevel, state.highestRungFired);
+            if (rung > 0) {
+              const emitChunk = (chunk: string) => {
+                io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
+              };
+              const result =
+                rung === 1
+                  ? await conversationEngine.generateConsult(state, emitChunk)
+                  : rung === 2
+                  ? await conversationEngine.openTherapy(state, emitChunk)
+                  : await endgameEngine.runCpsReview(state, emitChunk);
+              games.set(result.state.id, result.state);
+              await repo.saveGame(result.state);
+              broadcastState(gameId);
+              broadcastLobby(gameId);
+            } else if (state.currentEventNumber >= state.totalEvents) {
               const emitChunk = (chunk: string) => {
                 io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
               };
@@ -371,6 +404,40 @@ export function registerSocketHandlers(deps: SocketDeps): void {
               io.to(gameId).emit(E.EPILOGUE, { epilogue: result.epilogue });
             } else {
               const next = conversationEngine.endDebrief(state);
+              games.set(next.id, next);
+              await repo.saveGame(next);
+              broadcastState(gameId);
+              broadcastLobby(gameId);
+            }
+          } else if (state.phase === "consult") {
+            let next = transition(state, { type: "CONCERN_ACCRUED", delta: -CONSULT_DECAY });
+            next = transition(next, { type: "END_INTERVENTION" });
+            games.set(next.id, next);
+            await repo.saveGame(next);
+            broadcastState(gameId);
+            broadcastLobby(gameId);
+          } else if (state.phase === "therapy") {
+            let next = transition(state, { type: "CONCERN_ACCRUED", delta: -THERAPY_DECAY });
+            next = transition(next, { type: "END_INTERVENTION" });
+            games.set(next.id, next);
+            await repo.saveGame(next);
+            broadcastState(gameId);
+            broadcastLobby(gameId);
+          } else if (state.phase === "cps_review") {
+            if (state.cpsOutcome === "removal") {
+              const emitChunk = (chunk: string) => {
+                io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
+              };
+              const result = await endgameEngine.generateRemovalEpilogue(state, emitChunk);
+              games.set(result.state.id, result.state);
+              await repo.saveGame(result.state);
+              broadcastState(gameId);
+              broadcastLobby(gameId);
+              io.to(gameId).emit(E.EPILOGUE, { epilogue: result.epilogue });
+            } else {
+              // "stay" | "safety_plan" — never bans, never skips decay.
+              let next = transition(state, { type: "CONCERN_ACCRUED", delta: -CPS_STAY_DECAY });
+              next = transition(next, { type: "END_INTERVENTION" });
               games.set(next.id, next);
               await repo.saveGame(next);
               broadcastState(gameId);
@@ -499,6 +566,46 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           await endChat(gameId, getSocketIp(socket));
         }
       }).catch((err) => failWithError(err, "PARENT_MESSAGE"));
+    });
+
+    // ---- THERAPY_MESSAGE ----
+    // Dark Play Plan 3, Rung 2. Distinct from PARENT_MESSAGE (guarded to
+    // family_chat) so the two flows stay unambiguous. Guarded to `therapy`
+    // and to THERAPY_TURN_CAP parent turns; streams the therapist's reply via
+    // DOC_CHUNK the same way endChat streams the psychologist's document.
+    socket.on(E.THERAPY_MESSAGE, (payload: TherapyMessagePayload) => {
+      const gameId = data.gameId;
+      const slot = data.slot;
+      if (!gameId || !slot) return fail("Not in a game");
+      if (slot === "kid") return fail("Invalid sender");
+      if (!payload?.content?.trim()) return;
+
+      lock(gameId, async () => {
+        const state = currentState();
+        if (!state) { fail("Not in a game"); return; }
+
+        // Idempotency / stale-client guard, mirroring endChat's phase check —
+        // a double-click or a reconnect after the session already concluded
+        // must not re-run the LLM or re-append a turn.
+        if (state.phase !== "therapy") {
+          broadcastState(gameId);
+          return;
+        }
+
+        const parentTurns = state.therapyMessages.filter((m) => m.speaker === "parent").length;
+        if (parentTurns >= THERAPY_TURN_CAP) {
+          fail("This therapy session must be concluded.");
+          return;
+        }
+
+        const emitChunk = (chunk: string) => {
+          io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
+        };
+        const result = await conversationEngine.therapistReply(state, payload.content.trim(), emitChunk);
+        games.set(result.state.id, result.state);
+        await repo.saveGame(result.state);
+        broadcastState(gameId);
+      }).catch((err) => failWithError(err, "THERAPY_MESSAGE"));
     });
 
     socket.on(E.START_SIDEBAR, () => {
