@@ -3,7 +3,7 @@ import type { Request, Response, RequestHandler } from "express";
 import { existsSync } from "fs";
 import path from "path";
 import { ConversationEngine } from "../game/conversation-engine.js";
-import { createGame, PARENT_MESSAGE_CAP } from "../game/state-machine.js";
+import { createGame, PARENT_MESSAGE_CAP, transition, concernDeltaForTier } from "../game/state-machine.js";
 import type { GameState, Sender, ParentPersonality } from "../types.js";
 import type { GameRepository } from "../db/repository.js";
 import { generateFirstPortrait, generateNextPortrait, PORTRAITS_DIR } from "../portrait-gen.js";
@@ -298,9 +298,17 @@ export function createGameRoutes(
             // trajectory system today and the intervention ladder (Plan 3) later.
           }
 
-          games.set(next.id, next);
-          await repo.saveGame(next);
-          sseDone(res, { phase: next.phase });
+          // Dark Play Plan 2: net concern accrues once per scene, at scene end.
+          // The "block" path already returned above; here the tier is "concern"
+          // or "none", so this raises (concern) or decays (clean) the accumulator.
+          const accrued = transition(next, {
+            type: "CONCERN_ACCRUED",
+            delta: concernDeltaForTier(sceneSafety.tier),
+          });
+
+          games.set(accrued.id, accrued);
+          await repo.saveGame(accrued);
+          sseDone(res, { phase: accrued.phase });
         } catch (err) {
           logger.error("end_chat_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
           sseError(res, "An internal error occurred");
