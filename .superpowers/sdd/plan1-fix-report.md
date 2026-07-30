@@ -12,9 +12,9 @@ production logic changed.
 
 ## Commit
 
-`3ab5b2b` — `test(safety): cover the tier→routing layer (concern continues, block terminates)`
+`fc97a46` — `test(safety): cover the tier→routing layer (concern continues, block terminates)`
 
-(Run `git log -1 --stat 3ab5b2b` in the worktree for the full diff stat.)
+(Run `git log -1 --stat fc97a46` in the worktree for the full diff stat.)
 
 ## What changed
 
