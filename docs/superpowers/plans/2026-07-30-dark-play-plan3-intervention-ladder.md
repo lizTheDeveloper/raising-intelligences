@@ -167,6 +167,13 @@ In `canTransition`, add cases:
       return state.phase === "consult" || state.phase === "therapy" || state.phase === "cps_review";
 ```
 
+**AND** widen the existing `START_EPILOGUE` guard (currently `state.phase === "event_intro" || state.phase === "debrief"`, ~line 106) to also admit `cps_review`, because the removal path (Task 3/4) dispatches `START_EPILOGUE` while the game is in `cps_review`. Without this, `transition` throws `Invalid transition: START_EPILOGUE from phase cps_review` at the single most consequential moment. Change it to:
+
+```ts
+    case "START_EPILOGUE":
+      return state.phase === "event_intro" || state.phase === "debrief" || state.phase === "cps_review";
+```
+
 In `transition`, add cases (place before `default`):
 
 ```ts
@@ -321,7 +328,7 @@ Create `server/tests/intervention-engine.test.ts`. Use `MockLLMClient`. Add a mo
 - `generateTherapy` → `phase === "therapy"`, `highestRungFired === 2`.
 - `runCpsReview` with `cpsResult.outcome = "removal"` → `phase === "cps_review"`, `state.cpsOutcome === "removal"`, returns `outcome === "removal"`.
 - `runCpsReview` with a malformed outcome (e.g. `"banish"`) → falls back to `"safety_plan"`, NEVER `"removal"`.
-- `generateRemovalEpilogue` → `phase === "epilogue"`, non-empty epilogue.
+- `generateRemovalEpilogue` — **the test MUST start from a realistic `cps_review` state** (`{ ...createGame("Kai"), phase: "cps_review", cpsOutcome: "removal" }`), because that is the phase production calls it from. Starting from a fresh `event_intro` state would let the `START_EPILOGUE` transition pass while production (from `cps_review`) throws — a false green. Assert `phase === "epilogue"`, non-empty epilogue. (This test is what proves the Task 1 `START_EPILOGUE` guard widening is present.)
 
 - [ ] **Step 2: Verify it fails; Step 3: Implement the four methods** (mirror `endFamilyChat`/`generateEpilogue`; the CPS method parses JSON defensively). **Step 4:** run the test (PASS) + `npx tsc -b server` (exit 0). **Step 5: Commit** `feat(ladder): engine methods for consult, therapy, CPS review, removal epilogue`.
 
@@ -368,7 +375,7 @@ Create `server/tests/intervention-engine.test.ts`. Use `MockLLMClient`. Add a mo
 
 - [ ] **Step 1** Write a client test if the harness supports it (check `client/` for existing component tests; if none, rely on the screens being pure presentational + a manual smoke via the deploy). Create the three screen components (full JSX, mirroring `Debrief.tsx`: a titled text block rendering `text` as paragraphs, and a `next` button calling `onContinue`; `data-testid` per screen). **Step 2** Add `endConsult`/`endTherapy`/`endCps` to `useGame` (each `POST ${API}/game/${gameId}/end-<x>`, then `setPhase(data.phase)`, and for consult/therapy `setCurrentEvent(null)`), and surface `interventionText` from the `/state` and end-chat/debrief responses. **Step 3** Add the three dispatch branches to `SoloGame` rendering the matching screen with `text={interventionText ?? ""}` and `onContinue={async () => { await endConsult(); await nextEvent(); }}` (consult/therapy advance into the next event; CPS `stay/safety_plan` likewise; CPS `removal` returns `phase: "epilogue"` from the server, so `onContinue` for cps should branch: if the server already moved to epilogue, render Endgame — but since the server sets phase on the advance response, simply `await endCps(); ` and let the returned phase drive rendering, calling `nextEvent()` only if the returned phase is `event_intro`). **Step 4** `npm run build -w client` succeeds. **Step 5 Commit** `feat(ladder): solo client intervention screens + wiring`.
 
-- [ ] **Step 3a (removal handling detail):** in `SoloGame`, the CPS `onContinue` must handle both outcomes: after `await endCps()`, if the resulting `phase === "epilogue"` (removal), do nothing further (the epilogue Endgame branch renders and the removal epilogue text streams via the existing epilogue flow); if `event_intro`, call `nextEvent()`. Verify the removal epilogue is fetched/streamed by the same path `generateEpilogue` uses, or have `/end-cps` return the epilogue text and set it. Keep the epilogue-delivery mechanism identical to the existing one to avoid a second code path.
+- [ ] **Step 3a (removal handling detail — PINNED mechanism):** the removal epilogue is generated inside the `/end-cps` advance (server Task 4), which calls `generateRemovalEpilogue` and returns, in the SSE/`/end-cps` response, BOTH `phase: "epilogue"` AND the generated `epilogue` text — exactly the shape the socket epilogue path already emits (`E.EPILOGUE { epilogue }`) and the shape `useGame.generateEpilogue` already sets into its `epilogue` state. So the client does NOT open a second epilogue code path: `endCps` sets `phase` and, when present, `epilogue` from the response, and `SoloGame` renders the existing `Endgame` component off that `epilogue` state. In `SoloGame`, CPS `onContinue`: `await endCps()`; if the returned `phase === "epilogue"` render `Endgame` (already wired), else if `event_intro` call `nextEvent()`. This reuses the existing epilogue-display path; only the *generation trigger* differs (inside `/end-cps` rather than `/epilogue`), which is unavoidable and contained to one server method.
 
 ---
 
@@ -402,3 +409,6 @@ Create `server/tests/intervention-engine.test.ts`. Use `MockLLMClient`. Add a mo
 - **Placeholder scan:** Tasks 3/5/6 compress repetitive per-transport steps but every logic decision (the routing rule, the CPS defensive parse, the removal branch, the decay values) is fully specified; the React screens mirror an existing component whose full source is the template. No "add error handling"-class placeholders.
 - **Type consistency:** `selectDueRung`, `ENTER_INTERVENTION/SET_CPS_OUTCOME/END_INTERVENTION`, the three roles, and `interventionText`/`highestRungFired`/`cpsOutcome` are named identically across all tasks.
 - **The one scope decision for reviewer/Liz:** intervention phases are read-and-advance, not interactive; therapy engagement = completion. Flagged in Global Constraints.
+- **Deliberate v1 limitation (accepted, not an omission):** the ladder is single-shot — once Rung 3 (CPS) fires with a `stay`/`safety_plan` outcome, `highestRungFired` pins at 3 and no further rung can fire even if the parent keeps escalating (concern just pins at `CONCERN_MAX`). Real child welfare would return a failed safety plan to review→removal; that re-review loop is deferred. The bad-faith backstop for continued escalation is Plan 4 (escalation detection). Decided deliberately for v1.
+- **Removal-epilogue delivery pinned:** generated inside `/end-cps`, delivered via the existing epilogue-display path (Task 5 Step 3a) — no second epilogue code path.
+- **Correctness guard verified against source:** `START_EPILOGUE`'s `canTransition` guard (state-machine.ts:106) is `event_intro || debrief` today; Task 1 widens it to include `cps_review`, and the Task 3 removal test starts from `cps_review` to prove it.
