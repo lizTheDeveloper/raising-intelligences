@@ -110,7 +110,16 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
           imgSrc: ["'self'", "data:", "blob:"],
           // SSE and API calls go back to the same origin; the analytics script
           // POSTs events back to whichever host it loaded from, so allow both.
-          connectSrc: ["'self'", allowedOrigin, "https://analytics.multiversestudios.xyz", "https://analytics.multiversegames.ai"],
+          // errors.multiversegames.ai is the GlitchTip ingest endpoint — without
+          // it the browser silently blocks every crash report, so the client SDK
+          // looks correctly configured while reporting nothing.
+          connectSrc: [
+            "'self'",
+            allowedOrigin,
+            "https://analytics.multiversestudios.xyz",
+            "https://analytics.multiversegames.ai",
+            "https://errors.multiversegames.ai",
+          ],
           fontSrc: ["'self'", "https://fonts.gstatic.com"],
           mediaSrc: ["'self'"],
         },
