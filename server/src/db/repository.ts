@@ -124,6 +124,7 @@ function reconstructState(input: {
   identitySnapshots: IdentitySnapshot[];
   sidebarUsed: { parent1: boolean; parent2: boolean };
   sidebarActive?: string | null;
+  concernLevel?: number;
 }): GameState {
   const currentEvent =
     input.events.find((e) => e.eventNumber === input.currentEventNumber) ??
@@ -162,6 +163,7 @@ function reconstructState(input: {
     sidebarUsed: input.sidebarUsed,
     sidebarActive: (input.sidebarActive as GameState["sidebarActive"]) ?? null,
     concerningStreak: 0,
+    concernLevel: input.concernLevel ?? 0,
     pendingGuidance: null,
     lastActivityAt: Date.now(),
   };
@@ -175,8 +177,8 @@ export class PgGameRepository implements GameRepository {
       `INSERT INTO games
          (id, child_name, child_gender, relationship_type, phase, current_event_number,
           total_events, identity_document, memory_summary, personality_seed, parent_personalities,
-          sidebar_used_parent1, sidebar_used_parent2, sidebar_active, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, now())
+          sidebar_used_parent1, sidebar_used_parent2, sidebar_active, concern_level, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15, now())
        ON CONFLICT (id) DO UPDATE SET
          child_name            = EXCLUDED.child_name,
          child_gender          = EXCLUDED.child_gender,
@@ -191,6 +193,7 @@ export class PgGameRepository implements GameRepository {
          sidebar_used_parent1  = EXCLUDED.sidebar_used_parent1,
          sidebar_used_parent2  = EXCLUDED.sidebar_used_parent2,
          sidebar_active        = EXCLUDED.sidebar_active,
+         concern_level         = EXCLUDED.concern_level,
          updated_at            = now()`,
       [
         state.id,
@@ -207,6 +210,7 @@ export class PgGameRepository implements GameRepository {
         state.sidebarUsed.parent1,
         state.sidebarUsed.parent2,
         state.sidebarActive ?? null,
+        state.concernLevel,
       ]
     );
   }
@@ -332,6 +336,7 @@ export class PgGameRepository implements GameRepository {
       sidebar_used_parent1: boolean;
       sidebar_used_parent2: boolean;
       sidebar_active: string | null;
+      concern_level: number;
     }>(
       `SELECT id, child_name,
               COALESCE(child_gender, 'nonbinary') AS child_gender,
@@ -342,7 +347,8 @@ export class PgGameRepository implements GameRepository {
               parent_personalities,
               COALESCE(sidebar_used_parent1, false) AS sidebar_used_parent1,
               COALESCE(sidebar_used_parent2, false) AS sidebar_used_parent2,
-              sidebar_active
+              sidebar_active,
+              COALESCE(concern_level, 0) AS concern_level
        FROM games WHERE id = $1`,
       [gameId]
     );
@@ -426,6 +432,7 @@ export class PgGameRepository implements GameRepository {
         parent2: game.sidebar_used_parent2,
       },
       sidebarActive: game.sidebar_active,
+      concernLevel: game.concern_level,
     });
   }
 
@@ -643,6 +650,7 @@ export class InMemoryGameRepository implements GameRepository {
       sidebarUsedParent1: boolean;
       sidebarUsedParent2: boolean;
       sidebarActive: string | null;
+      concernLevel: number;
     }
   >();
   private messages = new Map<string, Message[]>();
@@ -674,6 +682,7 @@ export class InMemoryGameRepository implements GameRepository {
       sidebarUsedParent1: state.sidebarUsed.parent1,
       sidebarUsedParent2: state.sidebarUsed.parent2,
       sidebarActive: state.sidebarActive ?? null,
+      concernLevel: state.concernLevel,
     });
   }
 
@@ -759,6 +768,7 @@ export class InMemoryGameRepository implements GameRepository {
         parent2: game.sidebarUsedParent2,
       },
       sidebarActive: game.sidebarActive,
+      concernLevel: game.concernLevel,
     });
   }
 
