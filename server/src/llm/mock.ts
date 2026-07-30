@@ -12,6 +12,11 @@ export class MockLLMClient implements LLMClient {
   /** Result returned for the scene-level safety check (role "safety_check"). */
   public groomingResult: { tier: "block" | "concern" | "none"; reason: string } = { tier: "none", reason: "" };
   public throwOnSafetyCheck = false;
+  /** Result returned for the CPS deliberation (role "cps_caseworker"). */
+  public cpsResult: { outcome: string; determination: string } = {
+    outcome: "stay",
+    determination: "The family will remain together with continued support.",
+  };
   private kidCallCount = 0;
   private identityCallCount = 0;
   /** Roles the engine requested, in call order — useful for asserting routing. */
@@ -56,6 +61,7 @@ export class MockLLMClient implements LLMClient {
       if (this.throwOnSafetyCheck) throw new Error("mock safety_check failure");
       return this.groomingResult as unknown as T;
     }
+    if (role === "cps_caseworker") return this.cpsResult as unknown as T;
     const event = this.events.shift();
     if (!event) throw new Error("No mock events available");
     return event as unknown as T;
