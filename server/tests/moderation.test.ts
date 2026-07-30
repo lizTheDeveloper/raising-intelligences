@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createGame } from "../src/game/state-machine.js";
-import { classifyParentMessage, moderateParentMessage, applyModerationBlock } from "../src/safety/moderation.js";
+import { classifyParentMessage, moderateParentMessage, applyModerationBlock, recordConcern } from "../src/safety/moderation.js";
 import { InMemoryGameRepository } from "../src/db/repository.js";
 import type { GameState } from "../src/types.js";
 
@@ -285,5 +285,24 @@ describe("applyModerationBlock", () => {
 
     expect(games.get(state.id)!.phase).toBe("ended");
     expect(repo.getModerationFlags()).toHaveLength(1);
+  });
+});
+
+describe("recordConcern", () => {
+  it("persists a concern event and does NOT end the session or ban", async () => {
+    const repo = new InMemoryGameRepository();
+    const games = new Map();
+    const state = createGame("Kai");
+    games.set(state.id, state);
+
+    await recordConcern({ repo, state, sender: "parent1", reason: "facilitated cruelty", ipAddress: "9.9.9.9" });
+
+    const events = await repo.loadConcernEvents(state.id);
+    expect(events).toHaveLength(1);
+    expect(events[0].reason).toBe("facilitated cruelty");
+    // session untouched:
+    expect(games.get(state.id)!.phase).not.toBe("ended");
+    // IP not banned:
+    expect(await repo.isIpBanned("9.9.9.9")).toBe(false);
   });
 });

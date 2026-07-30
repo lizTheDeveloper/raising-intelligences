@@ -8,8 +8,8 @@ import {
   buildWorldManagerContext,
 } from "./context-assembler.js";
 import type { LLMClient } from "../llm/client.js";
-import { detectGroomingPattern, detectConcerningTrajectory } from "../safety/pattern-detection.js";
-import type { ModerationResult } from "../safety/moderation.js";
+import { classifyScene, detectConcerningTrajectory } from "../safety/pattern-detection.js";
+import type { SceneSafetyResult } from "../safety/moderation.js";
 import type { TrajectoryResult } from "../safety/pattern-detection.js";
 
 /**
@@ -89,7 +89,7 @@ export class ConversationEngine {
     sender: Sender,
     content: string,
     onKidChunk?: (chunk: string) => void
-  ): Promise<{ state: GameState; kidResponse: string; abuse?: ModerationResult }> {
+  ): Promise<{ state: GameState; kidResponse: string; sceneSafety?: SceneSafetyResult }> {
     let next = transition(state, { type: "PARENT_MESSAGE", sender, content });
 
     const ctx = buildKidContext(next);
@@ -102,26 +102,28 @@ export class ConversationEngine {
 
     next = transition(next, { type: "KID_MESSAGE", content: kidResponse });
 
-    // Mid-scene abuse interception. The full grooming/abuse pattern check
+    // Mid-scene safety interception. The full scene-safety classifier
     // otherwise only runs at end-of-scene (endFamilyChat), which lets a
     // bad-faith actor send up to PARENT_MESSAGE_CAP (12) messages at the
     // child before the session terminates. Re-run the SAME calibrated
-    // detector (it already distinguishes ordinary hard parenting from real
-    // abuse) at mid-scene checkpoints so a clear pattern ends the session
-    // promptly instead of after a whole scene. Only during family_chat, and
-    // not on the final message (the cap triggers end-chat, which checks anyway).
-    let abuse: ModerationResult | undefined;
+    // classifier (it already distinguishes ordinary hard parenting from real
+    // abuse) at mid-scene checkpoints so a "block" verdict ends the session
+    // promptly instead of after a whole scene; a "concern" verdict surfaces
+    // too so the caller can record it without waiting for scene end. Only
+    // during family_chat, and not on the final message (the cap triggers
+    // end-chat, which checks anyway).
+    let sceneSafety: SceneSafetyResult | undefined;
     if (
       next.phase === "family_chat" &&
       next.parentMessageCount >= MID_SCENE_ABUSE_CHECK_EVERY &&
       next.parentMessageCount < PARENT_MESSAGE_CAP &&
       next.parentMessageCount % MID_SCENE_ABUSE_CHECK_EVERY === 0
     ) {
-      const check = await detectGroomingPattern(this.llm, next);
-      if (check.flagged) abuse = check;
+      const check = await classifyScene(this.llm, next);
+      if (check.tier !== "none") sceneSafety = check;
     }
 
-    return { state: next, kidResponse, abuse };
+    return { state: next, kidResponse, sceneSafety };
   }
 
   startSidebar(state: GameState, parent: Sender): GameState {
@@ -144,18 +146,18 @@ export class ConversationEngine {
    * reads on the next event generation to weave in a side character giving
    * good advice — delivered diegetically, never as meta-text to the player.
    * The caller (REST route / socket handler) is responsible for acting on
-   * `groomingCheck.flagged` — this method only classifies, it doesn't have
+   * `sceneSafety.tier` — this method only classifies, it doesn't have
    * access to repo/IP-ban side effects.
    */
   async endFamilyChat(
     state: GameState,
     onChunk?: (chunk: string) => void
-  ): Promise<{ state: GameState; groomingCheck: ModerationResult; trajectory: TrajectoryResult }> {
+  ): Promise<{ state: GameState; sceneSafety: SceneSafetyResult; trajectory: TrajectoryResult }> {
     let next = transition(state, { type: "END_FAMILY_CHAT" });
     const psychCtx = buildPsychologistContext(next);
     const memCtx = buildMemorySummarizerContext(next);
 
-    const [updatedDoc, memorySummary, groomingCheck] = await Promise.all([
+    const [updatedDoc, memorySummary, sceneSafety] = await Promise.all([
       this.llm.completeResponse(
         psychCtx.system,
         psychCtx.userMessage,
@@ -172,7 +174,7 @@ export class ConversationEngine {
         console.error("Memory summarizer failed (non-fatal):", err);
         return undefined;
       }),
-      detectGroomingPattern(this.llm, next),
+      classifyScene(this.llm, next),
     ]);
 
     next = transition(next, { type: "IDENTITY_UPDATED", document: updatedDoc, memorySummary });
@@ -186,7 +188,7 @@ export class ConversationEngine {
       guidanceSeed: trajectory.guidanceSeed,
     });
 
-    return { state: next, groomingCheck, trajectory };
+    return { state: next, sceneSafety, trajectory };
   }
 
   /** Generate the next event without transitioning phase — called in background during debrief. */

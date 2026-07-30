@@ -94,6 +94,10 @@ export interface GameRepository {
    * the IP (see applyModerationBlock's "repeat-offender" policy).
    */
   countDistinctFlaggedGamesForIp(ipAddress: string): Promise<number>;
+
+  /** Tier A "concern" events — dark-but-in-fiction parenting; never bans. See safety/moderation.ts. */
+  saveConcernEvent(event: { gameId: string; sender: Sender; reason: string; ipAddress: string | null }): Promise<void>;
+  loadConcernEvents(gameId: string): Promise<Array<{ sender: string; reason: string; createdAt: number }>>;
 }
 
 const DEFAULT_TOTAL_EVENTS = 10;
@@ -600,6 +604,21 @@ export class PgGameRepository implements GameRepository {
     );
     return parseInt(res.rows[0]?.n ?? "0", 10);
   }
+
+  async saveConcernEvent(event: { gameId: string; sender: Sender; reason: string; ipAddress: string | null }): Promise<void> {
+    await this.db.query(
+      `INSERT INTO concern_events (game_id, sender, reason, ip_address) VALUES ($1, $2, $3, $4)`,
+      [event.gameId, event.sender, event.reason, event.ipAddress]
+    );
+  }
+
+  async loadConcernEvents(gameId: string): Promise<Array<{ sender: string; reason: string; createdAt: number }>> {
+    const r = await this.db.query<{ sender: string; reason: string; created_at: string }>(
+      `SELECT sender, reason, created_at FROM concern_events WHERE game_id = $1 ORDER BY created_at ASC`,
+      [gameId]
+    );
+    return r.rows.map((row) => ({ sender: row.sender, reason: row.reason, createdAt: new Date(row.created_at).getTime() }));
+  }
 }
 
 /**
@@ -637,6 +656,7 @@ export class InMemoryGameRepository implements GameRepository {
   private partnerLinks = new Map<string, string>();
   private moderationFlags: Array<{ gameId: string; sender: Sender; content: string; reason: string; ipAddress: string | null }> = [];
   private bannedIps = new Set<string>();
+  private concernEvents: Array<{ gameId: string; sender: Sender; reason: string; ipAddress: string | null; createdAt: number }> = [];
 
   async saveGame(state: GameState): Promise<void> {
     this.games.set(state.id, {
@@ -912,5 +932,15 @@ export class InMemoryGameRepository implements GameRepository {
   /** Test-only accessor — inspect persisted flags without a DB. */
   getModerationFlags(): Array<{ gameId: string; sender: Sender; content: string; reason: string; ipAddress: string | null }> {
     return [...this.moderationFlags];
+  }
+
+  async saveConcernEvent(event: { gameId: string; sender: Sender; reason: string; ipAddress: string | null }): Promise<void> {
+    this.concernEvents.push({ ...event, createdAt: Date.now() });
+  }
+
+  async loadConcernEvents(gameId: string): Promise<Array<{ sender: string; reason: string; createdAt: number }>> {
+    return this.concernEvents
+      .filter((e) => e.gameId === gameId)
+      .map((e) => ({ sender: e.sender, reason: e.reason, createdAt: e.createdAt }));
   }
 }

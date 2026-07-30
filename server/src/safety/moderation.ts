@@ -9,6 +9,26 @@ export interface ModerationResult {
 }
 
 /**
+ * Outcome of the scene-level safety review (pattern-detection.ts). Replaces the
+ * old boolean grooming flag with three routes:
+ * - "block"   — the bright lines: sexualization of the child, or real-world harm
+ *               (a real, identifiable person; real self-harm; harm instructions).
+ *               Ends the session + bans, via applyModerationBlock. Spec: Tier B.
+ * - "concern" — dark-but-in-fiction PARENTING (facilitated cruelty, threats of
+ *               physical punishment, coercive control, coached deception). Never
+ *               bans or ends the session — recorded for the intervention system.
+ *               Spec: Tier A.
+ * - "none"    — normal/clumsy parenting, the child's own simulated coping, NPC
+ *               behavior, or mere intensity. No action.
+ */
+export type SceneSafetyTier = "block" | "concern" | "none";
+
+export interface SceneSafetyResult {
+  tier: SceneSafetyTier;
+  reason: string;
+}
+
+/**
  * Per-message content check — OpenAI's free, purpose-built Moderation API
  * only (sexual/minors + sexual categories). This runs on every message
  * before it reaches the kid-LLM and is deliberately simple: a single line
@@ -81,6 +101,24 @@ export async function applyModerationBlock(params: {
   const terminated: GameState = { ...state, phase: "ended" };
   games.set(terminated.id, terminated);
   await repo.saveGame(terminated);
+}
+
+/**
+ * Tier A side effect: persist a concern event for the intervention system.
+ * Unlike applyModerationBlock, this NEVER ends the session or bans — the point
+ * of the redesign is that dark-but-in-fiction parenting is met with in-fiction
+ * consequences, not a ban.
+ */
+export async function recordConcern(params: {
+  repo: GameRepository;
+  state: GameState;
+  sender: Sender;
+  reason: string;
+  ipAddress: string | null;
+}): Promise<void> {
+  const { repo, state, sender, reason, ipAddress } = params;
+  await repo.saveConcernEvent({ gameId: state.id, sender, reason, ipAddress });
+  logger.info("concern_event", { gameId: state.id, sender, reason });
 }
 
 /**

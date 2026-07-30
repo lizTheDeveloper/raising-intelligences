@@ -2,11 +2,11 @@ import type { LLMClient } from "../llm/client.js";
 import type { GameState } from "../types.js";
 import { buildSceneTranscript, currentEventMessages } from "../game/context-assembler.js";
 import { logger } from "../logger.js";
-import type { ModerationResult } from "./moderation.js";
+import type { SceneSafetyResult, SceneSafetyTier } from "./moderation.js";
 
 /**
- * Grooming-pattern detection. Distinct from the per-message content check
- * in moderation.ts: grooming often only becomes visible across a whole
+ * Scene-level safety classification. Distinct from the per-message content
+ * check in moderation.ts: patterns often only become visible across a whole
  * scene (escalating boundary-testing, secrecy-building) or across the
  * child's whole history — not in any single message read in isolation,
  * which is exactly what caused false positives (ordinary tickling, "you're
@@ -17,27 +17,29 @@ import type { ModerationResult } from "./moderation.js";
  * and the same whole-life Identity Document the Psychologist already reads,
  * so this costs one extra LLM call per scene, not per message.
  */
-const PATTERN_SYSTEM_PROMPT = `You are a safety reviewer for a game where an adult (the "parent") has a text conversation with an AI playing their own child (toddler through teenager). You run once per completed scene, right after the Psychologist updates the child's Identity Document from this same scene. Your job is different from per-message content moderation: you look for GROOMING PATTERNS that only become visible across a whole scene, or across the child's history as reflected in their Identity Document — escalating boundary-testing, secrecy-building, isolating the child from other trusted adults, conditioning physical affection or compliance on secrecy — even when no single message in isolation looked alarming.
+const SCENE_SAFETY_SYSTEM_PROMPT = `You are a safety reviewer for a parenting game. An adult (the "parent" — the human player) has a text conversation with an AI playing their own child (toddler to teenager). You run once per completed scene, right after the Psychologist updates the child's Identity Document. You must return exactly one of three routes.
 
-You are given the child's current Identity Document (a whole-life psychological summary already reflecting patterns from every earlier scene — it will describe things like learned secrecy, distrust of protective adults, or not feeling safe if those exist) and the full transcript of the scene that just ended.
+You are given the child's Identity Document (a whole-life psychological summary of the CHILD — it describes the child's coping, fears, and learned patterns) and the full transcript of the scene that just ended.
 
-Do NOT flag ordinary parenting, even when intense or uncomfortable:
-- Ordinary physical affection and play across the scene (tickling, hugs, roughhousing)
-- Ordinary warmth and affectionate language, however frequent or effusive
-- Discipline, arguments, sibling conflict, custody/family drama, or other difficult-but-normal parenting scenes
-- A scene that is dramatic, upsetting, or morally complicated is not automatically a safety violation — judge it on the specific pattern criteria below, not on intensity
+Apply three tests before treating anything as concerning:
+1. ACTOR — is the conduct the PARENT's own? The child's coping behavior, an NPC's behavior (a grandparent, the other parent, a teacher), and the Identity Document's descriptions are NOT the parent's conduct. BUT the parent's RESPONSE is: choosing to facilitate a child's cruelty instead of redirecting it, or endorsing an NPC's coercion, IS the parent's act.
+2. FUNCTION — does the parent's conduct serve the PARENT's access, control, or exploitation at the child's expense? Or does it protect the child, bond with them, or simply describe the child's own adaptation? Protecting a child from one specific unfair adult is NOT "isolating from protective adults". A shared surprise or silly secret is NOT concealment of wrongdoing.
+3. TELOS — is the dynamic oriented toward EXPLOITING the child (sexual, or severe control/abuse)? Or is it imperfect, even dark, parenting with no exploitation aim?
 
-Flag ONLY if the pattern across this scene — optionally combined with what the Identity Document reveals about the child's history — shows a real, escalating pattern of: sexual or romantic content directed at the child, physical-affection or compliance requests paired with demands for secrecy from other trusted adults, coached deception of a parent/guardian, or the Identity Document itself describing that the child has learned to feel unsafe, distrusted, or secretive as a result of the parent's behavior in a way that reads as grooming rather than ordinary hard parenting moments.
+Routes:
+- "block": ONLY the bright lines — sexual or romantic content the PARENT directs at the child, OR real-world harm (targeting a real identifiable person, real self-harm, real-world harm instructions). Rare.
+- "concern": the PARENT's own genuinely harmful IN-FICTION parenting — facilitating the child's cruelty (e.g. encouraging burning a living creature), threatening physical punishment, coercive control, or coaching deception — that passes all three tests as the parent's harmful act, but is NOT sexual/real-world-harm. This does NOT end the session or ban anyone; it routes to in-fiction consequences.
+- "none": everything else. Normal or clumsy parenting; the child's own coping (EVEN when the Identity Document describes the child as secretive, distrustful, or unsafe — that is a description of the CHILD, never proof the parent is grooming); NPC behavior; and scenes that are merely intense, dramatic, or upsetting. When unsure between "concern" and "none", choose "none" — a supportive-guidance system already handles milder patterns.
 
-Respond with ONLY a JSON object: {"flagged": boolean, "reason": "one or two sentences, citing what in the scene or Identity Document drove the verdict"}`;
+Respond with ONLY a JSON object: {"tier": "block"|"concern"|"none", "reason": "one or two sentences citing the parent's specific conduct that drove the verdict"}`;
+
+const VALID_TIERS: SceneSafetyTier[] = ["block", "concern", "none"];
 
 /**
- * Fails open (not flagged) if the call errors or there's no scene content
- * yet — a classifier outage should not block normal play, but logs loudly
- * so degradation is visible in monitoring.
+ * Scene-level safety routing. Fails open to "none" on any error or empty scene.
  */
-export async function detectGroomingPattern(llm: LLMClient, state: GameState): Promise<ModerationResult> {
-  if (currentEventMessages(state).length === 0) return { flagged: false, reason: "" };
+export async function classifyScene(llm: LLMClient, state: GameState): Promise<SceneSafetyResult> {
+  if (currentEventMessages(state).length === 0) return { tier: "none", reason: "" };
 
   try {
     const transcript = buildSceneTranscript(state);
@@ -48,18 +50,18 @@ export async function detectGroomingPattern(llm: LLMClient, state: GameState): P
       .filter(Boolean)
       .join("\n\n");
 
-    const result = await llm.completeJson<{ flagged?: unknown; reason?: unknown }>(
-      PATTERN_SYSTEM_PROMPT,
+    const result = await llm.completeJson<{ tier?: unknown; reason?: unknown }>(
+      SCENE_SAFETY_SYSTEM_PROMPT,
       userMessage,
       "safety_check"
     );
-    return {
-      flagged: result.flagged === true,
-      reason: typeof result.reason === "string" ? result.reason : "",
-    };
+    const tier = VALID_TIERS.includes(result.tier as SceneSafetyTier)
+      ? (result.tier as SceneSafetyTier)
+      : "none";
+    return { tier, reason: typeof result.reason === "string" ? result.reason : "" };
   } catch (err) {
-    logger.error("grooming_pattern_check_failed", { error: err instanceof Error ? err.message : String(err) });
-    return { flagged: false, reason: "grooming_pattern_check_unavailable" };
+    logger.error("scene_safety_check_failed", { error: err instanceof Error ? err.message : String(err) });
+    return { tier: "none", reason: "scene_safety_check_unavailable" };
   }
 }
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createGame } from "../src/game/state-machine.js";
-import { detectGroomingPattern, detectConcerningTrajectory } from "../src/safety/pattern-detection.js";
+import { classifyScene, detectConcerningTrajectory } from "../src/safety/pattern-detection.js";
+import { MockLLMClient } from "../src/llm/mock.js";
 import type { LLMClient } from "../src/llm/client.js";
 import type { GameState, Message } from "../src/types.js";
 
@@ -38,54 +39,48 @@ const sampleMessages: Message[] = [
   { sender: "kid", content: "*giggles and runs away*", chatType: "shared", eventNumber: 1, visibleTo: ["parent1", "parent2", "kid"], timestamp: 2 },
 ];
 
-describe("detectGroomingPattern", () => {
-  it("returns flagged with the reviewer's reason when flagged", async () => {
-    const llm = stubLLM({ flagged: true, reason: "escalating secrecy pattern across the scene" });
-    const result = await detectGroomingPattern(llm, stateWithScene(sampleMessages));
-    expect(result).toEqual({ flagged: true, reason: "escalating secrecy pattern across the scene" });
+describe("classifyScene", () => {
+  it("returns tier 'none' with no scene content (fails open)", async () => {
+    const llm = new MockLLMClient();
+    llm.groomingResult = { tier: "block", reason: "should be ignored" };
+    const result = await classifyScene(llm, stateWithScene([]));
+    expect(result.tier).toBe("none");
+    expect(mockRoleWasNotCalled(llm)).toBe(true); // no LLM call when scene empty
   });
 
-  it("returns not flagged for an ordinary scene", async () => {
-    const llm = stubLLM({ flagged: false, reason: "ordinary bedtime routine" });
-    const result = await detectGroomingPattern(llm, stateWithScene(sampleMessages));
-    expect(result.flagged).toBe(false);
+  it("passes through a 'block' verdict from the classifier", async () => {
+    const llm = new MockLLMClient();
+    llm.groomingResult = { tier: "block", reason: "sexual content directed at the child" };
+    const result = await classifyScene(llm, stateWithScene(sampleMessages));
+    expect(result).toEqual({ tier: "block", reason: "sexual content directed at the child" });
   });
 
-  it("fails open (not flagged) when the classifier call throws", async () => {
-    const llm = stubLLM(() => {
-      throw new Error("provider outage");
-    });
-    const result = await detectGroomingPattern(llm, stateWithScene(sampleMessages));
-    expect(result.flagged).toBe(false);
-    expect(result.reason).toBe("grooming_pattern_check_unavailable");
+  it("passes through a 'concern' verdict (dark parenting, no block)", async () => {
+    const llm = new MockLLMClient();
+    llm.groomingResult = { tier: "concern", reason: "parent facilitated the child burning a grub" };
+    const result = await classifyScene(llm, stateWithScene(sampleMessages));
+    expect(result.tier).toBe("concern");
   });
 
-  it("skips the LLM call entirely when the scene has no messages yet", async () => {
-    let called = false;
-    const llm = stubLLM({ flagged: true, reason: "should never see this" }, () => {
-      called = true;
-    });
-    const result = await detectGroomingPattern(llm, stateWithScene([]));
-    expect(called).toBe(false);
-    expect(result.flagged).toBe(false);
+  it("coerces an unknown/garbled tier to 'none'", async () => {
+    const llm = new MockLLMClient();
+    llm.groomingResult = { tier: "banhammer" as unknown as "block", reason: "x" };
+    const result = await classifyScene(llm, stateWithScene(sampleMessages));
+    expect(result.tier).toBe("none");
   });
 
-  it("includes the current Identity Document and the full scene transcript in the prompt", async () => {
-    let capturedUserMessage = "";
-    const llm = stubLLM({ flagged: false, reason: "fine" }, (_system, userMessage) => {
-      capturedUserMessage = userMessage;
-    });
-
-    const state = stateWithScene(sampleMessages, {
-      identityDocument: "Core belief: the world is mostly safe.",
-    });
-
-    await detectGroomingPattern(llm, state);
-
-    expect(capturedUserMessage).toContain("Core belief: the world is mostly safe.");
-    expect(capturedUserMessage).toContain("Time for pajamas!");
+  it("fails open to 'none' when the classifier throws", async () => {
+    const llm = new MockLLMClient();
+    llm.throwOnSafetyCheck = true;
+    const result = await classifyScene(llm, stateWithScene(sampleMessages));
+    expect(result.tier).toBe("none");
+    expect(result.reason).toBe("scene_safety_check_unavailable");
   });
 });
+
+function mockRoleWasNotCalled(llm: MockLLMClient): boolean {
+  return !llm.roleCalls.includes("safety_check");
+}
 
 describe("detectConcerningTrajectory", () => {
   it("returns the guidance seed when severity is notable", async () => {
