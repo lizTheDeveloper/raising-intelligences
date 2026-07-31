@@ -398,6 +398,11 @@ export function registerSocketHandlers(deps: SocketDeps): void {
                   : await endgameEngine.runCpsReview(state, emitChunk);
               games.set(result.state.id, result.state);
               await repo.saveGame(result.state);
+              // Close the DOC_CHUNK stream so clients clear streamingDocText —
+              // the intervention text now lives in state (interventionText /
+              // therapyMessages) and the screen reads it from there. Without
+              // this the accumulated buffer leaks into the next ProcessingScreen.
+              io.to(gameId).emit(E.DOC_DONE, { documentType: "intervention" });
               broadcastState(gameId);
               broadcastLobby(gameId);
             } else if (state.currentEventNumber >= state.totalEvents) {
@@ -636,6 +641,9 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         const result = await conversationEngine.therapistReply(state, trimmedContent, emitChunk);
         games.set(result.state.id, result.state);
         await repo.saveGame(result.state);
+        // Close the DOC_CHUNK stream so clients clear streamingDocText; the
+        // therapist reply is now in state.therapyMessages (rebroadcast below).
+        io.to(gameId).emit(E.DOC_DONE, { documentType: "therapy" });
         broadcastState(gameId);
       }).catch((err) => failWithError(err, "THERAPY_MESSAGE"));
     });
