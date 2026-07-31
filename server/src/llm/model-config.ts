@@ -26,7 +26,10 @@ export type LLMRole =
   | "album"
   | "personality_seed"
   | "gender_inference"
-  | "safety_check";
+  | "safety_check"
+  | "psychologist_consult"
+  | "family_therapist"
+  | "cps_caseworker";
 
 export type ModelTier = "standard" | "cerebras" | "premium";
 
@@ -51,6 +54,11 @@ export const STANDARD_MODELS: ModelConfig = {
   // Safety classification is not a cost lever — same reliable model on every
   // tier, regardless of what the player is paying. See safety/pattern-detection.ts (grooming-pattern check, runs once per scene).
   safety_check: "anthropic/claude-haiku-4-5",
+  // Dark Play intervention ladder — same quality bar as the Psychologist,
+  // since these are the highest-stakes reads in the game (monetization-strategy.md §3.1).
+  psychologist_consult: "qwen/qwen3.7-max",
+  family_therapist: "qwen/qwen3.7-max",
+  cps_caseworker: "qwen/qwen3.7-max",
 };
 
 /**
@@ -74,6 +82,9 @@ export const CEREBRAS_MODELS: ModelConfig = {
   // Not routed through Cerebras — safety classification stays on the same
   // reliable model across every tier. See safety/pattern-detection.ts (grooming-pattern check, runs once per scene).
   safety_check: "anthropic/claude-haiku-4-5",
+  psychologist_consult: "cerebras:gpt-oss-120b",
+  family_therapist: "cerebras:gpt-oss-120b",
+  cps_caseworker: "cerebras:gpt-oss-120b",
 };
 
 /** Premium tier: Qwen Max + Gemini 2.5 Flash + Claude Opus 4.8 for the keepsake artifacts. */
@@ -90,6 +101,9 @@ export const PREMIUM_MODELS: ModelConfig = {
   personality_seed: "google/gemini-2.5-flash",
   gender_inference: "deepseek/deepseek-v4-flash",
   safety_check: "anthropic/claude-haiku-4-5",
+  psychologist_consult: "google/gemini-2.5-flash",
+  family_therapist: "google/gemini-2.5-flash",
+  cps_caseworker: "google/gemini-2.5-flash",
 };
 
 export const MODELS_BY_TIER: Record<ModelTier, ModelConfig> = {

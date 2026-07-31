@@ -6,6 +6,8 @@ import {
   buildPsychologistContext,
   buildMemorySummarizerContext,
   buildWorldManagerContext,
+  buildConsultContext,
+  buildTherapyContext,
 } from "./context-assembler.js";
 import type { LLMClient } from "../llm/client.js";
 import { classifyScene, detectConcerningTrajectory } from "../safety/pattern-detection.js";
@@ -205,6 +207,79 @@ export class ConversationEngine {
 
   endDebrief(state: GameState): GameState {
     return transition(state, { type: "END_DEBRIEF" });
+  }
+
+  /**
+   * Dark Play intervention ladder — Rung 1. The Psychologist steps out of
+   * the narration to speak directly to the parent, between scenes, when
+   * concern has crossed CONSULT_THRESHOLD. Called from the `debrief` phase.
+   */
+  async generateConsult(
+    state: GameState,
+    onChunk?: (chunk: string) => void
+  ): Promise<{ state: GameState; text: string }> {
+    const ctx = buildConsultContext(state);
+    const text = await this.llm.completeResponse(
+      ctx.system,
+      ctx.userMessage,
+      undefined,
+      "psychologist_consult",
+      onChunk
+    );
+    const next = transition(state, { type: "ENTER_INTERVENTION", rung: 1, text });
+    return { state: next, text };
+  }
+
+  /**
+   * Dark Play intervention ladder — Rung 2, opening turn. The family
+   * therapist speaks first; ENTER_INTERVENTION (rung 2) seeds
+   * `therapyMessages` with this opening line. Called from `debrief`.
+   */
+  async openTherapy(
+    state: GameState,
+    onChunk?: (chunk: string) => void
+  ): Promise<{ state: GameState; text: string }> {
+    const ctx = buildTherapyContext(state, true);
+    const text = await this.llm.completeResponse(
+      ctx.system,
+      ctx.userMessage,
+      undefined,
+      "family_therapist",
+      onChunk
+    );
+    const next = transition(state, { type: "ENTER_INTERVENTION", rung: 2, text });
+    return { state: next, text };
+  }
+
+  /**
+   * Dark Play intervention ladder — Rung 2, reply turn. Appends the
+   * parent's message, then generates and appends the therapist's reply.
+   * The caller enforces THERAPY_TURN_CAP before calling this.
+   */
+  async therapistReply(
+    state: GameState,
+    parentContent: string,
+    onChunk?: (chunk: string) => void
+  ): Promise<{ state: GameState; text: string }> {
+    const withParent = transition(state, {
+      type: "APPEND_THERAPY_MESSAGE",
+      speaker: "parent",
+      content: parentContent,
+    });
+    const ctx = buildTherapyContext(withParent, false);
+    const text = await this.llm.completeResponse(
+      ctx.system,
+      ctx.userMessage,
+      undefined,
+      "family_therapist",
+      onChunk
+    );
+    const next = transition(withParent, {
+      type: "APPEND_THERAPY_MESSAGE",
+      speaker: "therapist",
+      content: text,
+    });
+    return { state: next, text };
   }
 
   getMessageCapRemaining(state: GameState): number {

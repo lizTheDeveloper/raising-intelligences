@@ -1,12 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useMultiplayer, clearResume } from "../hooks/useMultiplayer";
-import { getSavedKids, saveKid, syncKidsToServer, fetchServerKids, mergeKids } from "../hooks/useGame";
+import { getSavedKids, saveKid, syncKidsToServer, fetchServerKids, mergeKids, THERAPY_TURN_CAP } from "../hooks/useGame";
 import type { SavedKid } from "../hooks/useGame";
 import { track } from "../analytics";
 import { Lobby } from "./Lobby";
 import { GuardianScreen } from "./GuardianScreen";
 import { MessageList } from "./MessageList";
 import { MessageInput } from "./MessageInput";
+import { ConsultScreen } from "./ConsultScreen";
+import { TherapyScreen } from "./TherapyScreen";
+import { CpsScreen } from "./CpsScreen";
 import { Endgame } from "./Endgame";
 import { ReportCard } from "./ReportCard";
 import { ProcessingScreen } from "./ProcessingScreen";
@@ -34,6 +37,16 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   const [childInput, setChildInput] = useState("");
   const [relationship, setRelationship] = useState(RELATIONSHIP_OPTIONS[0]);
   const [gateReady, setGateReady] = useState(false);
+  // Dark Play Plan 3 — separate ready flag for the consult/therapy/
+  // cps_review "advance" gates. Can't reuse `gateReady`: that one only
+  // resets on `currentEventNumber` change, but debrief → consult/therapy/
+  // cps_review happens WITHOUT the event number advancing (it only bumps
+  // once the ladder phase itself concludes back to event_intro). Reusing it
+  // would carry debrief's already-true ready flag straight into the next
+  // screen, skipping the read-and-ready step entirely. Reset on every phase
+  // change instead, since the server clears everyone's `ready` the moment
+  // a round completes (see socket/handlers.ts's `resetReady` call).
+  const [ladderReady, setLadderReady] = useState(false);
   const [guardianDismissed, setGuardianDismissed] = useState(false);
   const autoResumeAttempted = useRef(false);
 
@@ -124,6 +137,14 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
       prevEventNumberRef.current = cur;
     }
   }, [state?.currentEventNumber]);
+
+  const prevPhaseRef = useRef(state?.phase);
+  useEffect(() => {
+    if (state?.phase !== prevPhaseRef.current) {
+      setLadderReady(false);
+      prevPhaseRef.current = state?.phase;
+    }
+  }, [state?.phase]);
 
   // ---- Family album (logged-in): browse previously-raised children ----
   if (showAlbum && matrixUser) {
@@ -371,6 +392,109 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     return (
       <div className="app">
         <ProcessingScreen childName={state.childName} age={state.currentEvent?.age} gameId={mp.gameId} streamingText={mp.streamingDocText} />
+      </div>
+    );
+  }
+
+  // ---- Dark Play Plan 3: consult / therapy / cps_review ----
+  // Reuse the same shared screens SoloGame (Task 5) renders. Solo advances
+  // immediately on its single onContinue; here both parents must ready up
+  // (mirroring debrief's ReadyToggle) before the server's READY-in-<phase>
+  // branch applies the decay + END_INTERVENTION and moves everyone on.
+  // Once this player has readied, swap the screen for the same ReadyToggle
+  // "waiting" view debrief/event_intro use, rather than stacking a second
+  // button below the shared screen's own "continue"/"conclude" button.
+  if (state.phase === "consult") {
+    return (
+      <div className="app fade-in">
+        {ladderReady ? (
+          <div className="debrief-enhanced">
+            <ReadyToggle
+              ready={ladderReady}
+              onToggle={(v) => {
+                setLadderReady(v);
+                mp.ready(v);
+              }}
+              label="continue"
+              players={mp.players}
+            />
+          </div>
+        ) : (
+          <ConsultScreen
+            text={state.interventionText ?? ""}
+            onContinue={() => {
+              setLadderReady(true);
+              mp.ready(true);
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+
+  if (state.phase === "cps_review") {
+    return (
+      <div className="app fade-in">
+        {ladderReady ? (
+          <div className="debrief-enhanced">
+            <ReadyToggle
+              ready={ladderReady}
+              onToggle={(v) => {
+                setLadderReady(v);
+                mp.ready(v);
+              }}
+              label="continue"
+              players={mp.players}
+            />
+          </div>
+        ) : (
+          <CpsScreen
+            text={state.interventionText ?? ""}
+            onContinue={() => {
+              setLadderReady(true);
+              mp.ready(true);
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+
+  if (state.phase === "therapy") {
+    const parentTurns = (state.therapyMessages ?? []).filter((m) => m.speaker === "parent").length;
+    return (
+      <div className="app fade-in">
+        {ladderReady ? (
+          <div className="debrief-enhanced">
+            <ReadyToggle
+              ready={ladderReady}
+              onToggle={(v) => {
+                setLadderReady(v);
+                mp.ready(v);
+              }}
+              label="conclude session"
+              players={mp.players}
+            />
+          </div>
+        ) : (
+          <TherapyScreen
+            messages={state.therapyMessages ?? []}
+            // The server streams the therapist's reply via the same
+            // DOC_CHUNK event other doc-generation flows use, but (unlike
+            // endChat's identity doc) never follows it with DOC_DONE, so
+            // mp.streamingDocText is never cleared back to "" here — wiring
+            // it up would leave TherapyScreen's `canSend` permanently
+            // false after the first reply. The transcript still updates
+            // normally via the STATE rebroadcast once the reply finishes.
+            streamingReply={undefined}
+            canSend={parentTurns < THERAPY_TURN_CAP}
+            onSend={mp.sendTherapyMessage}
+            onConclude={() => {
+              setLadderReady(true);
+              mp.ready(true);
+            }}
+          />
+        )}
       </div>
     );
   }

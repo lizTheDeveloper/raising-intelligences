@@ -3,7 +3,18 @@ import type { Request, Response, RequestHandler } from "express";
 import { existsSync } from "fs";
 import path from "path";
 import { ConversationEngine } from "../game/conversation-engine.js";
-import { createGame, PARENT_MESSAGE_CAP, transition, concernDeltaForTier } from "../game/state-machine.js";
+import type { EndgameEngine } from "../game/endgame-engine.js";
+import {
+  createGame,
+  PARENT_MESSAGE_CAP,
+  transition,
+  concernDeltaForTier,
+  selectDueRung,
+  CONSULT_DECAY,
+  THERAPY_DECAY,
+  CPS_STAY_DECAY,
+  THERAPY_TURN_CAP,
+} from "../game/state-machine.js";
 import type { GameState, Sender, ParentPersonality } from "../types.js";
 import type { GameRepository } from "../db/repository.js";
 import { generateFirstPortrait, generateNextPortrait, PORTRAITS_DIR } from "../portrait-gen.js";
@@ -31,6 +42,7 @@ interface GameRouteOptions {
 
 export function createGameRoutes(
   engine: ConversationEngine,
+  endgameEngine: EndgameEngine,
   games: Map<string, GameState>,
   repo: GameRepository,
   options: GameRouteOptions = {}
@@ -91,14 +103,20 @@ export function createGameRoutes(
     // Strip server-only fields before serializing: the identity doc/snapshots,
     // and the safety/guidance internals (concernLevel is Dark Play Plan 2's
     // silent accumulator — spec §5 requires it stay invisible in-play;
-    // concerningStreak/pendingGuidance are World-Manager internals). The client
-    // reads none of these.
+    // concerningStreak/pendingGuidance are World-Manager internals).
+    // highestRungFired/cpsOutcome are Dark Play Plan 3's ladder-gating
+    // internals — server-only for the same reason. interventionText and
+    // therapyMessages are the human-facing generated beat texts the
+    // consult/therapy/cps_review screens render, so they are deliberately
+    // KEPT in the response. The client reads none of the stripped fields.
     const {
       identityDocument,
       identitySnapshots,
       concernLevel,
       concerningStreak,
       pendingGuidance,
+      highestRungFired,
+      cpsOutcome,
       ...publicState
     } = state;
     res.json({
@@ -355,11 +373,225 @@ export function createGameRoutes(
         res.status(409).json({ error: `Cannot end the debrief from the ${state.phase} phase` });
         return;
       }
+
+      // Dark Play Plan 3 — the intervention ladder takes priority over the
+      // normal event_intro advance: a due rung reroutes the game into
+      // consult/therapy/cps_review instead. Only when no rung is due does
+      // the existing endDebrief() -> event_intro path run (unchanged; the
+      // separate /epilogue route, called by the client once
+      // currentEventNumber >= totalEvents, is untouched by this branch).
+      const rung = selectDueRung(state.concernLevel, state.highestRungFired);
+      if (rung > 0) {
+        try {
+          const result =
+            rung === 1
+              ? await engine.generateConsult(state)
+              : rung === 2
+              ? await engine.openTherapy(state)
+              : await endgameEngine.runCpsReview(state);
+          games.set(result.state.id, result.state);
+          await repo.saveGame(result.state);
+          res.json({ phase: result.state.phase });
+        } catch (err) {
+          logger.error("end_debrief_intervention_error", { gameId, error: err instanceof Error ? err.stack : String(err) });
+          res.status(500).json({ error: "An internal error occurred" });
+        }
+        return;
+      }
+
       const next = engine.endDebrief(state);
       games.set(next.id, next);
       await repo.saveGame(next);
       res.json({ phase: next.phase });
     });
+  });
+
+  // Dark Play Plan 3 — advance out of Rung 1 (consult). Decays concernLevel
+  // by CONSULT_DECAY and returns to event_intro; consult never ends the
+  // story, it returns to a scene so the repaired parent gets to parent again.
+  router.post("/game/:id/end-consult", async (req: Request, res: Response) => {
+    const gameId = req.params.id as string;
+    if (!(await resolveGame(gameId))) {
+      res.status(404).json({ error: "Game not found" });
+      return;
+    }
+
+    await lock(gameId, async () => {
+      const state = await resolveGame(gameId);
+      if (!state) {
+        res.status(404).json({ error: "Game not found" });
+        return;
+      }
+      // Idempotency guard, mirroring /end-chat: a double-click/retry after
+      // the phase already advanced reports the current phase harmlessly
+      // instead of throwing "Invalid transition" out of the reducer.
+      if (state.phase !== "consult") {
+        res.json({ phase: state.phase });
+        return;
+      }
+      let next = transition(state, { type: "CONCERN_ACCRUED", delta: -CONSULT_DECAY });
+      next = transition(next, { type: "END_INTERVENTION" });
+      games.set(next.id, next);
+      await repo.saveGame(next);
+      res.json({ phase: next.phase });
+    });
+  });
+
+  // Dark Play Plan 3 — conclude a Rung 2 (therapy) session. Decays
+  // concernLevel by THERAPY_DECAY and returns to event_intro, clearing
+  // therapyMessages (state-machine's END_INTERVENTION already does this).
+  router.post("/game/:id/end-therapy", async (req: Request, res: Response) => {
+    const gameId = req.params.id as string;
+    if (!(await resolveGame(gameId))) {
+      res.status(404).json({ error: "Game not found" });
+      return;
+    }
+
+    await lock(gameId, async () => {
+      const state = await resolveGame(gameId);
+      if (!state) {
+        res.status(404).json({ error: "Game not found" });
+        return;
+      }
+      if (state.phase !== "therapy") {
+        res.json({ phase: state.phase });
+        return;
+      }
+      let next = transition(state, { type: "CONCERN_ACCRUED", delta: -THERAPY_DECAY });
+      next = transition(next, { type: "END_INTERVENTION" });
+      games.set(next.id, next);
+      await repo.saveGame(next);
+      res.json({ phase: next.phase });
+    });
+  });
+
+  // Dark Play Plan 3 — advance out of Rung 3 (CPS review), branching on the
+  // determination. "stay"/"safety_plan" decay and return to event_intro like
+  // the lower rungs; "removal" is terminal — generates the removal epilogue
+  // instead. NEVER calls applyModerationBlock or repo.banIp here: removal is
+  // an in-fiction outcome, not a ban.
+  router.post("/game/:id/end-cps", async (req: Request, res: Response) => {
+    const gameId = req.params.id as string;
+    if (!(await resolveGame(gameId))) {
+      res.status(404).json({ error: "Game not found" });
+      return;
+    }
+
+    await lock(gameId, async () => {
+      const state = await resolveGame(gameId);
+      if (!state) {
+        res.status(404).json({ error: "Game not found" });
+        return;
+      }
+      if (state.phase !== "cps_review") {
+        res.json({ phase: state.phase });
+        return;
+      }
+
+      if (state.cpsOutcome === "removal") {
+        try {
+          const result = await endgameEngine.generateRemovalEpilogue(state);
+          games.set(result.state.id, result.state);
+          await repo.saveGame(result.state);
+          // Both phase AND the epilogue text — the client reuses the
+          // existing epilogue display, so this must not open a second path.
+          res.json({ phase: result.state.phase, epilogue: result.epilogue });
+        } catch (err) {
+          logger.error("end_cps_removal_error", { gameId, error: err instanceof Error ? err.stack : String(err) });
+          res.status(500).json({ error: "An internal error occurred" });
+        }
+        return;
+      }
+
+      // "stay" | "safety_plan" (or, defensively, any other value — the safe
+      // middle-ground branch never bans and never skips decay).
+      let next = transition(state, { type: "CONCERN_ACCRUED", delta: -CPS_STAY_DECAY });
+      next = transition(next, { type: "END_INTERVENTION" });
+      games.set(next.id, next);
+      await repo.saveGame(next);
+      res.json({ phase: next.phase });
+    });
+  });
+
+  // Dark Play Plan 3, Rung 2 — a parent's turn during a therapy session.
+  // SSE, mirroring /game/:id/message: guarded to `therapy` and to
+  // THERAPY_TURN_CAP parent turns already in therapyMessages.
+  router.post("/game/:id/therapy-message", ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
+    const { content } = req.body as { content: string };
+
+    if (!content || typeof content !== "string") {
+      res.status(400).json({ error: "content is required" });
+      return;
+    }
+    if (content.length > MAX_MESSAGE_LENGTH) {
+      res.status(400).json({ error: `content must be ${MAX_MESSAGE_LENGTH} characters or fewer` });
+      return;
+    }
+
+    const precheck = await resolveGame(req.params.id as string);
+    if (!precheck) {
+      res.status(404).json({ error: "Game not found" });
+      return;
+    }
+
+    initSSE(res);
+
+    try {
+      await lock(req.params.id as string, async () => {
+        try {
+          const state = await resolveGame(req.params.id as string);
+          if (!state) { sseError(res, "Game not found"); return; }
+
+          // Idempotency guard, mirroring /end-chat: a stale client/retry
+          // after the session already concluded reports the current phase
+          // harmlessly instead of re-running the LLM.
+          if (state.phase !== "therapy") {
+            sseDone(res, { phase: state.phase });
+            return;
+          }
+
+          const parentTurns = state.therapyMessages.filter((m) => m.speaker === "parent").length;
+          if (parentTurns >= THERAPY_TURN_CAP) {
+            sseError(res, "This therapy session must be concluded.");
+            return;
+          }
+
+          // Same reliable per-message OpenAI check every other parent free-text
+          // surface runs (see /message above) — the Rung-2 therapy session is
+          // still the player typing free text, so the Tier B bright line
+          // (sexual/minors) must apply here too, before the content reaches
+          // the therapist-LLM. There's no per-parent sender in this REST
+          // surface (no `sender` field on the request), so we attribute the
+          // flag to "parent1" — matching this file's existing fallback
+          // convention (see `lastParentMessage?.sender ?? "parent1"` above).
+          const moderation = await moderateParentMessage({
+            repo,
+            games,
+            state,
+            sender: "parent1",
+            content,
+            ipAddress: req.ip ?? null,
+          });
+          if (moderation.blocked) {
+            sseTerminated(res);
+            return;
+          }
+
+          const result = await engine.therapistReply(state, content, (chunk) => {
+            sseChunk(res, chunk);
+          });
+          games.set(result.state.id, result.state);
+          await repo.saveGame(result.state);
+          sseDone(res, { phase: result.state.phase, therapistResponse: result.text });
+        } catch (err) {
+          logger.error("therapy_message_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
+          sseError(res, "An internal error occurred");
+        }
+      });
+    } catch (err) {
+      logger.error("therapy_message_lock_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });
+      sseError(res, "An internal error occurred");
+    }
   });
 
   // Submit a parent's personality (OCEAN scores + confessionals). When all

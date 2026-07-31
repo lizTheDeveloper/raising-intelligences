@@ -7,6 +7,10 @@ const E = {
   JOIN_GAME: "join_game",
   READY: "ready",
   PARENT_MESSAGE: "parent_message",
+  /** Dark Play Plan 3, Rung 2 — a parent's turn during a family-therapy
+   * session. Distinct from PARENT_MESSAGE (guarded to family_chat) so the
+   * two flows stay unambiguous, mirroring the server's socket protocol. */
+  THERAPY_MESSAGE: "therapy_message",
   START_SIDEBAR: "start_sidebar",
   END_SIDEBAR: "end_sidebar",
   END_CHAT: "end_chat",
@@ -77,6 +81,14 @@ export interface PublicPlayer {
   ready: boolean;
   connected: boolean;
 }
+/** Dark Play Plan 3 — mirrors server/src/types.ts's TherapyMessage and
+ * client/src/hooks/useGame.ts's local copy. No shared package between
+ * client and server (or between the solo/multiplayer hooks), so this is
+ * kept structurally in sync by hand like the rest of this file's types. */
+export interface TherapyMessage {
+  speaker: "therapist" | "parent";
+  content: string;
+}
 interface ViewerState {
   phase: string;
   childName: string;
@@ -89,6 +101,12 @@ interface ViewerState {
   messagesRemaining: number;
   sidebarActive: Slot | null;
   sidebarUsed: { parent1: boolean; parent2: boolean };
+  /** Dark Play Plan 3 — the human-facing consult/CPS beat text. Null outside
+   * the consult/cps_review phases. */
+  interventionText: string | null;
+  /** Dark Play Plan 3, Rung 2 — the family-therapy session transcript. Empty
+   * outside the therapy phase. */
+  therapyMessages: TherapyMessage[];
 }
 
 export function useMultiplayer() {
@@ -228,6 +246,17 @@ export function useMultiplayer() {
     socketRef.current?.emit(E.PARENT_MESSAGE, { content: content.trim() });
   }, []);
 
+  // Dark Play Plan 3, Rung 2 — a parent's turn during a therapy session. No
+  // local streaming/loading flags are set here (unlike sendMessage): the
+  // server streams the therapist's reply via the existing DOC_CHUNK event
+  // and then rebroadcasts STATE with the appended therapyMessages, so the
+  // transcript updates through the normal state flow rather than an
+  // optimistic local append.
+  const sendTherapyMessage = useCallback((content: string) => {
+    if (!content.trim()) return;
+    socketRef.current?.emit(E.THERAPY_MESSAGE, { content: content.trim() });
+  }, []);
+
   const startSidebar = useCallback(() => socketRef.current?.emit(E.START_SIDEBAR), []);
   const endSidebar = useCallback(() => socketRef.current?.emit(E.END_SIDEBAR), []);
   const endChat = useCallback(() => {
@@ -283,6 +312,7 @@ export function useMultiplayer() {
     joinGame,
     ready,
     sendMessage,
+    sendTherapyMessage,
     submitPersonality,
     startSidebar,
     endSidebar,

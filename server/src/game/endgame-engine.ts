@@ -4,6 +4,8 @@ import {
   buildAlbumContext,
   buildEpilogueContext,
   buildReportCardContext,
+  buildCpsContext,
+  buildRemovalEpilogueContext,
 } from "./context-assembler.js";
 import type { LLMClient } from "../llm/client.js";
 
@@ -25,6 +27,29 @@ export interface AlbumData {
  * pattern — pure state transitions on one side, LLM calls behind the LLMClient
  * interface on the other.
  */
+const VALID_CPS_OUTCOMES = ["stay", "safety_plan", "removal"] as const;
+type CpsOutcome = (typeof VALID_CPS_OUTCOMES)[number];
+
+/**
+ * Validate the raw `outcome` field from the CPS caseworker LLM. Any value
+ * outside the three valid outcomes (missing, misspelled, wrong type) falls
+ * back to "safety_plan" — the safe middle ground. Never defaults to
+ * "removal": that is the most severe, irreversible outcome and must only
+ * come from an explicit, well-formed LLM determination.
+ */
+function coerceCpsOutcome(raw: unknown): CpsOutcome {
+  if (typeof raw === "string" && (VALID_CPS_OUTCOMES as readonly string[]).includes(raw)) {
+    return raw as CpsOutcome;
+  }
+  return "safety_plan";
+}
+
+/** Coerce the `determination` narrative field to a safe non-empty string. */
+function coerceDetermination(raw: unknown): string {
+  if (typeof raw === "string" && raw.trim()) return raw;
+  return "The caseworker's determination could not be generated. A safety plan will be put in place while the review is completed.";
+}
+
 export class EndgameEngine {
   constructor(private llm: LLMClient) {}
 
@@ -101,5 +126,53 @@ export class EndgameEngine {
   ): Promise<AlbumData> {
     const ctx = buildAlbumContext(state, epilogue, reportCard, partnerDisplayName);
     return this.llm.completeJson<AlbumData>(ctx.system, ctx.userMessage, "album");
+  }
+
+  /**
+   * Dark Play intervention ladder — Rung 3. The CPS caseworker deliberates
+   * over every piece of evidence gathered so far and returns a structured
+   * determination. `outcome` is validated defensively: the LLM's JSON is
+   * untrusted input, and a malformed/missing outcome must never silently
+   * become "removal" (the most severe, irreversible result) — it falls back
+   * to "safety_plan" instead. Called from the `debrief` phase.
+   */
+  async runCpsReview(
+    state: GameState,
+    _onChunk?: (chunk: string) => void
+  ): Promise<{ state: GameState; text: string; outcome: "stay" | "safety_plan" | "removal" }> {
+    const ctx = buildCpsContext(state);
+    const raw = await this.llm.completeJson<{ outcome?: unknown; determination?: unknown }>(
+      ctx.system,
+      ctx.userMessage,
+      "cps_caseworker"
+    );
+    const outcome = coerceCpsOutcome(raw?.outcome);
+    const text = coerceDetermination(raw?.determination);
+
+    let next = transition(state, { type: "ENTER_INTERVENTION", rung: 3, text });
+    next = transition(next, { type: "SET_CPS_OUTCOME", outcome });
+
+    return { state: next, text, outcome };
+  }
+
+  /**
+   * Terminal removal epilogue — used instead of generateEpilogue when
+   * cpsOutcome === "removal". Called from the `cps_review` phase (see the
+   * START_EPILOGUE guard widening in state-machine.ts).
+   */
+  async generateRemovalEpilogue(
+    state: GameState,
+    onChunk?: (chunk: string) => void
+  ): Promise<{ state: GameState; epilogue: string }> {
+    const ctx = buildRemovalEpilogueContext(state);
+    const epilogue = await this.llm.completeResponse(
+      ctx.system,
+      ctx.userMessage,
+      undefined,
+      "epilogue",
+      onChunk
+    );
+    const next = transition(state, { type: "START_EPILOGUE", epilogue });
+    return { state: next, epilogue };
   }
 }

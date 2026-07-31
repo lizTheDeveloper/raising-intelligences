@@ -18,6 +18,10 @@ function baseState(overrides: Partial<GameState> = {}): GameState {
     parentMessageCount: 0,
     sidebarUsed: { parent1: false, parent2: false },
     sidebarActive: null,
+    highestRungFired: 0,
+    interventionText: null,
+    therapyMessages: [],
+    cpsOutcome: null,
     lastActivityAt: 0,
     ...overrides,
   };

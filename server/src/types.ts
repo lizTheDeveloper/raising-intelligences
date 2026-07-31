@@ -5,6 +5,9 @@ export type GamePhase =
   | "sidebar"
   | "processing"
   | "debrief"
+  | "consult"
+  | "therapy"
+  | "cps_review"
   | "epilogue"
   | "adult_chat"
   | "report_card"
@@ -23,6 +26,8 @@ export interface Message {
   /** Which game event this message belongs to (set at creation time). */
   eventNumber: number;
 }
+
+export interface TherapyMessage { speaker: "therapist" | "parent"; content: string }
 
 export interface GameEvent {
   eventNumber: number;
@@ -72,6 +77,20 @@ export interface GameState {
    * decays on a clean scene; persisted. Server-only — never sent to clients;
    * the drift is surfaced later (report card / epilogue), never in-scene. */
   concernLevel: number;
+  /** Dark Play Plan 3 — highest intervention rung that has fired (0 none, 1
+   * consult, 2 therapy, 3 cps). Persisted; gates the ladder so each rung fires
+   * at most once and reaching the next requires new dark play. Server-only. */
+  highestRungFired: number;
+  /** The generated read-and-advance text on screen (psychologist consult or CPS
+   * determination). Ephemeral — regenerated per beat, not persisted. Null
+   * outside consult/cps_review. */
+  interventionText: string | null;
+  /** Rung-2 family-therapy session transcript. Persisted so a mid-session
+   * reconnect resumes; cleared on END_INTERVENTION. Empty outside therapy. */
+  therapyMessages: TherapyMessage[];
+  /** Last CPS determination, if Rung 3 has run. "removal" routes the game to a
+   * terminal removal epilogue. Persisted (drives the epilogue branch). */
+  cpsOutcome: "stay" | "safety_plan" | "removal" | null;
   /** Queued for the next World Manager call: weave a supportive side
    * character into the next scene giving genuinely good, actionable advice
    * relevant to this (never naming or diagnosing the pattern). Cleared once
