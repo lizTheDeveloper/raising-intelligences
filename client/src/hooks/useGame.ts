@@ -37,6 +37,16 @@ interface Message {
   chatType: string;
 }
 
+export interface TherapyMessage {
+  speaker: "therapist" | "parent";
+  content: string;
+}
+
+// Mirrors server/src/game/state-machine.ts THERAPY_TURN_CAP. Not exposed by
+// any REST/SSE response (server-only constant, no shared package between
+// client and server) — hardcoded here and must be kept in sync by hand.
+export const THERAPY_TURN_CAP = 3;
+
 const API = import.meta.env.BASE_URL + "api";
 
 export async function syncKidsToServer(userId: string): Promise<void> {
@@ -120,6 +130,8 @@ export function useGame() {
   const [streamingMessage, setStreamingMessage] = useState("");
   const [streamingDocText, setStreamingDocText] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [interventionText, setInterventionText] = useState<string | null>(null);
+  const [therapyMessages, setTherapyMessages] = useState<TherapyMessage[]>([]);
   const [epilogue, setEpilogue] = useState("");
   const [reportCard, setReportCard] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -151,6 +163,8 @@ export function useGame() {
       setCurrentEvent(data.currentEvent ?? null);
       setMessages(data.messages ?? []);
       setMessagesRemaining(data.messagesRemaining ?? 12 - (data.parentMessageCount ?? 0));
+      setInterventionText(data.interventionText ?? null);
+      setTherapyMessages(data.therapyMessages ?? []);
       return true;
     },
     []
@@ -334,14 +348,176 @@ export function useGame() {
   }, [gameId, messagesRemaining, currentEvent, loadGame]);
 
   const endDebrief = useCallback(async () => {
-    if (!gameId) return;
+    if (!gameId) return null;
     const res = await fetch(`${API}/game/${gameId}/end-debrief`, {
       method: "POST",
     });
     const data = await res.json();
+    // Dark Play Plan 3 — end-debrief's response carries only `phase`; when a
+    // due rung reroutes into consult/therapy/cps_review, the generated
+    // interventionText / therapyMessages live on the game state, not this
+    // response, so fetch /state (which sets phase itself, along with the
+    // rest) instead of setting phase here directly — avoids a render with
+    // phase=consult but interventionText still null/stale. Returns the
+    // phase so the caller (SoloGame) can decide whether to advance to the
+    // next event (only when no rung fired, i.e. phase is "event_intro") or
+    // render the intervention screen instead.
+    if (data.phase === "consult" || data.phase === "therapy" || data.phase === "cps_review") {
+      await loadGame(gameId);
+    } else {
+      setPhase(data.phase);
+      setCurrentEvent(null);
+    }
+    return data.phase as string;
+  }, [gameId, loadGame]);
+
+  // Dark Play Plan 3, Rung 1 — conclude a consult beat. Plain JSON (not SSE),
+  // mirroring endDebrief. END_INTERVENTION on the server always routes back
+  // to event_intro (consult never terminates the game), so there is no
+  // branching on the returned phase here.
+  const endConsult = useCallback(async () => {
+    if (!gameId) return;
+    setError(null);
+    const res = await fetch(`${API}/game/${gameId}/end-consult`, { method: "POST" });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      setTrackedError(`Failed to end consult: ${res.status}${body ? ` — ${body}` : ""}`, "end_consult");
+      return;
+    }
+    const data = await res.json();
     setPhase(data.phase);
     setCurrentEvent(null);
-  }, [gameId]);
+    setInterventionText(null);
+  }, [gameId, setTrackedError]);
+
+  // Dark Play Plan 3, Rung 2 — a parent's turn during a therapy session.
+  // SSE, mirroring sendMessage exactly: optimistic parent turn appended
+  // immediately, therapist reply streamed chunk-by-chunk into
+  // streamingDocText (shared with the other doc-generation flows — safe
+  // since therapy can't overlap them), then folded into therapyMessages on
+  // "done". "terminated" (moderation block) ends the session like /message.
+  const sendTherapyMessage = useCallback(
+    async (content: string) => {
+      if (!gameId || isStreaming) return;
+
+      setTherapyMessages((prev) => [...prev, { speaker: "parent", content }]);
+      setIsStreaming(true);
+      setStreamingDocText("");
+      setError(null);
+
+      let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+      try {
+        const res = await fetch(`${API}/game/${gameId}/therapy-message`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content }),
+        });
+
+        if (!res.ok || !res.body) {
+          const body = await res.text().catch(() => "");
+          setTrackedError(`Message failed: ${res.status}${body ? ` — ${body}` : ""}`, "therapy_message");
+          return;
+        }
+
+        reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let therapistText = "";
+        let lineBuffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          lineBuffer += decoder.decode(value, { stream: true });
+          const lines = lineBuffer.split("\n");
+          lineBuffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            let data: Record<string, unknown>;
+            try {
+              data = JSON.parse(line.slice(6));
+            } catch {
+              continue;
+            }
+            if (data.type === "chunk") {
+              therapistText += data.text as string;
+              setStreamingDocText(therapistText);
+            } else if (data.type === "done") {
+              if (typeof data.therapistResponse === "string") {
+                setTherapyMessages((prev) => [
+                  ...prev,
+                  { speaker: "therapist", content: data.therapistResponse as string },
+                ]);
+              }
+              setPhase(data.phase as string);
+              setStreamingDocText("");
+              setIsStreaming(false);
+            } else if (data.type === "terminated") {
+              setPhase("ended");
+              setTrackedError("This session has ended.", "moderation");
+              setStreamingDocText("");
+              setIsStreaming(false);
+            } else if (data.type === "error") {
+              throw new Error((data.error as string) ?? "Stream error");
+            }
+          }
+        }
+      } catch (err) {
+        setTrackedError(`Message failed: ${err instanceof Error ? err.message : String(err)}`, "therapy_message");
+      } finally {
+        reader?.cancel().catch(() => {});
+        setIsStreaming(false);
+        setStreamingDocText("");
+      }
+    },
+    [gameId, isStreaming, setTrackedError]
+  );
+
+  // Dark Play Plan 3, Rung 2 — conclude the therapy session. Plain JSON,
+  // mirroring endConsult; always routes back to event_intro.
+  const endTherapy = useCallback(async () => {
+    if (!gameId) return;
+    setError(null);
+    const res = await fetch(`${API}/game/${gameId}/end-therapy`, { method: "POST" });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      setTrackedError(`Failed to end therapy: ${res.status}${body ? ` — ${body}` : ""}`, "end_therapy");
+      return;
+    }
+    const data = await res.json();
+    setPhase(data.phase);
+    setCurrentEvent(null);
+    setTherapyMessages([]);
+  }, [gameId, setTrackedError]);
+
+  // Dark Play Plan 3, Rung 3 — conclude the CPS review. Plain JSON. Unlike
+  // consult/therapy this CAN be terminal: a "removal" determination makes
+  // the server generate the removal epilogue inline and return BOTH
+  // phase: "epilogue" and the epilogue text in this same response — the
+  // exact shape generateEpilogue's SSE "done" payload produces. Reuse the
+  // existing epilogue state/display path rather than opening a second one;
+  // returns the resulting phase so the caller can decide whether to render
+  // Endgame (phase === "epilogue") or advance to the next event.
+  const endCps = useCallback(async () => {
+    if (!gameId) return null;
+    setError(null);
+    const res = await fetch(`${API}/game/${gameId}/end-cps`, { method: "POST" });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      setTrackedError(`Failed to end CPS review: ${res.status}${body ? ` — ${body}` : ""}`, "end_cps");
+      return null;
+    }
+    const data = (await res.json()) as { phase: string; epilogue?: string };
+    if (typeof data.epilogue === "string") {
+      setEpilogue(data.epilogue);
+      track("epilogue_reached");
+    }
+    setPhase(data.phase);
+    setCurrentEvent(null);
+    setInterventionText(null);
+    return data.phase;
+  }, [gameId, setTrackedError]);
 
   const generateEpilogue = useCallback(async () => {
     if (!gameId) return;
@@ -419,6 +595,8 @@ export function useGame() {
     streamingMessage,
     streamingDocText,
     isStreaming,
+    interventionText,
+    therapyMessages,
     epilogue,
     reportCard,
     error,
@@ -429,6 +607,10 @@ export function useGame() {
     sendMessage,
     endChat,
     endDebrief,
+    endConsult,
+    sendTherapyMessage,
+    endTherapy,
+    endCps,
     generateEpilogue,
     generateReportCard,
   };

@@ -1,10 +1,20 @@
 import { useState, useEffect, useCallback } from "react";
-import { useGame, getSavedKids, syncKidsToServer, fetchServerKids, mergeKids } from "../hooks/useGame";
+import {
+  useGame,
+  getSavedKids,
+  syncKidsToServer,
+  fetchServerKids,
+  mergeKids,
+  THERAPY_TURN_CAP,
+} from "../hooks/useGame";
 import type { SavedKid } from "../hooks/useGame";
 import { GuardianScreen } from "./GuardianScreen";
 import { EventIntro } from "./EventIntro";
 import { Chat } from "./Chat";
 import { Debrief } from "./Debrief";
+import { ConsultScreen } from "./ConsultScreen";
+import { TherapyScreen } from "./TherapyScreen";
+import { CpsScreen } from "./CpsScreen";
 import { Endgame } from "./Endgame";
 import { ReportCard } from "./ReportCard";
 import { ProcessingScreen } from "./ProcessingScreen";
@@ -30,6 +40,12 @@ export function SoloGame() {
     sendMessage,
     endChat,
     endDebrief,
+    interventionText,
+    therapyMessages,
+    endConsult,
+    sendTherapyMessage,
+    endTherapy,
+    endCps,
     epilogue,
     reportCard,
     error,
@@ -102,9 +118,46 @@ export function SoloGame() {
   // After debrief the server resets to event_intro with no current event.
   // Automatically kick off the next event load so the player sees the spinner
   // rather than a bare "begin" button (fixes #21 double-begin flow).
+  // Dark Play Plan 3 — a due rung reroutes end-debrief into consult/therapy/
+  // cps_review instead of event_intro; only advance to the next event when
+  // no rung fired (phase came back "event_intro"), otherwise let the phase
+  // dispatch below render the intervention screen.
   const handleDebrief = async () => {
     setLoadingEvent(true);
-    await endDebrief();
+    const resultPhase = await endDebrief();
+    if (resultPhase === "event_intro") {
+      await nextEvent();
+    }
+    setLoadingEvent(false);
+  };
+
+  // Dark Play Plan 3 — consult/therapy always route back to event_intro
+  // (END_INTERVENTION never terminates the game), so both continuations
+  // mirror handleDebrief: end the intervention, then load the next event.
+  const handleConsultContinue = async () => {
+    setLoadingEvent(true);
+    await endConsult();
+    await nextEvent();
+    setLoadingEvent(false);
+  };
+
+  const handleTherapyConclude = async () => {
+    setLoadingEvent(true);
+    await endTherapy();
+    await nextEvent();
+    setLoadingEvent(false);
+  };
+
+  // CPS review CAN be terminal (a "removal" determination). endCps returns
+  // the resulting phase: "epilogue" means the server already generated the
+  // removal epilogue and set it into `epilogue` state — the existing
+  // `phase === "epilogue"` branch below renders Endgame off that state, so
+  // nothing further is needed here. Any other phase (event_intro on
+  // "stay"/"safety_plan") advances to the next event, same as consult/therapy.
+  const handleCpsContinue = async () => {
+    const resultPhase = await endCps();
+    if (resultPhase === "epilogue") return;
+    setLoadingEvent(true);
     await nextEvent();
     setLoadingEvent(false);
   };
@@ -264,6 +317,39 @@ export function SoloGame() {
             </button>
           }
         />
+      </div>
+    );
+  }
+
+  if (phase === "consult") {
+    return (
+      <div className="app">
+        {error && <p className="error-banner">{error}</p>}
+        <ConsultScreen text={interventionText ?? ""} onContinue={handleConsultContinue} />
+      </div>
+    );
+  }
+
+  if (phase === "therapy") {
+    return (
+      <div className="app">
+        {error && <p className="error-banner">{error}</p>}
+        <TherapyScreen
+          messages={therapyMessages}
+          streamingReply={streamingDocText}
+          canSend={therapyMessages.filter((m) => m.speaker === "parent").length < THERAPY_TURN_CAP}
+          onSend={sendTherapyMessage}
+          onConclude={handleTherapyConclude}
+        />
+      </div>
+    );
+  }
+
+  if (phase === "cps_review") {
+    return (
+      <div className="app">
+        {error && <p className="error-banner">{error}</p>}
+        <CpsScreen text={interventionText ?? ""} onContinue={handleCpsContinue} />
       </div>
     );
   }

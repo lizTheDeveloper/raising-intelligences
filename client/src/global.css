@@ -1178,3 +1178,60 @@ body::after {
   color: var(--kid);
   border-bottom-color: var(--kid);
 }
+
+/* ─── Dark Play Plan 3 — intervention ladder (consult/therapy/cps) ──── */
+
+.intervention-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 60dvh;
+  gap: 28px;
+  text-align: center;
+  padding: 0 24px;
+}
+
+.intervention-label {
+  font-size: 11px;
+  color: var(--fg-dim);
+  letter-spacing: 4px;
+  text-transform: lowercase;
+}
+
+.cps-screen .intervention-label {
+  color: var(--kid);
+}
+
+.intervention-text-block {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 480px;
+}
+
+.intervention-para {
+  font-size: 16px;
+  line-height: 1.8;
+}
+
+.therapy-screen {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 8px;
+}
+
+.message-therapist .message-sender {
+  color: var(--kid);
+  letter-spacing: 2px;
+}
+.message-therapist .message-content {
+  color: var(--fg);
+  line-height: 1.75;
+}
+
+.message-parent .message-content {
+  color: var(--fg);
+}
