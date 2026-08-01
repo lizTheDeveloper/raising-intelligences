@@ -37,9 +37,21 @@ synchronization. Gates #3–#7 are genuine two-player barriers, but #5–#7 pres
 *two* interactions where one would do (screen's continue button → ReadyToggle),
 which is likely part of why it reads as "too many."
 
-### 2. "Not yet" / "ready" must be clicked twice
+### 2. "Not yet" / "ready" must be clicked twice — and it can deadlock the game
 
 > "I keep having to click 'not yet' and 'ready' twice."
+> …later, in a live game: "we are desync'd it just says 1 of 2 ready for both
+> of us" (game `8eda7ff3-19b9-4be7-8e74-7439df5441a0`)
+
+**This is worse than a double-click — it is a hard stuck.** The stale
+"you're ready" view is rendered without the client ever having sent
+`ready(true)` for that gate. The player believes they have readied, so they
+never click; the server sits at one ready flag; both players see "1 of 2 ready"
+indefinitely and the game cannot advance.
+
+Workaround for players already stuck: click "not yet", then the ready button
+again — the first click only re-syncs local state, the second is the one the
+server registers.
 
 **Likely cause — client/server ready state are two different sources of truth.**
 `ReadyToggle` (`client/src/components/MultiplayerGame.tsx:548`) renders from the
