@@ -52,27 +52,34 @@ function mockEvent(n: number): GameEvent {
 class GatedLLM implements LLMClient {
   readonly mock = new MockLLMClient();
   reportCardCalls = 0;
+  epilogueCalls = 0;
   /** The `userMessage` of the most recent report-card call. */
   lastReportCardPrompt = "";
   /** Resolves the first time a report-card call is entered. */
   readonly firstReportCardEntered: Promise<void>;
-  private signalEntered!: () => void;
-  private release: (() => void) | null = null;
-  private gate: Promise<void> | null = null;
+  /** Resolves the first time an epilogue call is entered. */
+  readonly firstEpilogueEntered: Promise<void>;
+  private signalEntered: Record<"report_card" | "epilogue", () => void>;
+  private release: Partial<Record<"report_card" | "epilogue", () => void>> = {};
+  private gate: Partial<Record<"report_card" | "epilogue", Promise<void>>> = {};
 
   constructor() {
-    this.firstReportCardEntered = new Promise<void>((r) => (this.signalEntered = r));
+    let signalReport!: () => void;
+    let signalEpilogue!: () => void;
+    this.firstReportCardEntered = new Promise<void>((r) => (signalReport = r));
+    this.firstEpilogueEntered = new Promise<void>((r) => (signalEpilogue = r));
+    this.signalEntered = { report_card: signalReport, epilogue: signalEpilogue };
   }
 
-  /** Hold every report-card call until `releaseReportCard()` is called. */
-  holdReportCard(): void {
-    this.gate = new Promise<void>((r) => (this.release = r));
+  /** Hold every call for `role` until `release(role)` is called. */
+  hold(role: "report_card" | "epilogue"): void {
+    this.gate[role] = new Promise<void>((r) => (this.release[role] = r));
   }
 
-  releaseReportCard(): void {
-    this.release?.();
-    this.gate = null;
-    this.release = null;
+  releaseRole(role: "report_card" | "epilogue"): void {
+    this.release[role]?.();
+    delete this.gate[role];
+    delete this.release[role];
   }
 
   streamResponse(
@@ -93,6 +100,9 @@ class GatedLLM implements LLMClient {
   ): Promise<string> {
     if (role === "epilogue") {
       this.mock.roleCalls.push(role);
+      this.epilogueCalls++;
+      this.signalEntered.epilogue();
+      if (this.gate.epilogue) await this.gate.epilogue;
       if (onChunk) onChunk(EPILOGUE_TEXT);
       return EPILOGUE_TEXT;
     }
@@ -100,8 +110,8 @@ class GatedLLM implements LLMClient {
       this.mock.roleCalls.push(role);
       this.reportCardCalls++;
       this.lastReportCardPrompt = userMessage;
-      this.signalEntered();
-      if (this.gate) await this.gate;
+      this.signalEntered.report_card();
+      if (this.gate.report_card) await this.gate.report_card;
       const text = "# Report Card\nRowan is steady.";
       if (onChunk) onChunk(text);
       return text;
@@ -155,13 +165,11 @@ describe("report card: concurrent presses and late-arriving clients", () => {
   }
 
   /**
-   * A two-player game driven the whole way to the `epilogue` phase through the
-   * real socket path: lobby → guardian quiz → scene 1 → END_CHAT → debrief →
-   * START_EPILOGUE. Both clients are present for the epilogue, so both hold it
-   * locally — which is the state the race test wants and the state the handoff
-   * test deliberately does NOT give its third client.
+   * A two-player game driven through the real socket path to the `debrief`
+   * phase: lobby → guardian quiz → scene 1 → END_CHAT. This is where the
+   * epilogue's own button lives.
    */
-  async function atEpilogue(): Promise<{ p1: TestClient; p2: TestClient; gameId: string }> {
+  async function atDebrief(): Promise<{ p1: TestClient; p2: TestClient; gameId: string }> {
     const p1 = await client();
     const joined1 = p1.once<{ gameId: string }>(E.JOINED);
     p1.emit(E.CREATE_GAME, { childName: "Rowan", displayName: "Alex" });
@@ -178,11 +186,20 @@ describe("report card: concurrent presses and late-arriving clients", () => {
     p1.emit(E.END_CHAT);
     await debrief;
 
-    const epilogue = p1.waitFor<ViewerState>(E.STATE, (s) => s.phase === "epilogue");
-    p1.emit(E.START_EPILOGUE);
-    await epilogue;
-
     return { p1, p2, gameId };
+  }
+
+  /**
+   * …and on into `epilogue`. Both clients are present when it is generated, so
+   * both hold it locally — which is the state the report-card race test wants,
+   * and the state the handoff test deliberately does NOT give its third client.
+   */
+  async function atEpilogue(): Promise<{ p1: TestClient; p2: TestClient; gameId: string }> {
+    const pair = await atDebrief();
+    const epilogue = pair.p1.waitFor<ViewerState>(E.STATE, (s) => s.phase === "epilogue");
+    pair.p1.emit(E.START_EPILOGUE);
+    await epilogue;
+    return pair;
   }
 
   beforeEach(async () => {
@@ -203,7 +220,7 @@ describe("report card: concurrent presses and late-arriving clients", () => {
     // whole point. The idempotency guard reads a phase that only changes after
     // this call returns, so inside this window it cannot help: only the game
     // lock can.
-    llm.holdReportCard();
+    llm.hold("report_card");
 
     const ready = p1.waitFor<{ reportCard: string }>(E.REPORT_CARD_READY);
     p1.emit(E.REPORT_CARD, { epilogue: EPILOGUE_TEXT });
@@ -215,7 +232,7 @@ describe("report card: concurrent presses and late-arriving clients", () => {
     await llm.firstReportCardEntered;
     await delay(150);
 
-    llm.releaseReportCard();
+    llm.releaseRole("report_card");
     const rc = await ready;
     expect(rc.reportCard).toContain("Report Card");
 
@@ -229,6 +246,74 @@ describe("report card: concurrent presses and late-arriving clients", () => {
     expect(p2.lastError).toBeUndefined();
     expect(p1.lastState!.phase).toBe("report_card");
     expect(p2.lastState!.phase).toBe("report_card");
+  });
+
+  it("generates exactly one epilogue when both players press 'continue' at the same moment", async () => {
+    const { p1, p2 } = await atDebrief();
+
+    // Hold the epilogue call open, exactly as the report-card race does: the
+    // phase only leaves `debrief` when this returns, so inside this window a
+    // phase guard on its own cannot tell the second press from the first.
+    llm.hold("epilogue");
+
+    const landed = p1.waitFor<ViewerState>(E.STATE, (s) => s.phase === "epilogue");
+    p1.emit(E.START_EPILOGUE);
+    p2.emit(E.START_EPILOGUE);
+
+    await llm.firstEpilogueEntered;
+    await delay(150);
+
+    llm.releaseRole("epilogue");
+    await landed;
+    await delay(150);
+
+    // One epilogue. Unserialized, the second press generated another and
+    // overwrote the first — which since the epilogue moved into GameState
+    // means replacing the text a player may already be reading, and the text
+    // the report card is then built from.
+    expect(llm.epilogueCalls).toBe(1);
+    expect(p1.lastState!.epilogue).toBe(EPILOGUE_TEXT);
+    expect(p2.lastState!.epilogue).toBe(EPILOGUE_TEXT);
+    expect(p1.lastError).toBeUndefined();
+    expect(p2.lastError).toBeUndefined();
+  });
+
+  it("a repeat START_EPILOGUE re-sends the existing epilogue instead of generating another", async () => {
+    const { p1, p2 } = await atEpilogue();
+    expect(llm.epilogueCalls).toBe(1);
+
+    // A stale client, a reload, or simply the other parent pressing the button
+    // they can still see. It must get the epilogue back, not a new one.
+    const resent = p2.once<{ epilogue: string }>(E.EPILOGUE);
+    p2.emit(E.START_EPILOGUE);
+    expect((await resent).epilogue).toBe(EPILOGUE_TEXT);
+
+    await delay(100);
+    expect(llm.epilogueCalls).toBe(1);
+    expect(p2.lastError).toBeUndefined();
+  });
+
+  it("ignores START_EPILOGUE from a phase the state machine forbids, without burning a call", async () => {
+    // `family_chat` is not one of canTransition's permitted phases
+    // (event_intro, debrief, cps_review). The old handler generated the whole
+    // epilogue first and only then threw "Invalid transition" over it.
+    const p1 = await client();
+    const joined1 = p1.once<{ gameId: string }>(E.JOINED);
+    p1.emit(E.CREATE_GAME, { childName: "Rowan", displayName: "Alex" });
+    await joined1;
+    const p2 = await client();
+    const joined2 = p2.once(E.JOINED);
+    p2.emit(E.JOIN_GAME, { gameId: (await joined1).gameId, displayName: "Sam" });
+    await joined2;
+    const scene = await openFirstScene(p1, p2);
+    expect(scene.phase).toBe("family_chat");
+
+    p1.emit(E.START_EPILOGUE);
+    await delay(150);
+
+    expect(llm.epilogueCalls).toBe(0);
+    expect(p1.lastState!.phase).toBe("family_chat");
+    expect(p1.lastError).toBeUndefined();
   });
 
   it("a device that picked the game up after the epilogue still produces a real report card", async () => {

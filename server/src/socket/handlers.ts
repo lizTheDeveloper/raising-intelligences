@@ -7,6 +7,7 @@ import {
   createGame,
   PARENT_MESSAGE_CAP,
   transition,
+  canTransition,
   concernDeltaForTier,
   selectDueRung,
   CONSULT_DECAY,
@@ -1282,11 +1283,54 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       }).catch((err) => failWithError(err, "END_CHAT"));
     });
 
-    socket.on(E.START_EPILOGUE, async () => {
+    socket.on(E.START_EPILOGUE, () => {
       const gameId = data.gameId;
-      const state = currentState();
-      if (!gameId || !state) return fail("Not in a game");
-      try {
+      if (!gameId) return fail("Not in a game");
+
+      // Same treatment as REPORT_CARD, and for the same reason: an expensive
+      // model call reachable from a screen both players are looking at, with
+      // nothing serializing it. Two presses each generated an epilogue, and
+      // the later one landed on top — now that the text lives in GameState
+      // (see GameState.epilogue) that overwrite is not just a wasted call, it
+      // silently replaces the epilogue a player may already be reading and the
+      // one the report card will be built from.
+      //
+      // No re-entrancy: multiplayer's own route to the epilogue is the READY
+      // branch, which calls endgameEngine.generateEpilogue / generateRemoval-
+      // Epilogue directly inside the lock it already holds — it does not
+      // dispatch this event, and nothing on the server emits START_EPILOGUE.
+      // This handler is only ever entered from a client emit, so it takes the
+      // lock exactly once.
+      lock(gameId, async () => {
+        // Read state INSIDE the lock: both guards below have to see what a
+        // concurrent press committed, and the phase they read only changes
+        // when the (long) model call returns.
+        const state = currentState();
+        if (!state) { fail("Not in a game"); return; }
+
+        // Already generated. Re-send what exists instead of generating a
+        // second one — this is the duplicate-press path, and it also answers
+        // a client that reloaded and wants the epilogue back.
+        if (state.phase === "epilogue") {
+          broadcastState(gameId);
+          io.to(gameId).emit(E.EPILOGUE, { epilogue: state.epilogue });
+          return;
+        }
+
+        // Legality is read from the state machine rather than restated here,
+        // so this guard cannot drift from canTransition's list (today:
+        // event_intro, debrief, cps_review). Deliberately NOT narrowed to
+        // `debrief`: cps_review must stay permitted or the Dark Play removal
+        // ending loses its exit. Checking up front means an out-of-phase
+        // press (a stale client on report_card/ended, a double-fire that
+        // arrives after the game moved on) costs nothing, instead of burning
+        // a full epilogue generation and then throwing "Invalid transition"
+        // over it.
+        if (!canTransition(state, { type: "START_EPILOGUE", epilogue: "" })) {
+          broadcastState(gameId);
+          return;
+        }
+
         const emitChunk = (chunk: string) => {
           io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
         };
@@ -1295,9 +1339,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         await repo.saveGame(result.state);
         broadcastState(gameId);
         io.to(gameId).emit(E.EPILOGUE, { epilogue: result.epilogue });
-      } catch (err) {
-        failWithError(err, "START_EPILOGUE");
-      }
+      }).catch((err) => failWithError(err, "START_EPILOGUE"));
     });
 
     socket.on(E.ADULT_CHAT, async (payload: AdultChatPayload) => {
