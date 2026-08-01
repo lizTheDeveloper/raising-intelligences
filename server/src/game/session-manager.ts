@@ -99,6 +99,22 @@ export function addPlayer(
 
 /**
  * Reconnect a returning player: update their connectionId and mark connected.
+ *
+ * `ready` is deliberately PRESERVED. This used to force it to false, which
+ * meant any second socket claiming the slot — a reconnect, a second tab, or a
+ * device handoff — silently un-readied that player mid-gate. The co-parent's
+ * screen kept saying "1 of 2 ready" while the player who had already pressed
+ * ready saw nothing change, which is half of playtest note 2's double-click
+ * report and would make a handoff mid-gate lose the click outright.
+ *
+ * Preserving it here is safe in a way that preserving it in `disconnectPlayer`
+ * would NOT be. `allReady` requires `connected && ready`, and nothing
+ * re-evaluates `allReady` on the JOIN/reconnect path — the advance lives only
+ * in the READY handler. Clearing on *disconnect* can therefore never strand a
+ * game (clearing a flag never enables an advance), whereas preserving it there
+ * could: ready → drop → partner readies → return, and both flags are set with
+ * no code path left to notice. Here the value is unchanged by the reconnect, so
+ * any advance that was going to fire has already fired.
  */
 export function reconnectPlayer(
   session: Session,
@@ -110,7 +126,7 @@ export function reconnectPlayer(
     ...session,
     players: session.players.map((p) => {
       if (p.token === token) {
-        reconnected = { ...p, connectionId: newConnectionId, connected: true, ready: false };
+        reconnected = { ...p, connectionId: newConnectionId, connected: true };
         return reconnected;
       }
       return p;

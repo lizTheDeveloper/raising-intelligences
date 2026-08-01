@@ -20,6 +20,12 @@ const E = {
   SUBMIT_PERSONALITY: "submit_personality",
   PERSONALITY_SUBMITTED: "personality_submitted",
   PERSONALITY_SEED_READY: "personality_seed_ready",
+  /** "let me keep playing from my phone" — see HANDOFF_CODE. */
+  REQUEST_HANDOFF: "request_handoff",
+  /** The minted single-use handoff code, to this socket only. */
+  HANDOFF_CODE: "handoff_code",
+  /** Another live socket took over our slot. */
+  SUPERSEDED: "superseded",
   JOINED: "joined",
   LOBBY: "lobby",
   STATE: "state",
@@ -76,6 +82,58 @@ function saveResume(gameId: string, playerToken: string): void {
 
 export function clearResume(): void {
   localStorage.removeItem(RESUME_KEY);
+}
+
+/**
+ * Build the "continue on another device" link for a minted handoff code.
+ *
+ * The code goes in the URL **fragment**, not the query string, and that is a
+ * security decision rather than a cosmetic one. A query parameter is recorded
+ * by every log sink between the player and the game: the reverse proxy's access
+ * log, and Umami — which reports `pathname + search` on the automatic pageview
+ * that fires before any of our code runs, so we could not strip it in time.
+ * Sentry's `beforeSend` only drops `event.user`, so a client crash would carry
+ * it too. A fragment is never sent to the server and is excluded from all
+ * three. `?game=` stays in the query because the app already routes on it and
+ * a game id is not a credential.
+ *
+ * The result is still a plain link you can text yourself:
+ *   https://…/raising-intelligences/?game=<uuid>#handoff=<22 chars>
+ */
+export function buildHandoffUrl(gameId: string, code: string): string {
+  const url = new URL(window.location.href);
+  url.searchParams.set("game", gameId);
+  // Not a resume link for this device: a stale mode=solo would misroute it.
+  url.searchParams.delete("mode");
+  url.hash = `handoff=${code}`;
+  return url.toString();
+}
+
+/**
+ * Pull a handoff code out of the current URL and erase it from the address bar
+ * in the same breath, so it cannot be re-redeemed by a reload, screenshotted
+ * from the omnibox, or carried into a shared-screen recording. (It is
+ * single-use server-side regardless; this is about what is left lying around.)
+ *
+ * The query form is accepted as well as the fragment form — a code that reaches
+ * us through a link-mangling chat client should still work, and it is the shape
+ * the feature was originally specced with.
+ */
+export function takeHandoffCodeFromUrl(): string | null {
+  try {
+    const url = new URL(window.location.href);
+    const fromQuery = url.searchParams.get("handoff");
+    const hash = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash;
+    const fromHash = new URLSearchParams(hash).get("handoff");
+    const code = fromHash || fromQuery;
+    if (!code) return null;
+    url.searchParams.delete("handoff");
+    url.hash = "";
+    window.history.replaceState(null, "", url.toString());
+    return code;
+  } catch {
+    return null;
+  }
 }
 
 export type Slot = "parent1" | "parent2";
@@ -168,10 +226,35 @@ export function useMultiplayer() {
   const [generating, setGenerating] = useState(false);
   /** The *other* parent is composing a message. Advisory only. */
   const [partnerTyping, setPartnerTyping] = useState(false);
+  /** A live "continue on another device" link, once the server has minted one. */
+  const [handoff, setHandoff] = useState<{ url: string; expiresAt: number } | null>(null);
+  /**
+   * Another device is playing this slot now. STATE keeps arriving (the server
+   * never evicts us), so the view stays current — but ready is keyed on the
+   * slot's live connection, so this device cannot advance the game. The UI has
+   * to say that out loud; a silently dead ready button is the exact failure the
+   * last round of work removed.
+   */
+  const [superseded, setSuperseded] = useState(false);
   const playerTokenRef = useRef<string | null>(null);
+  /**
+   * Suppresses the automatic rejoin-on-connect while superseded.
+   *
+   * In memory, NOT localStorage. Clearing the stored credential here would be
+   * wrong twice over: localStorage is shared between tabs, so a second tab
+   * taking over would race its own `saveResume` and could strand a live game
+   * with no way back; and a reload of this tab *should* rejoin (coming back to
+   * your laptop and refreshing is a legitimate way to take the game back — it
+   * just supersedes the phone, which gets its own notice).
+   */
+  const supersededRef = useRef(false);
+  /** A handoff code waiting for the socket to finish connecting. */
+  const pendingHandoffRef = useRef<{ gameId: string; code: string } | null>(null);
   /** Our own slot, readable from inside the socket listeners (which are
    * registered once and never see later renders' state). */
   const slotRef = useRef<Slot | null>(null);
+  /** Same reason as slotRef: the HANDOFF_CODE listener needs the game id. */
+  const gameIdRef = useRef<string | null>(null);
   const partnerTypingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const phaseRef = useRef<string | null>(null);
 
@@ -190,6 +273,19 @@ export function useMultiplayer() {
 
     socket.on("connect", () => {
       setConnected(true);
+      // A handoff code outranks stored resume data. This device may well hold
+      // a credential for a *different* game (or the other slot of this one);
+      // the link the player just followed is the more recent intent, and the
+      // code is single-use, so it has to be spent on this connection.
+      const pending = pendingHandoffRef.current;
+      if (pending) {
+        pendingHandoffRef.current = null;
+        socket.emit(E.JOIN_GAME, { gameId: pending.gameId, handoffCode: pending.code });
+        return;
+      }
+      // Don't crawl back into a game another device has taken over. Purely a
+      // local decision — the credential is untouched, so a reload still can.
+      if (supersededRef.current) return;
       // Auto-rejoin on reconnect if we have resume data
       const resume = loadResume();
       if (resume) {
@@ -204,9 +300,16 @@ export function useMultiplayer() {
 
     socket.on(E.JOINED, (d: { gameId: string; slot: Slot; playerToken?: string }) => {
       setGameId(d.gameId);
+      gameIdRef.current = d.gameId;
       setSlot(d.slot);
       slotRef.current = d.slot;
       setInLobby(true);
+      // We hold the slot again (fresh join, resume, or a handoff redeemed on
+      // this device). Any takeover notice is stale, and a previously minted
+      // link is no longer the one we'd want to show.
+      supersededRef.current = false;
+      setSuperseded(false);
+      setHandoff(null);
       track("player_joined", { game_id: d.gameId });
       if (d.playerToken) {
         playerTokenRef.current = d.playerToken;
@@ -296,6 +399,18 @@ export function useMultiplayer() {
     socket.on(E.PERSONALITY_SEED_READY, () => {
       setSeedReady(true);
     });
+    socket.on(E.HANDOFF_CODE, (d: { code: string; expiresAt: number }) => {
+      // The code lives exactly as long as the panel showing it: built into a
+      // URL for display and never stored, tracked, or sent anywhere else.
+      setHandoff({ url: buildHandoffUrl(gameIdRef.current ?? "", d.code), expiresAt: d.expiresAt });
+    });
+    socket.on(E.SUPERSEDED, () => {
+      supersededRef.current = true;
+      setSuperseded(true);
+      // A link minted here would hand over a slot this device no longer drives.
+      setHandoff(null);
+      clearPartnerTyping();
+    });
     socket.on(E.ERROR, (d: { error: string }) => setError(d.error));
     socketRef.current = socket;
     return socket;
@@ -328,6 +443,51 @@ export function useMultiplayer() {
   const ready = useCallback((value: boolean) => {
     socketRef.current?.emit(E.READY, { ready: value });
   }, []);
+
+  /** Ask the server for a fresh "continue on another device" link. */
+  const requestHandoff = useCallback(() => {
+    setHandoff(null);
+    socketRef.current?.emit(E.REQUEST_HANDOFF);
+  }, []);
+
+  /** Drop the displayed link without redeeming it. The code stays live until it
+   * expires or is used — the server has no revoke, and adding one would mean a
+   * second code-shaped message on the wire for no real gain. */
+  const dismissHandoff = useCallback(() => setHandoff(null), []);
+
+  /**
+   * Redeem a handoff code from a link. Routed through a ref + the connect
+   * handler rather than a bare emit so it works identically whether the socket
+   * is already up (a link opened in a live tab) or still dialling (the normal
+   * cold open on a second device).
+   */
+  const redeemHandoff = useCallback(
+    (id: string, code: string) => {
+      pendingHandoffRef.current = { gameId: id, code };
+      const socket = ensureSocket();
+      if (socket.connected) {
+        pendingHandoffRef.current = null;
+        socket.emit(E.JOIN_GAME, { gameId: id, handoffCode: code });
+      }
+    },
+    [ensureSocket]
+  );
+
+  /**
+   * Take the game back on this device after being superseded. Uses the
+   * credential this device already holds — no code round-trip — and in turn
+   * supersedes whichever device is currently playing, which gets the same
+   * notice this one just showed. The handoff is symmetric in both directions.
+   */
+  const reclaimHere = useCallback(() => {
+    const resume = loadResume();
+    const id = gameIdRef.current ?? resume?.gameId;
+    const token = playerTokenRef.current ?? resume?.playerToken;
+    if (!id || !token) return;
+    supersededRef.current = false;
+    setSuperseded(false);
+    ensureSocket().emit(E.JOIN_GAME, { gameId: id, playerToken: token });
+  }, [ensureSocket]);
 
   const sendMessage = useCallback((content: string) => {
     if (!content.trim()) return;
@@ -395,8 +555,13 @@ export function useMultiplayer() {
   const leaveGame = useCallback(() => {
     clearResume();
     setGameId(null);
+    gameIdRef.current = null;
     setSlot(null);
     slotRef.current = null;
+    setHandoff(null);
+    setSuperseded(false);
+    supersededRef.current = false;
+    pendingHandoffRef.current = null;
     setPlayers([]);
     setState(null);
     setInLobby(false);
@@ -418,6 +583,8 @@ export function useMultiplayer() {
     sceneEnding,
     generating,
     partnerTyping,
+    handoff,
+    superseded,
     streamingMessage,
     streamingDocText,
     isStreaming,
@@ -427,6 +594,10 @@ export function useMultiplayer() {
     createGame,
     joinGame,
     ready,
+    requestHandoff,
+    dismissHandoff,
+    redeemHandoff,
+    reclaimHere,
     sendMessage,
     sendDebriefMessage,
     sendTherapyMessage,

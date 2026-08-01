@@ -156,9 +156,39 @@ function reconstructState(input: {
   cpsOutcome?: "stay" | "safety_plan" | "removal" | null;
   therapyMessages?: TherapyMessage[];
 }): GameState {
+  /**
+   * `event_intro` means "between scenes" — there is no current scene, ever.
+   *
+   * The games row cannot represent "no current event": it stores only
+   * `current_event_number`, and both reducers that land on `event_intro`
+   * (END_DEBRIEF, END_INTERVENTION) null `currentEvent` WITHOUT advancing that
+   * number. So a game parked between scenes persists as
+   * "phase=event_intro, current_event_number=N" while the events table still
+   * holds scene N — and re-deriving the event by number resurrected the scene
+   * the pair had just finished. Deterministic, not a race: every reload did it,
+   * and a handoff IS a reload.
+   *
+   * Nulling it unconditionally at `event_intro` is lossless, because no live
+   * transition ever persists a *pending* scene in this phase:
+   *   - START_EVENT (the REST `/next-event` path, and applyPrefetchedEvent)
+   *     lands directly in `family_chat`, so it never saves `event_intro`;
+   *   - LOAD_EVENT does leave `event_intro` + an event, but the socket READY
+   *     handler follows it with beginChat() inside the same lock and only then
+   *     saves — so what reaches the database is `family_chat`.
+   * The only producers of persisted "event_intro + a live event" are the
+   * between-scenes artifact above and games stranded by the retired two-round
+   * ready gate; both want a fresh scene at the next gate, which is exactly what
+   * a null yields (LOAD_EVENT is guarded on `currentEvent === null`).
+   *
+   * The `normalizeRehydrated` / `sceneAlreadyPlayed` guard in
+   * socket/handlers.ts stays as defence in depth — it now has nothing to
+   * repair on this path, which is the point.
+   */
   const currentEvent =
-    input.events.find((e) => e.eventNumber === input.currentEventNumber) ??
-    null;
+    input.phase === "event_intro"
+      ? null
+      : input.events.find((e) => e.eventNumber === input.currentEventNumber) ??
+        null;
 
   const inChat =
     input.phase === "family_chat" ||
