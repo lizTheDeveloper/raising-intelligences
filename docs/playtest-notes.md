@@ -218,3 +218,52 @@ design questions worth settling before building:
 
 This is the highest-value item in this list. #1–#5 are friction; this one is a
 missing room in the house.
+
+### 7. Previous scene's setup is shown while "building the next scene…"
+
+> "See the previous scene set up while it says building the next scene."
+
+Screenshot: the `event_intro` screen (`— age 3 —` + the fingernail-clipping
+description, `MultiplayerGame.tsx:302-304`) with `building the next scene…`
+below it.
+
+**That combination cannot be produced by one clean cycle — the `generating`
+flag is stale.** Two facts, both verified:
+
+1. The *only* `generating: true` emit in the entire server is
+   `handlers.ts:376`, inside the branch guarded on
+   `state.phase === "event_intro" && state.currentEvent === null`. If that
+   branch is running, `currentEvent` is null, and the screen renders
+   "the story continues…" (`MultiplayerGame.tsx:305`) — not a scene
+   description. So a *fresh* `generating` flag and a rendered scene
+   description are mutually exclusive.
+2. `generating` is **client-local state that is never re-synced**. It lives in
+   `useMultiplayer.ts:130` and is written by exactly one thing — the
+   `E.GENERATING` listener at line 181. It is not a field on `ViewerState`
+   (`handlers.ts:76-95`), so `setState(s)` on every STATE broadcast never
+   corrects it. And the reconnect and join paths (`handlers.ts:312`, `:334`)
+   emit `E.STATE` but **never re-emit `E.GENERATING`**.
+
+So any client that misses the `generating: false` emit — reconnect, a dropped
+frame, a tab that was backgrounded across the `finally` at `handlers.ts:387` —
+is stuck displaying "building the next scene…" indefinitely, over whatever
+scene the (correct) STATE broadcast last gave it. `currentEvent` is right;
+the progress message is a ghost.
+
+**Suggested direction:** make `generating` a field on `ViewerState` derived from
+server state rather than a fire-and-forget event. Then every STATE broadcast
+self-corrects it, reconnect included. If it stays an event, it must at minimum
+be re-emitted on reconnect/join alongside STATE — but that only narrows the
+window, it doesn't close it.
+
+**Secondary point worth fixing regardless:** even with a correct flag, the
+`event_intro` screen composes the *previous* scene's description with a
+progress message whenever `currentEvent` is non-null, because the description
+block and the ready/generating block are independent ternaries
+(`MultiplayerGame.tsx:301-322`). The screen should render from one source of
+truth — if we're generating, we shouldn't be showing a scene at all.
+
+This shares a root cause with #2: both are client-local React state duplicating
+something the server already owns, drifting when the server changes it out from
+under them. `gateReady`, `ladderReady`, and `generating` are all the same bug
+class. Worth fixing as one pass rather than three patches.
