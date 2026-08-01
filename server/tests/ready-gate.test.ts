@@ -127,10 +127,16 @@ describe("Multiplayer ready gate", () => {
     await new Promise((r) => setTimeout(r, 250));
 
     expect(mock.events.length).toBe(1); // untouched
-    // p2 is the only one holding a STATE at this point (the joiner gets one on
-    // JOIN; nothing has broadcast since, which is itself the point).
+    // BOTH players must hold a STATE here. The creator gets none from
+    // CREATE_GAME (JOINED + LOBBY only) and none from the joiner's JOIN, so
+    // before the gate broadcast one explicitly their client sat on
+    // `state === null`, could not tell it had passed the lobby, never entered
+    // the quiz, and the second personality never arrived.
+    expect(p1.lastState?.phase).toBe("event_intro");
+    expect(p1.lastState?.currentEventNumber).toBe(0);
     expect(p2.lastState?.phase).toBe("event_intro");
     expect(p2.lastState?.currentEventNumber).toBe(0);
+    expect(p1.states().every((s) => s.currentEvent === null)).toBe(true);
     expect(p2.states().every((s) => s.currentEvent === null)).toBe(true);
     // The ready flags survive: they are what holds each player on the guardian
     // screen, and clearing them here would bounce both clients to the lobby

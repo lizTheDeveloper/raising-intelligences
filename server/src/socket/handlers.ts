@@ -602,7 +602,17 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           state.phase === "event_intro" &&
           state.currentEventNumber === 0 &&
           state.personalitySeed === "";
-        if (awaitingPersonality) return;
+        if (awaitingPersonality) {
+          // The creating player has never received a STATE at this point:
+          // CREATE_GAME emits JOINED + LOBBY only, and JOIN_GAME's STATE goes to
+          // the joiner alone. Previously the gate's own generation broadcast one
+          // as a side effect; now that nothing generates here, without this the
+          // creator's client holds `state === null`, can't tell it has passed
+          // the lobby, and never enters the quiz — so the second personality
+          // never arrives and the game sits there.
+          broadcastState(gameId);
+          return;
+        }
 
         const updated = sessions.get(gameId)!;
         if (!allReady(updated)) return;

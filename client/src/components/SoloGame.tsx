@@ -268,7 +268,17 @@ export function SoloGame() {
           // `currentEvent !== null` is required, not decorative: the game sits
           // in `event_intro` from creation onward, so without it this would
           // read "ready" before scene 1 had even been requested.
-          eventReady={phase === "event_intro" && !loadingEvent && currentEvent !== null}
+          //
+          // `|| error` is the escape hatch. A failed load leaves currentEvent
+          // null forever, and this screen has no error banner and no retry — so
+          // without it a dead /next-event is a spinner with no way out.
+          // Releasing on the error hands the player to EventIntro, whose
+          // `onReady={currentEvent ? beginChat : handleNextEvent}` is the retry.
+          // (Multiplayer's equivalent hatch is the server clearing the ready
+          // flags, which drops both clients back to the lobby.)
+          eventReady={
+            phase === "event_intro" && !loadingEvent && (currentEvent !== null || error !== null)
+          }
           onReady={() => setShowGuardian(false)}
           onSeedReady={handleSeedReady}
         />
