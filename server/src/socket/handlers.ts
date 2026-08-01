@@ -43,6 +43,7 @@ import {
 } from "./protocol.js";
 import { generatePersonalitySeed } from "../game/personality.js";
 import { moderateParentMessage, applyModerationBlock, recordConcern } from "../safety/moderation.js";
+import { evaluateEscalation } from "../safety/escalation.js";
 import { getSocketIp } from "../lib/client-ip.js";
 import { buildSceneTranscript } from "../game/context-assembler.js";
 import { captureException } from "../observability/sentry.js";
@@ -181,6 +182,17 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       });
       // NOTE: session continues. In-fiction consequences are handled by the
       // trajectory system today and the intervention ladder (Plan 3) later.
+
+      // Dark Play Plan 4: only on a Tier A concern outcome (a clean/none
+      // scene can't push an IP into all-dark, and a block already returned
+      // above) — evaluate the cross-game ratio and, at most, write a
+      // reviewable flag. Never allowed to break the scene.
+      evaluateEscalation({ repo, ip: ipAddress, gameId: next.id }).catch((err) => {
+        logger.error("escalation_evaluation_error", {
+          gameId: next.id,
+          error: err instanceof Error ? err.stack : String(err),
+        });
+      });
     }
 
     // Dark Play Plan 2: net concern accrues once per scene, at scene end.
@@ -225,6 +237,10 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       const state = createGame(payload.childName, payload.relationshipType);
       games.set(state.id, state);
       await repo.saveGame(state);
+      // Dark Play Plan 4: record the creating IP — the denominator prerequisite
+      // for escalation detection (see safety/escalation.ts). Not part of
+      // GameState; written directly to the games row.
+      await repo.recordGameIp(state.id, getSocketIp(socket));
 
       let session = createSession(state.id);
       const added = addPlayer(session, socket.id, payload.displayName, payload.userId);

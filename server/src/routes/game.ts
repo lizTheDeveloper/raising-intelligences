@@ -24,6 +24,7 @@ import { withGameLock } from "../lib/game-lock.js";
 import { initSSE, sseChunk, sseDone, sseError, sseTerminated } from "../lib/sse.js";
 import { resolveGame as sharedResolveGame } from "../lib/resolve-game.js";
 import { moderateParentMessage, applyModerationBlock, recordConcern } from "../safety/moderation.js";
+import { evaluateEscalation } from "../safety/escalation.js";
 import { buildSceneTranscript } from "../game/context-assembler.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
@@ -77,6 +78,10 @@ export function createGameRoutes(
     const state = createGame(childName, relationshipType);
     games.set(state.id, state);
     await repo.saveGame(state);
+    // Dark Play Plan 4: record the creating IP — the denominator prerequisite
+    // for escalation detection (see safety/escalation.ts). Not part of
+    // GameState; written directly to the games row.
+    await repo.recordGameIp(state.id, req.ip ?? null);
     res.json({ gameId: state.id });
     // Kick off gender inference, portrait, and first-event generation in parallel.
     inferGender(engine.llm, childName).then(async (gender) => {
@@ -326,6 +331,17 @@ export function createGameRoutes(
             });
             // NOTE: session continues. In-fiction consequences are handled by the
             // trajectory system today and the intervention ladder (Plan 3) later.
+
+            // Dark Play Plan 4: only on a Tier A concern outcome (a clean/none
+            // scene can't push an IP into all-dark, and a block already
+            // returned above) — evaluate the cross-game ratio and, at most,
+            // write a reviewable flag. Never allowed to break the scene.
+            evaluateEscalation({ repo, ip: req.ip ?? null, gameId: next.id }).catch((err) => {
+              logger.error("escalation_evaluation_error", {
+                gameId: next.id,
+                error: err instanceof Error ? err.stack : String(err),
+              });
+            });
           }
 
           // Dark Play Plan 2: net concern accrues once per scene, at scene end.
