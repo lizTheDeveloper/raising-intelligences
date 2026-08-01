@@ -65,8 +65,56 @@ const QUIZ_QUESTIONS: QuizQuestion[] = [
   },
 ];
 
+// ---------- Pacing ----------
+// "All the narrative pacing was 100% to cover up scene generation and was never
+// supposed to take long on purpose." (docs/playtest-notes.md, design principle.)
+//
+// So none of the beats below are scheduled. Each one is the *floor* its own
+// written line needs to be readable, and the beats that actually cover work end
+// the moment that work lands:
+//
+//   narrative / transition — nothing to await; the floor IS the duration, and
+//                            it is derived from the line so editing the prose
+//                            re-times the beat instead of desynchronising it
+//                            from a hand-picked constant.
+//   reveal                 — covers the child-portrait call: floor, then advance
+//                            as soon as the portrait has loaded.
+//   waiting                — covers the personality-seed call and (since the
+//                            reorder) scene-1 generation: `canBegin`.
+//
+// This replaced a fixed 1200/2400/1600/1600/2500ms ladder — ~14.9s that ran the
+// same length whether the work behind it took 2s or 40s.
+
+/** ms per word at a comfortable reading pace, plus a fixed beat to register the line. */
+const READ_MS_PER_WORD = 180;
+const READ_BASE_MS = 300;
+/** Floors are clamped so a three-word line still lands and a long one doesn't drag. */
+const READ_MIN_MS = 800;
+const READ_MAX_MS = 1800;
+
+function readableMs(text: string): number {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  return Math.min(READ_MAX_MS, Math.max(READ_MIN_MS, READ_BASE_MS + words * READ_MS_PER_WORD));
+}
+
+/** Extra on a beat that also swaps the age background, so the crossfade lands. */
+const AGE_CROSSFADE_MS = 250;
+
+/** Minimum time on the reveal, so the portrait appearing actually registers. */
+const REVEAL_FLOOR_MS = 900;
+/**
+ * Ceiling on waiting for the portrait.
+ *
+ * `portraitReady` comes from the <img> onLoad. A 404, a disabled portrait
+ * pipeline, or a blocked request means it never fires — and a purely
+ * generation-driven reveal would then hang forever, which is strictly worse
+ * than the fixed timer it replaced. Generation-driven needs a ceiling as much
+ * as a floor.
+ */
+const PORTRAIT_MAX_WAIT_MS = 4000;
+
 // ---------- Step sequence ----------
-// Narrative, transition and reveal beats auto-advance on a timer and can be
+// Narrative, transition and reveal beats advance on their own and can be
 // skipped ahead with a click — they are pacing, never a gate. Only quiz,
 // confessional and waiting steps require the player to act: answering,
 // submitting, and the co-parent handshake respectively. Nothing on this screen
@@ -124,6 +172,13 @@ interface Props {
   onSubmitPersonality?: (payload: { ocean: number[]; confessional1?: string; confessional2?: string }) => void;
   /** Multiplayer: combined seed is ready (from socket event). */
   seedReadyProp?: boolean;
+  /**
+   * Solo: the personality seed has been generated server-side. This is the
+   * signal to start building scene 1 — the seed has to exist first, or the
+   * world manager generates the opening scene knowing nothing about the parent.
+   * Multiplayer does the equivalent server-side, off SUBMIT_PERSONALITY.
+   */
+  onSeedReady?: () => void;
 }
 
 function pickVariant(): number {
@@ -131,7 +186,7 @@ function pickVariant(): number {
 }
 
 // ---------- Component ----------
-export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmitPersonality, seedReadyProp }: Props) {
+export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmitPersonality, seedReadyProp, onSeedReady }: Props) {
   const [stepIndex, setStepIndex] = useState(0);
   const [narrativeLines, setNarrativeLines] = useState<string[]>([]);
   const [oceanAnswers, setOceanAnswers] = useState<number[]>([]);
@@ -142,6 +197,10 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
   const [seedError, setSeedError] = useState<string | null>(null);
   const [seedSubmitting, setSeedSubmitting] = useState(false);
   const [showMessage, setShowMessage] = useState(false);
+  /** Reveal beat: its readable floor has elapsed. */
+  const [revealFloorDone, setRevealFloorDone] = useState(false);
+  /** Reveal beat: we've waited as long as we're willing to for the portrait. */
+  const [portraitWaitOver, setPortraitWaitOver] = useState(false);
 
   // Fragment list — accumulates up to 10, fade-in + append style
   const [visibleFragments, setVisibleFragments] = useState<string[]>([]);
@@ -210,19 +269,12 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
     currentStep.kind === "confessional" ||
     currentStep.kind === "waiting";
 
-  // ---------- Auto-advance narrative, transition, and reveal steps ----------
+  // ---------- Advance the written beats ----------
+  // Narrative and transition beats cover no outstanding call of their own — the
+  // portrait is awaited at the reveal and the seed at the waiting step — so
+  // their readable floor is the whole duration. Nothing here is a schedule.
   useEffect(() => {
-    if (
-      currentStep.kind !== "narrative" &&
-      currentStep.kind !== "transition" &&
-      currentStep.kind !== "reveal"
-    ) return;
-
-    // Reveal step: just pause to let the portrait land, then advance
-    if (currentStep.kind === "reveal") {
-      const timer = setTimeout(() => setStepIndex((i) => i + 1), 2500);
-      return () => clearTimeout(timer);
-    }
+    if (currentStep.kind !== "narrative" && currentStep.kind !== "transition") return;
 
     // Add the line to the narrative display
     if (currentStep.text) {
@@ -232,15 +284,35 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
       });
     }
 
-    // Auto-advance after a delay
-    const isFirst = stepIndex === 0;
     const isNewAge = stepIndex > 0 && currentStep.age !== undefined &&
       STEPS[stepIndex - 1]?.age !== currentStep.age;
-    const delay = isFirst ? 1200 : isNewAge ? 2400 : 1600;
+    const floor = readableMs(currentStep.text ?? "") + (isNewAge ? AGE_CROSSFADE_MS : 0);
 
-    const timer = setTimeout(() => setStepIndex((i) => i + 1), delay);
+    const timer = setTimeout(() => setStepIndex((i) => i + 1), floor);
     return () => clearTimeout(timer);
   }, [stepIndex, currentStep]);
+
+  // ---------- Reveal: generation-driven, floored and capped ----------
+  // This beat exists to cover the child-portrait call, so it ends when the
+  // portrait lands — not on a stopwatch. The floor keeps the reveal from
+  // flashing past when the image is already cached; the ceiling keeps a portrait
+  // that never loads from stranding the player on a beat with no exit.
+  useEffect(() => {
+    if (currentStep.kind !== "reveal") return;
+    const floor = setTimeout(() => setRevealFloorDone(true), REVEAL_FLOOR_MS);
+    const ceiling = setTimeout(() => setPortraitWaitOver(true), PORTRAIT_MAX_WAIT_MS);
+    return () => {
+      clearTimeout(floor);
+      clearTimeout(ceiling);
+    };
+  }, [currentStep.kind]);
+
+  useEffect(() => {
+    if (currentStep.kind !== "reveal") return;
+    if (!revealFloorDone) return;
+    if (!portraitReady && !portraitWaitOver) return;
+    setStepIndex((i) => i + 1);
+  }, [currentStep.kind, revealFloorDone, portraitReady, portraitWaitOver]);
 
   // ---------- Skip ahead through the timed beats ----------
   // Timed beats are pacing, not gates: a click advances them early instead of
@@ -327,6 +399,10 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
       if (data.ready) {
         setSeedReady(true);
         track("personality_submitted", { seedReady: true });
+        // Scene 1 starts HERE, not at game creation — the world manager has to
+        // see the seed. Multiplayer does the same thing server-side, off
+        // SUBMIT_PERSONALITY.
+        onSeedReady?.();
       }
     } catch (err) {
       personalitySubmitted.current = false;
@@ -338,7 +414,7 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
 
     // Advance to waiting step
     setStepIndex((i) => i + 1);
-  }, [gameId, oceanAnswers, confessional1, confessional2, base, onSubmitPersonality]);
+  }, [gameId, oceanAnswers, confessional1, confessional2, base, onSubmitPersonality, onSeedReady]);
 
   // ---------- Retry personality on error ----------
   const handleRetry = useCallback(() => {
@@ -355,10 +431,21 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
 
   // In multiplayer, seedReady comes from the prop (socket event); in solo, from internal state (REST response)
   const effectiveSeedReady = onSubmitPersonality ? !!seedReadyProp : seedReady;
-  // Don't gate on eventReady: event loading can take 30–90s (LLM). EventIntro
-  // already shows a spinner while loadingEvent is true, so the user can proceed
-  // from the guardian screen as soon as their personality is submitted.
-  const canBegin = effectiveSeedReady && portraitRevealed;
+  /**
+   * The closing beat now DOES gate on the event, and that is the point.
+   *
+   * It used not to, because scene 1 had already been generated before this
+   * screen ever appeared — waiting here would have been waiting for nothing, so
+   * the wait was pushed out to a bare "building the next scene…" spinner
+   * instead. Since the reorder, submitting the confessionals is what starts
+   * scene-1 generation, and this screen is the content that covers it: the
+   * portrait reveal and the "I'm ready" / "most people aren't" exchange play
+   * over the call rather than after it.
+   *
+   * There is an exit if generation fails: the server clears the ready flags,
+   * which drops both clients back to the lobby with the error.
+   */
+  const canBegin = effectiveSeedReady && portraitRevealed && eventReady;
 
   // ---------- Render ----------
   return (
@@ -529,8 +616,12 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
               <div className="guardian-spinner" aria-hidden="true">
                 <span></span><span></span><span></span>
               </div>
+              {/* Two distinct waits, named honestly: the seed (which needs both
+                  parents' answers) and then the first scene (which needs the
+                  seed). Keyed off the work itself rather than off
+                  `seedSubmitting`, which only ever goes true on the solo path. */}
               <p className="guardian-loading-hint">
-                {seedSubmitting
+                {!effectiveSeedReady
                   ? "shaping who they'll become…"
                   : "getting your story ready…"}
               </p>
