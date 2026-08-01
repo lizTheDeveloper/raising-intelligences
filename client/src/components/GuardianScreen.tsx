@@ -173,6 +173,19 @@ interface Props {
   /** Multiplayer: combined seed is ready (from socket event). */
   seedReadyProp?: boolean;
   /**
+   * Multiplayer: has the co-parent finished their own quiz? Read off STATE, so
+   * it is right after a reconnect too.
+   *
+   * Only used to describe the wait honestly. Between your submit and theirs,
+   * nothing is generating — the seed call needs both answer sets before it can
+   * start. Undefined on the solo path, which has no co-parent to wait for.
+   */
+  partnerSubmitted?: boolean;
+  /** Multiplayer: the co-parent's display name, for that same line. Already
+   * defaulted to "your partner" by the caller; the fallback here is belt-and-
+   * braces and uses the same word, so the game never has two names for them. */
+  partnerName?: string;
+  /**
    * Solo: the personality seed has been generated server-side. This is the
    * signal to start building scene 1 — the seed has to exist first, or the
    * world manager generates the opening scene knowing nothing about the parent.
@@ -186,7 +199,7 @@ function pickVariant(): number {
 }
 
 // ---------- Component ----------
-export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmitPersonality, seedReadyProp, onSeedReady }: Props) {
+export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmitPersonality, seedReadyProp, partnerSubmitted, partnerName, onSeedReady }: Props) {
   const [stepIndex, setStepIndex] = useState(0);
   const [narrativeLines, setNarrativeLines] = useState<string[]>([]);
   const [oceanAnswers, setOceanAnswers] = useState<number[]>([]);
@@ -616,12 +629,21 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
               <div className="guardian-spinner" aria-hidden="true">
                 <span></span><span></span><span></span>
               </div>
-              {/* Two distinct waits, named honestly: the seed (which needs both
-                  parents' answers) and then the first scene (which needs the
-                  seed). Keyed off the work itself rather than off
-                  `seedSubmitting`, which only ever goes true on the solo path. */}
+              {/* Three distinct waits, named honestly — and only one of them is
+                  ever a generation. Keyed off the work itself rather than off
+                  `seedSubmitting`, which only ever goes true on the solo path.
+
+                  1. Your co-parent hasn't finished their own quiz. NOTHING is
+                     being generated: the seed needs both answer sets before the
+                     call can start. Claiming otherwise was the one progress
+                     message in the opening that was simply false. Multiplayer
+                     only — `partnerSubmitted` is undefined solo.
+                  2. Both answered; the seed is being generated.
+                  3. Seed done; scene 1 is being generated. */}
               <p className="guardian-loading-hint">
-                {!effectiveSeedReady
+                {partnerSubmitted === false
+                  ? `${partnerName ?? "your partner"} is still answering…`
+                  : !effectiveSeedReady
                   ? "shaping who they'll become…"
                   : "getting your story ready…"}
               </p>

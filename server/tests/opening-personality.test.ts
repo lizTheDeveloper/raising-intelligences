@@ -176,4 +176,60 @@ describe("Scene 1 is personality-informed", () => {
     }
     expect(mock.worldManagerPrompts.length).toBeGreaterThan(0);
   });
+
+  /**
+   * The guardian screen's waiting step has to name the wait it is in, and
+   * between one parent submitting and the other submitting there is no
+   * generation happening at all — the seed call cannot start until both answer
+   * sets exist. Saying "shaping who they'll become…" there was the one progress
+   * message in the opening that was simply false.
+   *
+   * Carried on STATE rather than left to the one-shot PERSONALITY_SUBMITTED
+   * event, for the same reason `generating` is: that event is not replayed on
+   * reconnect, so a client that dropped mid-quiz would describe the wrong wait.
+   */
+  it("tells each parent, on STATE, whether the OTHER one has finished the quiz", async () => {
+    mock.events = [mockEvent(1)];
+
+    const p1 = await client();
+    const joined1 = p1.once<{ gameId: string }>(E.JOINED);
+    p1.emit(E.CREATE_GAME, { childName: "Bo" });
+    const { gameId } = await joined1;
+
+    const p2 = await client();
+    const joined2 = p2.once(E.JOINED);
+    p2.emit(E.JOIN_GAME, { gameId });
+    await joined2;
+
+    // Out of the lobby and into the quiz. Neither has answered yet.
+    const seen1 = p1.waitFor<ViewerState>(E.STATE);
+    const seen2 = p2.waitFor<ViewerState>(E.STATE);
+    p1.emit(E.READY, { ready: true });
+    p2.emit(E.READY, { ready: true });
+    expect((await seen1).partnerPersonalitySubmitted).toBe(false);
+    expect((await seen2).partnerPersonalitySubmitted).toBe(false);
+
+    // Parent 1 finishes. It is slot-specific: parent 2 is now the one who has
+    // answered *from parent 1's point of view* — and vice versa.
+    const afterP1on1 = p1.waitFor<ViewerState>(E.STATE);
+    const afterP1on2 = p2.waitFor<ViewerState>(
+      E.STATE,
+      (s) => s.partnerPersonalitySubmitted === true
+    );
+    p1.emit(E.SUBMIT_PERSONALITY, { ocean: OCEAN_P1, confessional1: "", confessional2: "" });
+    // Parent 1 is still waiting on parent 2 — nothing is generating yet.
+    expect((await afterP1on1).partnerPersonalitySubmitted).toBe(false);
+    // Parent 2 can see that their co-parent is done.
+    await afterP1on2;
+
+    // Both in: the seed runs, scene 1 follows, and each side now reports true.
+    const chat = p1.waitFor<ViewerState>(
+      E.STATE,
+      (s) => s.phase === "family_chat" && s.currentEvent !== null
+    );
+    p2.emit(E.SUBMIT_PERSONALITY, { ocean: OCEAN_P2, confessional1: "", confessional2: "" });
+    const scene = await chat;
+    expect(scene.partnerPersonalitySubmitted).toBe(true);
+    expect(p2.lastState!.partnerPersonalitySubmitted).toBe(true);
+  });
 });

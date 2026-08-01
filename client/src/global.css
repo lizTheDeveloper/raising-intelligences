@@ -1406,6 +1406,17 @@ body::after {
   margin-top: 8px;
 }
 
+/* The pending state is never a bare spinner: the hook re-requests a link on
+   rejoin, and this is the manual way out if that re-request is also lost. */
+.handoff-pending .handoff-hint {
+  margin-bottom: 2px;
+}
+.handoff-retry {
+  display: block;
+  margin: 0 auto;
+  text-decoration: underline;
+}
+
 /* Floated variant, for the guardian quiz. That screen's narrative steps mount
    a fixed, full-viewport skip overlay at z-index 2; anything below it is
    unclickable. Sits above it, and top-right so it never overlaps the
