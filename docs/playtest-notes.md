@@ -390,3 +390,60 @@ and note 7.
 Fixing the branch alone is not enough — if it is genuinely dead it should go,
 and if it is still needed it must start a fresh scene rather than silently
 replaying the old one. The save ordering wants to be crash-safe either way.
+
+### 9. The scene generator is heavy-handed with confessed trauma
+
+> "The scene generator should be less heavy handed with the immediate
+> replication and naming your trauma. Your trauma should stand out. Show don't
+> tell."
+
+The scene from note 4/7 is the exhibit: *"your breath catches and your hands
+shake, a sudden, suffocating wave of panic washing over you as the sight of her
+trapped in the small, dark space drags up the exact same heavy guilt you've
+carried since you trapped a frightened kitten in a drawer to hide it from your
+mother."* The confession is named, its imagery is replayed, and the parent is
+told what they feel — in one sentence.
+
+**The mechanism is `buildLandmineSection` (`server/src/game/context-assembler.ts:377-397`),
+injected at `prompts.ts:180`.** Four compounding causes:
+
+1. **No rationing.** The section is built unconditionally on every world-manager
+   call. Nothing in `GameState` tracks whether a landmine has already fired, so
+   every scene arrives with the parents' wounds in front of the model. Trauma
+   cannot stand out when it is in the context of all ten scenes.
+2. **The instruction contradicts itself, and the strong half wins.** The section
+   says *"Use them to create situations that hit these specific pressure
+   points"* — an imperative — and then hedges at the end with *"Let these
+   surface naturally. Don't announce them."* The model follows the imperative.
+3. **Verbatim quoting invites echo.** Confessionals are interpolated as
+   `- Parent 1 confessed: "<text>"`. Handing the model the exact wording makes
+   paraphrasing it back into the scene the path of least resistance — hence the
+   kitten in the drawer appearing in the prose.
+4. **The landmine path doesn't inherit the prompt's own craft rules.** The same
+   file already gets this right for background figures: *"Don't explain the
+   dynamic… Never name the trope — show the behavior and let the player
+   recognize it"* (`prompts.ts:165`), and the CRITICAL paragraph asks for the
+   child's visible behavior *"not just the parent's internal experience"*
+   (`prompts.ts:190`). Those rules are exactly what the landmine section
+   violates. The craft standard already exists; it just isn't applied here.
+
+**Suggested direction:**
+
+- **Ration it.** Track fired landmines in `GameState` so each surfaces at most
+  once or twice in a playthrough, with a cooldown between. Rarity is what makes
+  it land — this is the whole of "your trauma should stand out."
+- **Invert the instruction.** Lead with the prohibition, not the imperative:
+  present a *situation*, never the history. The resonance must be the player's
+  to notice, not the narrator's to point out.
+- **Ban the echo explicitly.** Building a situation that rhymes with the
+  confession is the point; reusing its *imagery or specifics* is the failure.
+  The prompt should say so — the confessed memory itself must never appear in
+  the scene text.
+- **No parent-interior narration.** Scene descriptions should stay external and
+  observable: the closet, the child's face, the neighbor's casserole. The
+  breath catching and the hands shaking are the player's to supply. This is the
+  "show don't tell" ask, and it generalizes beyond landmines.
+
+Queued behind the server pass — the fix spans `context-assembler.ts`,
+`prompts.ts`, and (for rationing state) `types.ts`, all currently owned by
+another agent.
