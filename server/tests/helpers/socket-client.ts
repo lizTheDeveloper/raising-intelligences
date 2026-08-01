@@ -1,5 +1,5 @@
 import { io, type Socket } from "socket.io-client";
-import { SOCKET_EVENTS as E } from "../../src/socket/protocol.js";
+import { SOCKET_EVENTS as E, SOCKET_EVENTS } from "../../src/socket/protocol.js";
 import type { LobbyState, ViewerState } from "../../src/socket/protocol.js";
 
 /**
@@ -106,4 +106,63 @@ export async function connect(baseUrl: string): Promise<TestClient> {
   const client = new TestClient(baseUrl);
   await client.connected();
   return client;
+}
+
+/**
+ * A valid OCEAN answer set, one per parent, for tests that just need the
+ * opening handshake to complete. Values must be integers 1-4 or
+ * SUBMIT_PERSONALITY rejects them.
+ */
+export const OCEAN_P1: [number, number, number, number, number] = [3, 2, 4, 2, 3];
+export const OCEAN_P2: [number, number, number, number, number] = [2, 4, 1, 3, 2];
+
+/**
+ * Complete the opening: both parents ready out of the lobby, then both submit
+ * their personality.
+ *
+ * Since the 2026-07-31 reorder the lobby gate generates nothing — readying only
+ * takes a player into the guardian quiz. Scene 1 is built when the personality
+ * seed lands, so that the world manager sees the seed and both parents instead
+ * of an empty one. Every multiplayer test that wants a playable scene has to go
+ * through the quiz now, which is what this does.
+ *
+ * `submitOnly` skips the READY emits for tests that assert on the ready flags
+ * themselves.
+ */
+export function submitPersonalities(
+  p1: TestClient,
+  p2: TestClient,
+  opts: { ready?: boolean } = {}
+): void {
+  if (opts.ready !== false) {
+    p1.emit(SOCKET_EVENTS.READY, { ready: true });
+    p2.emit(SOCKET_EVENTS.READY, { ready: true });
+  }
+  p1.emit(SOCKET_EVENTS.SUBMIT_PERSONALITY, {
+    ocean: OCEAN_P1,
+    confessional1: "I told my sister her hamster ran away.",
+    confessional2: "I failed a class and forged the report card.",
+  });
+  p2.emit(SOCKET_EVENTS.SUBMIT_PERSONALITY, {
+    ocean: OCEAN_P2,
+    confessional1: "I broke a window and blamed the neighbour's kid.",
+    confessional2: "I never told them I got expelled from chess club.",
+  });
+}
+
+/**
+ * Drive the whole opening and resolve on the STATE that carries scene 1.
+ * Register nothing before calling — the waiter is attached first internally.
+ */
+export function openFirstScene(
+  p1: TestClient,
+  p2: TestClient,
+  opts: { ready?: boolean } = {}
+): Promise<ViewerState> {
+  const scene = p1.waitFor<ViewerState>(
+    SOCKET_EVENTS.STATE,
+    (s) => s.phase === "family_chat" && s.currentEvent != null
+  );
+  submitPersonalities(p1, p2, opts);
+  return scene;
 }

@@ -126,19 +126,62 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   const inMySidebar = sidebarActive !== null && sidebarActive === mySlot;
   const inOtherSidebar = sidebarActive !== null && sidebarActive !== mySlot;
 
-  // Guardian screen: show on the first event intro (eventNumber === 1, event loaded).
-  // Derived from state so reconnects to later phases skip it correctly.
-  const inLobbyView = !state || (state.phase === "event_intro" && state.currentEventNumber === 0);
-  // Not gated on `event_intro`: one ready gate now carries the pair straight
-  // from the lobby into `family_chat`, so requiring that phase would skip the
-  // guardian intro entirely. It's a local, per-player overlay — dismissing it
-  // doesn't touch shared state.
+  /**
+   * Am *I* readied — according to the server.
+   *
+   * See the long note below for why this is derived and never stored. Hoisted
+   * above the view predicates because the opening now keys off it: readying in
+   * the lobby is what takes *this* player into the guardian quiz.
+   */
+  const meReady = mp.players.find((p) => p.slot === mySlot)?.ready ?? false;
+
+  // Before scene 1 exists. The server no longer generates at the lobby gate, so
+  // this state now spans the whole guardian quiz, not just the pre-ready wait.
+  const preGame = !!state && state.phase === "event_intro" && state.currentEventNumber === 0;
+
+  const inLobbyView = !state || (preGame && !meReady);
+
+  /**
+   * The guardian quiz — the OCEAN questions, the confessionals, the portrait
+   * reveal.
+   *
+   * Two windows, and the `currentEvent !== null` condition that used to gate it
+   * is gone from both. That condition was the bug: it held the quiz behind a
+   * finished scene 1, which meant the seed it produces could not possibly have
+   * informed that scene.
+   *
+   * 1. `preGame && meReady` — you have passed the lobby and scene 1 has not been
+   *    built yet. This is the new opening: quiz first, generation after.
+   * 2. `family_chat` at scene 1 with nothing said yet — scene 1 finished
+   *    generating underneath you (or you reloaded straight back into it) and you
+   *    haven't dismissed the screen. `messages.length === 0` is what keeps it
+   *    from reappearing over a scene already in progress.
+   *
+   * Deliberately NOT `event_intro && currentEventNumber === 1`: END_DEBRIEF
+   * leaves the game in exactly that state at every *later* chapter gate, so
+   * matching it would re-open the quiz mid-game.
+   *
+   * Deliberately NOT also conditioned on `!mp.seedReady`. The seed arrives the
+   * instant both parents submit and scene-1 generation starts right behind it,
+   * so window 1 is still open — and closing it there would dump the player onto
+   * a bare "building the next scene…" spinner for the whole call, which is the
+   * exact thing this reorder exists to delete.
+   *
+   * If scene generation fails, the server clears the ready flags and both
+   * clients fall back to the lobby with the error; readying again regenerates
+   * the scene through the ordinary needsFreshScene path (the seed is already
+   * persisted, so the retry is still personality-informed) and this screen
+   * replays over it.
+   *
+   * It's a local, per-player overlay — dismissing it doesn't touch shared state.
+   */
   const showGuardian =
     !guardianDismissed &&
     !!state &&
-    (state.phase === "event_intro" || state.phase === "family_chat") &&
-    state.currentEventNumber === 1 &&
-    state.currentEvent !== null;
+    ((preGame && meReady) ||
+      (state.phase === "family_chat" &&
+        state.currentEventNumber === 1 &&
+        state.messages.length === 0));
 
   /**
    * Am *I* readied — according to the server.
@@ -159,8 +202,9 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
    * so reading from it can't drift by construction. Lobby.tsx has always
    * done exactly this. There is deliberately no optimistic local override:
    * re-introducing one re-introduces the deadlock.
+   *
+   * (Declared above, next to the view predicates that consume it.)
    */
-  const meReady = mp.players.find((p) => p.slot === mySlot)?.ready ?? false;
   const partnerName =
     mp.players.find((p) => p.slot !== mySlot)?.displayName?.trim() || "your partner";
 
@@ -353,7 +397,10 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     );
   }
 
-  // ---- Guardian: personality quiz before the first event ----
+  // ---- Guardian: personality quiz, now genuinely BEFORE the first event ----
+  // `eventReady` is load-bearing here rather than advisory: submitting the
+  // confessionals is what starts scene-1 generation, so the closing beat of this
+  // screen ("I'm ready" / "most people aren't") is the cover for that call.
   if (showGuardian) {
     return (
       <div className="app fade-in">
@@ -365,6 +412,14 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
           onSubmitPersonality={mp.submitPersonality}
           seedReadyProp={mp.seedReady}
         />
+        {/* The quiz is long, typed and confessional — the likeliest moment in
+            the whole game for someone to get up and walk outside. It had no
+            handoff control at all, because GuardianScreen's narrative steps
+            mount a full-screen `.guardian-skip-overlay` (fixed, inset 0,
+            z-index 2) that swallows anything rendered under it. Floated above
+            that overlay, and anchored top-right so it never lands on the
+            bottom-centre "click to skip" hint the overlay exists to serve. */}
+        <div className="handoff-floating">{handoffUi}</div>
       </div>
     );
   }

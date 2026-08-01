@@ -5,7 +5,7 @@ import { InMemoryGameRepository } from "../src/db/repository.js";
 import { InMemoryAdminQueries } from "../src/db/admin-queries.js";
 import { MockLLMClient } from "../src/llm/mock.js";
 import type { LLMRole } from "../src/llm/model-config.js";
-import { TestClient, connect } from "./helpers/socket-client.js";
+import { TestClient, connect, submitPersonalities, openFirstScene } from "./helpers/socket-client.js";
 import { SOCKET_EVENTS as E } from "../src/socket/protocol.js";
 import type { ViewerState } from "../src/socket/protocol.js";
 import type { GameEvent, Message } from "../src/types.js";
@@ -144,9 +144,15 @@ describe("Playtest fixes (server)", () => {
     return landed;
   }
 
-  /** Lobby → family chat with a scenario attached (one gate). */
+  /**
+   * Lobby → guardian quiz → family chat with a scenario attached.
+   *
+   * Still one ready gate. Since the 2026-07-31 opening reorder (item 1) the
+   * gate no longer generates the scene — submitting the personality quiz does,
+   * so the world manager sees the seed and both parents.
+   */
   async function toFamilyChat(p: Pair): Promise<ViewerState> {
-    return advance(p, (s) => s.phase === "family_chat" && s.currentEvent !== null);
+    return openFirstScene(p.p1, p.p2);
   }
 
   async function say(from: TestClient, content: string, observer: TestClient): Promise<void> {
@@ -278,8 +284,7 @@ describe("Playtest fixes (server)", () => {
 
       const generatingState = p.p2.waitFor<ViewerState>(E.STATE, (s) => s.generating === true);
       const chatting = p.p1.waitFor<ViewerState>(E.STATE, (s) => s.phase === "family_chat");
-      p.p1.emit(E.READY, { ready: true });
-      p.p2.emit(E.READY, { ready: true });
+      submitPersonalities(p.p1, p.p2);
 
       // While generating, STATE itself says so — and no scene is being shown.
       const mid = await generatingState;
@@ -297,8 +302,7 @@ describe("Playtest fixes (server)", () => {
       mock.hold();
 
       const started = p.p2.waitFor<ViewerState>(E.STATE, (s) => s.generating === true);
-      p.p1.emit(E.READY, { ready: true });
-      p.p2.emit(E.READY, { ready: true });
+      submitPersonalities(p.p1, p.p2);
       await started;
 
       // Token reconnect emits STATE and no GENERATING event — before the flag
