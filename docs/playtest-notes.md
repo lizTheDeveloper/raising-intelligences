@@ -48,13 +48,26 @@ server clears its own flags via `resetReady` on *every* successful advance
 (`handlers.ts:363`), but the client only clears `gateReady` when
 `currentEventNumber` changes (`MultiplayerGame.tsx:132-139`).
 
-So on any advance where the event number does *not* change — notably
-`debrief` → `consult`/`therapy`/`cps_review` (the Dark Play ladder), which
-reroutes instead of incrementing — `gateReady` stays `true` while the server has
-already reset to `false`. The UI shows "you're ready / not yet"; the first click
-("not yet") only re-syncs local state and emits a no-op `ready(false)`; the
-second click is the one the server actually registers. That is exactly the
-observed double-click.
+So on any advance where the event number does *not* change, `gateReady` stays
+`true` while the server has already reset to `false`. The UI shows "you're ready
+/ not yet"; the first click ("not yet") only re-syncs local state and emits a
+no-op `ready(false)`; the second click is the one the server actually registers.
+
+**This fires on every chapter, not just edge cases.** `currentEventNumber` is
+incremented only by `LOAD_EVENT` and `START_EVENT` (`state-machine.ts:171,187`).
+`END_DEBRIEF` (`state-machine.ts:270`) changes the phase to `event_intro` and
+sets `currentEvent: null` but does **not** touch `currentEventNumber` — the
+increment doesn't happen until the *next* ready fires `loadEvent()`. So the
+normal per-chapter sequence is:
+
+1. debrief — player clicks "next chapter", `gateReady = true`
+2. both ready → server `resetReady()` (server ready = `false`) → `END_DEBRIEF`
+3. client lands on `event_intro`; `currentEventNumber` unchanged, so the reset
+   effect never runs and `gateReady` is still `true`
+4. player sees "you're ready / not yet" on a gate they have not actually passed
+
+The Dark Play ladder reroutes (`debrief` → `consult`/`therapy`/`cps_review`) hit
+the same drift via `ladderReady`, but they are an additional case, not the cause.
 
 `Lobby.tsx` gets this right and `MultiplayerGame.tsx` does not:
 
