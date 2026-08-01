@@ -1,22 +1,14 @@
-# SDD Progress Ledger — Dark Play Plan 3 (intervention ladder)
+# SDD Progress Ledger — Dark Play Plan 4 (escalation detection, FLAG-ONLY)
 
-Plan: docs/superpowers/plans/2026-07-30-dark-play-plan3-intervention-ladder.md
-Branch: feat/dark-play-plan3  (base: fa5c2b4)
-Started: 2026-07-30
-Execution: subagent-driven (implementer + task review per task; interactive Rung-2 therapy per Liz).
+Plan: docs/superpowers/plans/2026-07-30-dark-play-plan4-escalation-detection.md
+Branch: feat/dark-play-plan4  (base: a136dd9)
+Started: 2026-07-31
+Liz decision: FLAG-FOR-REVIEW-ONLY (no auto-ban). Task 4 auto-ban wiring DROPPED.
+Execution: single implementer for the cohesive server-only plan + focused review of isEscalation/getIpPlayProfile + no-banIp before deploy.
 
 ## Tasks
-- [x] Task 1: (2db78c0, 10 tests) — flag: Task 4 must strip highestRungFired/cpsOutcome from /state phases + rung state + selector + persistence (migration 016)
-- [x] Task 1 review: clean (18/18/18 persistence aligned, guard widened)
-- [x] Task 2: LLM roles + prompts + context builders
-- [x] Task 3: engine methods (consult, openTherapy/therapistReply, CPS, removal epilogue)
-- [x] Task 4: (febcf50 + fix 317bb4a, 251 tests) — review clean; Important finding (therapy moderation-gate bypass) FIXED + Test D server wiring — debrief routing + advance/therapy-message endpoints (both transports)
-- [x] Task 5: (32b40e0, client build clean; fixed entry-path text fetch + handleDebrief guard) — client review deferred to combine with Task 6 solo client screens + interactive therapy wiring
-- [x] Task 6: (bdeadf8, client build clean; ladderReady flag; mp therapy reply via STATE broadcast) multiplayer client screens + interactive therapy wiring
-- [x] Task 7: verification — safety grep clean (removal no ban, therapy moderated), 251 server tests, tsc 0, both client builds clean; whole-branch review running e2e verification pass
-
-Task 1: complete (2db78c0, review clean — no issues, all 7 items verified)
-Task 2: complete (a9696b7, review: self-check clean — roles map to psychologist model in all 3 tiers, therapy builder both-mode, CPS pulls full evidence)
-Task 3: complete (e55b7ca, 6 new tests in intervention-engine.test.ts, full suite 33 files/247 tests green, tsc -b server clean) — CPS outcome validated defensively (malformed → safety_plan, never removal); generateRemovalEpilogue test starts from realistic cps_review/removal state per Task-1 guard-widening regression concern
-Task 3: complete (e55b7ca, review clean — CPS never-removal-on-junk verified, threading+order correct, removal guard test genuine; 2 minor coverage notes for final review)
-Task 7 + final review: complete. Whole-branch review PASS on all 7 integration items; 1 Important (DOC_DONE leak) FIXED; minor notes kept for v1. Ready to merge.
+- [x] T1: record IP on games (migration 017) — `repo.recordGameIp`, called at both creation sites (routes/game.ts POST /game, socket/handlers.ts CREATE_GAME) right after saveGame.
+- [x] T2: getIpPlayProfile + isEscalation ratio predicate — `server/src/safety/escalation.ts`; predicate requires `ordinaryGames === 0 && darkGames === totalGames && totalGames >= ESCALATION_MIN_GAMES`. Exhaustive unit tests + in-memory repo integration tests in `tests/escalation.test.ts`.
+- [x] T3: evaluate on scene-end + escalation_flags record (FLAG ONLY, no ban) — migration 018, `evaluateEscalation` wired into both scene-end seams (routes/game.ts /end-chat, socket/handlers.ts endChat) only on Tier A "concern", after recordConcern, `.catch`-wrapped. Dedup via `hasEscalationFlagForIp`.
+- [x] T4 (verification only — auto-ban wiring correctly NOT implemented per Liz's flag-only decision): `npx tsc -b server` exit 0; `npm run test -w server` 35 files / 267 tests green; grepped full diff — no `banIp`/`applyModerationBlock` call added anywhere for escalation. Deploy step left to the standard merge → deploy.sh flow, not run from this session.
+Plan 4: complete (flag-only). 267 tests (16 new incl. exoneration case), tsc 0. isEscalation requires ordinaryGames===0 denominator (verified). NO banIp added (grep-verified). Wired fire-and-forget on concern scene-ends.

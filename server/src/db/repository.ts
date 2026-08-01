@@ -11,6 +11,7 @@ import type {
 } from "../types.js";
 import { pool } from "./pool.js";
 import type pg from "pg";
+import { ESCALATION_DARK_CONCERN } from "../safety/escalation.js";
 
 export interface IdentitySnapshot {
   eventNumber: number;
@@ -99,6 +100,31 @@ export interface GameRepository {
   /** Tier A "concern" events — dark-but-in-fiction parenting; never bans. See safety/moderation.ts. */
   saveConcernEvent(event: { gameId: string; sender: Sender; reason: string; ipAddress: string | null }): Promise<void>;
   loadConcernEvents(gameId: string): Promise<Array<{ sender: string; reason: string; createdAt: number }>>;
+
+  // Dark Play Plan 4 — escalation detection (flag-for-review only, never bans).
+  /**
+   * Records the creating IP on a game — the denominator prerequisite for the
+   * escalation ratio (see safety/escalation.ts). Not surfaced on GameState;
+   * written directly to the `games.ip_address` column.
+   */
+  recordGameIp(gameId: string, ipAddress: string | null): Promise<void>;
+  /**
+   * The IP's cross-game play profile: how many games total, how many were
+   * dark, how many showed ordinary range. THE safety-critical query — see
+   * safety/escalation.ts `isEscalation` for why `ordinaryGames` must never
+   * be dropped from the resulting predicate.
+   */
+  getIpPlayProfile(ipAddress: string): Promise<{ totalGames: number; darkGames: number; ordinaryGames: number }>;
+  /** Persists a reviewable escalation flag. Never a ban — see safety/escalation.ts. */
+  saveEscalationFlag(record: {
+    ipAddress: string;
+    gameId: string;
+    totalGames: number;
+    darkGames: number;
+    ordinaryGames: number;
+  }): Promise<void>;
+  /** Whether this IP already has an escalation flag on file — evaluateEscalation records once per IP. */
+  hasEscalationFlagForIp(ipAddress: string): Promise<boolean>;
 }
 
 const DEFAULT_TOTAL_EVENTS = 10;
@@ -651,6 +677,69 @@ export class PgGameRepository implements GameRepository {
     );
     return r.rows.map((row) => ({ sender: row.sender, reason: row.reason, createdAt: new Date(row.created_at).getTime() }));
   }
+
+  async recordGameIp(gameId: string, ipAddress: string | null): Promise<void> {
+    await this.db.query(`UPDATE games SET ip_address = $2 WHERE id = $1`, [gameId, ipAddress]);
+  }
+
+  async getIpPlayProfile(ipAddress: string): Promise<{ totalGames: number; darkGames: number; ordinaryGames: number }> {
+    // darkGames: the game got genuinely dark — highest rung of the
+    // intervention ladder fired, or net concern reached ESCALATION_DARK_CONCERN.
+    // ordinaryGames: the game showed range — EITHER it reached a normal
+    // ending (not a CPS removal) OR it ran along with low concern, no rung
+    // fired, and progressed past the first couple of events (so a game that
+    // never even got going isn't mistaken for "ordinary").
+    // These two predicates are NOT required to be mutually exclusive or
+    // exhaustive over all games — a game can be neither dark nor ordinary
+    // (e.g. abandoned at event 1) — that's fine: isEscalation requires
+    // darkGames === totalGames, so any such game already breaks escalation.
+    const res = await this.db.query<{ total_games: string; dark_games: string; ordinary_games: string }>(
+      `SELECT
+         COUNT(*)::text AS total_games,
+         COUNT(*) FILTER (
+           WHERE highest_rung_fired > 0 OR concern_level >= $2
+         )::text AS dark_games,
+         COUNT(*) FILTER (
+           WHERE (
+             phase IN ('epilogue', 'ended', 'report_card', 'adult_chat')
+             AND cps_outcome IS DISTINCT FROM 'removal'
+           )
+           OR (
+             concern_level < $2
+             AND highest_rung_fired = 0
+             AND current_event_number >= 2
+           )
+         )::text AS ordinary_games
+       FROM games
+       WHERE ip_address = $1`,
+      [ipAddress, ESCALATION_DARK_CONCERN]
+    );
+    const row = res.rows[0];
+    return {
+      totalGames: parseInt(row?.total_games ?? "0", 10),
+      darkGames: parseInt(row?.dark_games ?? "0", 10),
+      ordinaryGames: parseInt(row?.ordinary_games ?? "0", 10),
+    };
+  }
+
+  async saveEscalationFlag(record: {
+    ipAddress: string;
+    gameId: string;
+    totalGames: number;
+    darkGames: number;
+    ordinaryGames: number;
+  }): Promise<void> {
+    await this.db.query(
+      `INSERT INTO escalation_flags (ip_address, game_id, total_games, dark_games, ordinary_games)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [record.ipAddress, record.gameId, record.totalGames, record.darkGames, record.ordinaryGames]
+    );
+  }
+
+  async hasEscalationFlagForIp(ipAddress: string): Promise<boolean> {
+    const res = await this.db.query("SELECT 1 FROM escalation_flags WHERE ip_address = $1 LIMIT 1", [ipAddress]);
+    return res.rows.length > 0;
+  }
 }
 
 /**
@@ -693,6 +782,18 @@ export class InMemoryGameRepository implements GameRepository {
   private moderationFlags: Array<{ gameId: string; sender: Sender; content: string; reason: string; ipAddress: string | null }> = [];
   private bannedIps = new Set<string>();
   private concernEvents: Array<{ gameId: string; sender: Sender; reason: string; ipAddress: string | null; createdAt: number }> = [];
+  // Dark Play Plan 4 — kept as a side map (not merged into the `games` row)
+  // because saveGame replaces that row wholesale on every checkpoint and
+  // ip_address is deliberately NOT part of GameState (see recordGameIp).
+  private gameIpAddresses = new Map<string, string | null>();
+  private escalationFlags: Array<{
+    ipAddress: string;
+    gameId: string;
+    totalGames: number;
+    darkGames: number;
+    ordinaryGames: number;
+    createdAt: number;
+  }> = [];
 
   async saveGame(state: GameState): Promise<void> {
     this.games.set(state.id, {
@@ -986,5 +1087,57 @@ export class InMemoryGameRepository implements GameRepository {
     return this.concernEvents
       .filter((e) => e.gameId === gameId)
       .map((e) => ({ sender: e.sender, reason: e.reason, createdAt: e.createdAt }));
+  }
+
+  async recordGameIp(gameId: string, ipAddress: string | null): Promise<void> {
+    this.gameIpAddresses.set(gameId, ipAddress);
+  }
+
+  async getIpPlayProfile(ipAddress: string): Promise<{ totalGames: number; darkGames: number; ordinaryGames: number }> {
+    let totalGames = 0;
+    let darkGames = 0;
+    let ordinaryGames = 0;
+    for (const [gameId, game] of this.games) {
+      if (this.gameIpAddresses.get(gameId) !== ipAddress) continue;
+      totalGames++;
+
+      const isDark = game.highestRungFired > 0 || game.concernLevel >= ESCALATION_DARK_CONCERN;
+      if (isDark) darkGames++;
+
+      const reachedNormalEnding =
+        (["epilogue", "ended", "report_card", "adult_chat"] as GamePhase[]).includes(game.phase) &&
+        game.cpsOutcome !== "removal";
+      const lowConcernWithProgress =
+        game.concernLevel < ESCALATION_DARK_CONCERN &&
+        game.highestRungFired === 0 &&
+        game.currentEventNumber >= 2;
+      if (reachedNormalEnding || lowConcernWithProgress) ordinaryGames++;
+    }
+    return { totalGames, darkGames, ordinaryGames };
+  }
+
+  async saveEscalationFlag(record: {
+    ipAddress: string;
+    gameId: string;
+    totalGames: number;
+    darkGames: number;
+    ordinaryGames: number;
+  }): Promise<void> {
+    this.escalationFlags.push({ ...record, createdAt: Date.now() });
+  }
+
+  async hasEscalationFlagForIp(ipAddress: string): Promise<boolean> {
+    return this.escalationFlags.some((f) => f.ipAddress === ipAddress);
+  }
+
+  /** Test-only accessor — inspect persisted escalation flags without a DB. */
+  getEscalationFlags(): Array<{
+    ipAddress: string;
+    gameId: string;
+    totalGames: number;
+    darkGames: number;
+    ordinaryGames: number;
+  }> {
+    return this.escalationFlags.map(({ createdAt: _createdAt, ...rest }) => rest);
   }
 }
