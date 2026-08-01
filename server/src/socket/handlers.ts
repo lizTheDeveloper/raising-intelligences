@@ -189,6 +189,7 @@ function sceneAlreadyPlayed(state: GameState): boolean {
 
 function viewerState(state: GameState, slot: Sender, generating: boolean): ViewerState {
   const messages = state.messages.filter((m) => m.visibleTo.includes(slot));
+  const otherSlot = slot === "parent1" ? "parent2" : "parent1";
   return {
     id: state.id,
     phase: state.phase,
@@ -206,6 +207,7 @@ function viewerState(state: GameState, slot: Sender, generating: boolean): Viewe
     interventionText: state.interventionText,
     therapyMessages: state.therapyMessages,
     generating,
+    partnerPersonalitySubmitted: !!state.parentPersonalities[otherSlot],
   };
 }
 
@@ -452,7 +454,42 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     const emitChunk = (chunk: string) => {
       io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
     };
-    const { state: next, sceneSafety } = await conversationEngine.endFamilyChat(state, emitChunk);
+
+    /**
+     * Put the `processing` phase on the wire BEFORE the psychologist call, not
+     * after it.
+     *
+     * `endFamilyChat` runs END_FAMILY_CHAT (→ processing) and IDENTITY_UPDATED
+     * (→ debrief) internally and returns only once both are done, so without
+     * this every client jumped `family_chat` → `debrief` and `ProcessingScreen`
+     * — whose fragments exist precisely to cover this call — never rendered.
+     * Live that read as "walk away" doing nothing for ~60 seconds: same screen,
+     * same transcript, button still live. The prefetch above widened the hole
+     * by moving more waiting here.
+     *
+     * In-memory only, deliberately: no `repo.saveGame`. `processing` is a
+     * transient the game must never be *rehydrated* into — a crash between here
+     * and IDENTITY_UPDATED has to come back as `family_chat` so the END_CHAT
+     * recovery path (see the message-cap branch) can re-run this whole
+     * function. Persisting it would strand the game in a phase nothing can
+     * advance. Reconnects inside this process read the live `games` map and so
+     * still see `processing`.
+     *
+     * Free side effect worth naming: with the map holding `processing`, this
+     * function's own `phase !== "family_chat"` guard makes a duplicate END_CHAT
+     * a no-op for the whole duration of the call, instead of only for the
+     * instant before it.
+     */
+    const onProcessing = (processingState: GameState) => {
+      games.set(gameId, processingState);
+      broadcastState(gameId);
+    };
+
+    const { state: next, sceneSafety } = await conversationEngine.endFamilyChat(
+      state,
+      emitChunk,
+      onProcessing
+    );
     const snap = next.identitySnapshots[next.identitySnapshots.length - 1];
     if (snap) await repo.saveSnapshot(next.id, snap);
 
@@ -1348,6 +1385,11 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
         // Broadcast that this slot has submitted
         io.to(gameId).emit(E.PERSONALITY_SUBMITTED, { slot });
+        // …and again on STATE, where it survives a reconnect. The waiting step
+        // of the guardian screen reads it to say which of the two waits it is
+        // actually in — "still waiting on your co-parent" is not the same thing
+        // as "the seed is generating", and only one of them is ever true.
+        broadcastState(gameId);
 
         // Determine readiness: solo needs only parent1; multiplayer needs both
         const isSolo =

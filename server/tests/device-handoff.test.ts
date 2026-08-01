@@ -267,13 +267,19 @@ describe("device handoff", () => {
 
     const code = await mint(p.p2);
     const phone = await client();
+    // Redemption itself answers with the current state, so the new device opens
+    // on where the game actually is rather than an empty screen.
+    //
+    // Awaited rather than sampled. JOINED and STATE are two separate emits, and
+    // reading `phone.lastState` the instant the JOINED promise settles asserts
+    // on whether the second one had been dispatched yet — which is timing, not
+    // behaviour. It failed exactly once, on a cold first run. Same property,
+    // no race: if the redemption path stops answering with STATE this times out.
+    const stateOnPhone = phone.waitFor<ViewerState>(E.STATE);
     const joinedPhone = phone.once(E.JOINED);
     phone.emit(E.JOIN_GAME, { gameId: p.gameId, handoffCode: code });
     await joinedPhone;
-
-    // Redemption itself answers with the current state, so the new device opens
-    // on where the game actually is rather than an empty screen.
-    expect(phone.lastState).toBeDefined();
+    await stateOnPhone;
 
     // Scene 1 is now built by startFirstScene, off the back of the personality
     // seed, and announced with its own broadcastState. That broadcast addresses

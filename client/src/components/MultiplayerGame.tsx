@@ -411,6 +411,8 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
           onReady={() => setGuardianDismissed(true)}
           onSubmitPersonality={mp.submitPersonality}
           seedReadyProp={mp.seedReady}
+          partnerSubmitted={state.partnerPersonalitySubmitted}
+          partnerName={partnerName}
         />
         {/* The quiz is long, typed and confessional — the likeliest moment in
             the whole game for someone to get up and walk outside. It had no
@@ -552,7 +554,19 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   if (state.phase === "processing") {
     return (
       <div className="app">
-        <ProcessingScreen childName={state.childName} age={state.currentEvent?.age} gameId={mp.gameId} streamingText={mp.streamingDocText} />
+        {/* No `streamingText`. The only thing streaming during `processing` is
+            the psychologist's identity document, and `ProcessingScreen` renders
+            `streamingText` INSTEAD of its fragments — so passing it would put
+            raw internal analysis of the child on screen in place of the writing
+            that exists to cover this wait.
+
+            Solo already decided this ("Psychologist output is internal —
+            fragments show on processing screen instead", useGame.endChat, which
+            is why it never populates streamingDocText during end-chat).
+            Multiplayer diverged silently and nobody could tell, because this
+            screen never rendered here at all until the `processing` phase
+            started being broadcast. It renders now; it has to match. */}
+        <ProcessingScreen childName={state.childName} age={state.currentEvent?.age} gameId={mp.gameId} />
         {handoffUi}
       </div>
     );
@@ -785,9 +799,18 @@ function HandoffControl({
           </div>
         </>
       ) : (
-        <p className="dim handoff-hint" role="status" aria-live="polite">
-          making you a link…
-        </p>
+        // Never a spinner on its own. The hook re-requests automatically when
+        // the socket rejoins (that reconnect is what nulled the link in the
+        // first place), but if the re-request is itself lost this is the way
+        // out — the alternative is a live-looking panel that can never resolve.
+        <div className="handoff-pending">
+          <p className="dim handoff-hint" role="status" aria-live="polite">
+            making you a link…
+          </p>
+          <button className="btn-plain handoff-retry" onClick={onRequest}>
+            try again
+          </button>
+        </div>
       )}
       <button className="btn-plain handoff-close" onClick={close}>
         done

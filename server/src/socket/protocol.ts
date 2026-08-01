@@ -106,6 +106,23 @@ export interface ViewerState {
    * scene…" forever over a perfectly correct scene. See playtest note 7.
    */
   generating: boolean;
+  /**
+   * Has the OTHER parent finished the guardian quiz?
+   *
+   * Slot-specific, like the rest of this payload, and derived from
+   * `parentPersonalities` on every viewerState() call — so it is correct on
+   * reconnect and on a fresh join, neither of which replays the one-shot
+   * PERSONALITY_SUBMITTED event. Same reasoning as `generating`: anything the
+   * server owns rides on STATE rather than living as client-local state that
+   * quietly drifts (see playtest note 7).
+   *
+   * It exists so the guardian screen's waiting step can name the wait it is
+   * actually covering. Between submitting your own answers and the co-parent
+   * submitting theirs, nothing is being generated at all — the seed call has
+   * not started, and saying otherwise is the one progress message in the
+   * opening that isn't true.
+   */
+  partnerPersonalitySubmitted: boolean;
 }
 
 /** Server → room co-presence broadcast, emitted to the *other* player only. */

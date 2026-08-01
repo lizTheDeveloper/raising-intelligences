@@ -64,9 +64,23 @@ export function Lobby({ gameId, slot, players, childName, error, generating, onR
       {error && <p className="error">{error}</p>}
 
       {generating ? (
-        // Both players have readied and the server cleared the ready flags to
-        // keep generation single-flight. Without this the reset looks like the
-        // click was undone, which is what stalled real games.
+        // Reachable on ONE path, and the wording is literal there rather than a
+        // stand-in for "something is happening".
+        //
+        // Since the opening reorder, the lobby gate generates nothing: readying
+        // takes you to the guardian quiz, and scene 1 is built when the
+        // personality seed lands — at which point your ready flag is still set,
+        // so you are on the guardian screen, not here. (That screen names its
+        // own waits; see GuardianScreen's waiting step.) What DOES land here is
+        // the retry after a failed first scene: the server clears the ready
+        // flags, both clients fall back to the lobby with the error, and
+        // readying again runs the ordinary needsFreshScene path with the ready
+        // flags cleared up front — lobby view, generating true, and the server
+        // genuinely building scene 1.
+        //
+        // So: do not repurpose this line to describe waiting for a co-parent.
+        // In the only state that renders it, the co-parent is not what you are
+        // waiting for.
         <p className="dim" role="status" aria-live="polite">
           building your first scene…
         </p>

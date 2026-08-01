@@ -201,6 +201,16 @@ interface ViewerState {
    * hint; the STATE listener only honours it when it is actually a boolean.
    */
   generating?: boolean;
+  /**
+   * Whether the *other* parent has finished the guardian quiz.
+   *
+   * Server-owned and carried on every STATE, for the same reason `generating`
+   * is: the one-shot PERSONALITY_SUBMITTED event is not replayed on reconnect,
+   * so a client that reconnected mid-quiz would otherwise describe the wrong
+   * wait. Optional so a server that predates the field reads as `undefined`
+   * rather than a confident `false`.
+   */
+  partnerPersonalitySubmitted?: boolean;
 }
 
 export function useMultiplayer() {
@@ -260,6 +270,24 @@ export function useMultiplayer() {
   const gameIdRef = useRef<string | null>(null);
   const partnerTypingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const phaseRef = useRef<string | null>(null);
+  /**
+   * "The handoff panel is open and still wants a link."
+   *
+   * Set when a link is asked for, cleared when the panel closes — so it tracks
+   * the panel's own open/closed state, which the listeners below cannot read.
+   *
+   * It exists because JOINED nulls `handoff` (correct: a reconnect makes the
+   * old code dead) and nothing re-requested one, so a panel that was open
+   * across a socket reconnect fell back to "making you a link…" and stayed
+   * there forever — a spinner with nothing behind it, on a game that was
+   * otherwise perfectly healthy. Reproduced live.
+   *
+   * Deliberately a ref and deliberately keyed on JOINED rather than on
+   * `handoff === null`: `requestHandoff` itself nulls `handoff` before emitting,
+   * so any effect that re-requested on nullness would drive itself in a loop.
+   * JOINED is never a consequence of REQUEST_HANDOFF, so this cannot recur.
+   */
+  const handoffWantedRef = useRef(false);
 
   const clearPartnerTyping = useCallback(() => {
     if (partnerTypingTimer.current) {
@@ -322,6 +350,10 @@ export function useMultiplayer() {
       supersededRef.current = false;
       setSuperseded(false);
       setHandoff(null);
+      // …and if the panel is open, mint a replacement for the one we just
+      // threw away. Without this the panel sat on "making you a link…"
+      // indefinitely after a reconnect (a 502 is enough to trigger it).
+      if (handoffWantedRef.current) socket.emit(E.REQUEST_HANDOFF);
       track("player_joined", { game_id: d.gameId });
       if (d.playerToken) {
         playerTokenRef.current = d.playerToken;
@@ -420,10 +452,21 @@ export function useMultiplayer() {
       supersededRef.current = true;
       setSuperseded(true);
       // A link minted here would hand over a slot this device no longer drives.
+      // So drop the standing request too, rather than re-minting: this is the
+      // one path where an unresolved panel is the correct outcome, and the
+      // superseded screen replaces the whole view anyway.
+      handoffWantedRef.current = false;
       setHandoff(null);
       clearPartnerTyping();
     });
-    socket.on(E.ERROR, (d: { error: string }) => setError(d.error));
+    socket.on(E.ERROR, (d: { error: string }) => {
+      setError(d.error);
+      // An end-chat that failed leaves the phase at family_chat, so no STATE
+      // will ever arrive to clear `sceneEnding` — the input would stay disabled
+      // and "walk away" would stay hidden, permanently, on a screen that is
+      // otherwise fine. Giving the control back is the only honest answer.
+      setSceneEnding(false);
+    });
     socketRef.current = socket;
     return socket;
   }, [clearPartnerTyping]);
@@ -456,8 +499,10 @@ export function useMultiplayer() {
     socketRef.current?.emit(E.READY, { ready: value });
   }, []);
 
-  /** Ask the server for a fresh "continue on another device" link. */
+  /** Ask the server for a fresh "continue on another device" link. Also the
+   * panel's "try again" — a re-emit is exactly what a retry is. */
   const requestHandoff = useCallback(() => {
+    handoffWantedRef.current = true;
     setHandoff(null);
     socketRef.current?.emit(E.REQUEST_HANDOFF);
   }, []);
@@ -465,7 +510,10 @@ export function useMultiplayer() {
   /** Drop the displayed link without redeeming it. The code stays live until it
    * expires or is used — the server has no revoke, and adding one would mean a
    * second code-shaped message on the wire for no real gain. */
-  const dismissHandoff = useCallback(() => setHandoff(null), []);
+  const dismissHandoff = useCallback(() => {
+    handoffWantedRef.current = false;
+    setHandoff(null);
+  }, []);
 
   /**
    * Redeem a handoff code from a link. Routed through a ref + the connect
@@ -562,6 +610,25 @@ export function useMultiplayer() {
   const endSidebar = useCallback(() => socketRef.current?.emit(E.END_SIDEBAR), []);
   const endChat = useCallback(() => {
     setStreamingDocText("");
+    // Make the press visible immediately. The server's first answer is a STATE
+    // carrying `processing`, and that is fast now — but "walk away" still owns
+    // the round trip, and a control that looks unpressed for even a moment on a
+    // screen that hasn't otherwise changed invites a second click. This is the
+    // same flag the server-driven SCENE_ENDED sets, so it reuses the behaviour
+    // already written for it: input disabled, the button gone, "the moment
+    // passes...". Cleared by the next STATE that isn't family_chat/sidebar —
+    // and by E.ERROR, so a failed end-chat gives the button back rather than
+    // leaving a dead screen.
+    //
+    // Set ONLY in the phases whose exit is what clears it. The same button
+    // renders as "finish → report card" during `adult_chat`, where the server's
+    // endChat returns on its `phase !== "family_chat"` guard without an error
+    // and without a broadcast (a pre-existing no-op, untouched here) — setting
+    // the flag there would hide the control forever instead of merely failing
+    // to advance.
+    if (phaseRef.current === "family_chat" || phaseRef.current === "sidebar") {
+      setSceneEnding(true);
+    }
     socketRef.current?.emit(E.END_CHAT);
   }, []);
   const startEpilogue = useCallback(() => {
@@ -588,6 +655,7 @@ export function useMultiplayer() {
     setSlot(null);
     slotRef.current = null;
     setHandoff(null);
+    handoffWantedRef.current = false;
     setSuperseded(false);
     supersededRef.current = false;
     pendingHandoffRef.current = null;

@@ -161,12 +161,23 @@ export class ConversationEngine {
    * The caller (REST route / socket handler) is responsible for acting on
    * `sceneSafety.tier` — this method only classifies, it doesn't have
    * access to repo/IP-ban side effects.
+   *
+   * `onProcessing` is the *only* way a caller can observe the intermediate
+   * `processing` phase. END_FAMILY_CHAT and IDENTITY_UPDATED both happen inside
+   * this method, with the whole psychologist/identity-document call between
+   * them, so a caller that only sees the return value goes straight from
+   * `family_chat` to `debrief` — which is exactly what left "walk away"
+   * visually dead for the ~60s of that call, with `ProcessingScreen` (written
+   * to cover it) never rendering on any client. Fired synchronously, before the
+   * first await, so the phase is on the wire before the latency starts.
    */
   async endFamilyChat(
     state: GameState,
-    onChunk?: (chunk: string) => void
+    onChunk?: (chunk: string) => void,
+    onProcessing?: (state: GameState) => void
   ): Promise<{ state: GameState; sceneSafety: SceneSafetyResult; trajectory: TrajectoryResult }> {
     let next = transition(state, { type: "END_FAMILY_CHAT" });
+    onProcessing?.(next);
     const psychCtx = buildPsychologistContext(next);
     const memCtx = buildMemorySummarizerContext(next);
 
