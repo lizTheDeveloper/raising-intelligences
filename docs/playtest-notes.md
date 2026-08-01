@@ -7,6 +7,33 @@ implemented.
 
 ---
 
+## Design principle — pacing is latency cover, never intent
+
+Stated by Liz, 2026-07-31: *"All the narrative pacing was 100% to cover up scene
+generation and was never supposed to take long on purpose."*
+
+This governs every timed beat in the game. Consequences:
+
+- **No fixed timers.** A `setTimeout` that outlasts the generation it covers is
+  pure waste; one that finishes early leaves the player staring at a spinner.
+  Timed beats should be driven by generation completion, not wall-clock —
+  advance as soon as the underlying work lands, with the written beat as the
+  floor rather than the schedule.
+- **Where latency is removed, the cover goes with it.** Do not preserve a beat
+  for its own sake once the thing it was hiding is gone.
+- **Where latency is unavoidable, cover it with real content** rather than a
+  progress message. This is the argument for the item-1 reorder and against
+  "building the next scene…" as a screen.
+- Skippability is therefore always correct for these beats — they were never
+  meant to be dwelt on.
+
+Applies to: the `GuardianScreen` narrative steps (covering the personality-seed
+and portrait calls), the `ProcessingScreen` fragments (covering the psychologist
+/ identity-document pass), and the `event_intro` "building the next scene…"
+state.
+
+---
+
 ## 2026-07-31 — partner play (Liz, 2-player)
 
 ### 1. Too many "ready up" gates
@@ -107,6 +134,12 @@ overlay deliberately not mounted on `quiz`, `confessional`, or `waiting` steps s
 a stray click can never answer a question or jump the co-parent handshake. No
 prose was removed. Required content clicks are unchanged at 6.
 
+**Still to do here, per the pacing principle above:** those 14.9s of fixed
+timers were cover for the personality-seed and portrait calls
+(`canBegin = effectiveSeedReady && portraitRevealed`). They should not be fixed
+timers at all — they should advance on generation completion. Skippable is a
+patch; generation-driven is the fix. Fold this into the reorder work below.
+
 ### 2. "Not yet" / "ready" must be clicked twice — and it can deadlock the game
 
 > "I keep having to click 'not yet' and 'ready' twice."
@@ -206,9 +239,10 @@ or the report card assumes the document has fully landed by the time `debrief`
 is entered, decoupling needs a guard. `ProcessingScreen` and the `DOC_DONE`
 handling at `handlers.ts:420` are the places to check.
 
-**Note:** the `ProcessingScreen` fragment lines are good writing and shouldn't be
-thrown away with the wait — worth considering whether they move into the debrief
-beat rather than disappearing.
+**Note (CORRECTED):** I originally wrote that the `ProcessingScreen` fragment
+lines are good writing that shouldn't be thrown away with the wait. That has the
+relationship backwards — see the design principle below. They exist *to cover
+the wait*. If the wait goes, they go.
 
 ### 4. Previous scene's conversation persists under the new scene
 
