@@ -376,20 +376,51 @@ two-round ready gate, but it is plainly reachable in normal play. Note 7's
 screenshot is corroborating evidence: `event_intro` rendering a live scene
 description means `currentEvent` really is non-null at `event_intro` in the wild.
 
-**Open question handed to implementation:** how does a game *reach*
-`event_intro` with a non-null `currentEvent`? In the in-memory `games` map the
-happy path goes straight from `event_intro`/null to `family_chat`/scene inside
-one lock and never rests in between. Leading hypothesis is **rehydration**:
-`repo.saveEvent(...)` is awaited *before* `repo.saveGame(next)`
-(`handlers.ts:380-383`), leaving a window where the events table has the new
-event but the games row still reads `event_intro`. If the loader reconstructs
-`currentEvent` from the events table on JOIN/reconnect or after a restart, a
-rehydrated game lands in exactly this state. That would explain both this item
-and note 7.
+**REVISED — the recovery branch may be a red herring.** The designer clarified
+they were **mid-session**: no reconnect, no restart, so rehydration (my first
+hypothesis) cannot be involved. I then checked both reducers that land on
+`event_intro` and **both explicitly null the event**:
 
-Fixing the branch alone is not enough — if it is genuinely dead it should go,
-and if it is still needed it must start a fresh scene rather than silently
-replaying the old one. The save ordering wants to be crash-safe either way.
+- `END_DEBRIEF` (`state-machine.ts:270-278`) → `currentEvent: null`
+- `END_INTERVENTION` (`state-machine.ts:367-376`) → `currentEvent: null`
+
+So there appears to be no in-memory path to `event_intro` with a live
+`currentEvent`, and the branch at `handlers.ts:389` may simply never fire. The
+symptom is more likely a **client display freeze** than a server state bug.
+
+**Current leading hypothesis — a broadcast asymmetry.** `broadcastState`
+(`handlers.ts:120-129`) sends per-player and gates on the connected flag:
+
+```js
+for (const player of session.players) {
+  if (player.connected) {
+    io.to(player.connectionId).emit(E.STATE, viewerState(state, player.slot));
+  }
+}
+```
+
+…but `broadcastLobby` (`:131-135`) and both `E.GENERATING` emits (`:376`,
+`:387`) are room-wide `io.to(gameId)` with no such check.
+
+A player whose server-side `connected` flag is false while their socket is still
+in the room therefore keeps receiving LOBBY and GENERATING but **never another
+STATE**. Their game state freezes on the last scene they got, while ready counts
+and the generating flag keep updating live. That one asymmetry would produce
+every symptom on this list:
+
+- note 7 — a stale scene under a live "building the next scene…"
+- note 2's live desync — accurate ready counts over a frozen game state
+- this item — "dropped back into the same conversation," because the view never
+  advanced in the first place
+
+Note that `E.STATE` genuinely cannot become a plain room broadcast:
+`viewerState` is slot-specific, filtering messages by `visibleTo`. The fix is
+more likely to send to every player entry regardless of the connected flag and
+let socket.io drop undeliverable ones.
+
+Either way the recovery branch should not survive as-is: if it is unreachable it
+should go, and if it is reachable it must start a fresh scene rather than
+silently replaying the old one.
 
 ### 9. The scene generator is heavy-handed with confessed trauma
 
