@@ -401,6 +401,13 @@ export function useMultiplayer() {
       // type so a server build that predates the field leaves the
       // event-driven value alone rather than clearing it from `undefined`.
       if (typeof s.generating === "boolean") setGenerating(s.generating);
+      // …and the same authority over clearing a stale gate error. The
+      // E.GENERATING event clears it too, but that event is precisely the one
+      // playtest note 7 recorded being missed (reconnect, backgrounded tab),
+      // and a client that missed it would carry "the next scene didn't finish
+      // building" forward — invisible while generating, then rendered at the
+      // NEXT event_intro under a scene that built perfectly well.
+      if (s.generating === true) setError(null);
       // Same self-correction for the epilogue, which the one-shot E.EPILOGUE
       // event alone left empty on any client that joined, reloaded or picked
       // the game up on a second device after it fired. Only a non-empty value
@@ -410,10 +417,24 @@ export function useMultiplayer() {
       if (s.phase !== phaseRef.current) {
         phaseRef.current = s.phase;
         clearPartnerTyping();
+        // A gate error describes a gate. Once the phase has genuinely moved,
+        // the player is past the screen it was about, and carrying it forward
+        // would put chapter 2's failure under chapter 3's debrief. Safe
+        // against the one path that changes phase and emits an error together
+        // — the moderation block — because the `ended` screen renders from
+        // `state.phase` and never reads this.
+        setError(null);
       }
     });
     socket.on(E.SCENE_ENDED, () => setSceneEnding(true));
-    socket.on(E.GENERATING, (d: { generating: boolean }) => setGenerating(!!d.generating));
+    socket.on(E.GENERATING, (d: { generating: boolean }) => {
+      setGenerating(!!d.generating);
+      // A generation that has actually started supersedes the message saying
+      // the last one failed. Deliberately keyed on this and not on the `ready`
+      // emit: clearing there would let a stray "not yet" wipe the explanation
+      // before the player had read it.
+      if (d.generating) setError(null);
+    });
     socket.on(E.TYPING, (d: { slot: Slot; typing: boolean }) => {
       // The server addresses this to the other player, but ignore any echo of
       // our own slot defensively — we never want to show ourselves typing.

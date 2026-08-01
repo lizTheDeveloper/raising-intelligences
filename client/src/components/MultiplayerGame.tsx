@@ -426,6 +426,60 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     );
   }
 
+  // ---- Ended: a safety system stopped the session ----
+  //
+  // This phase had no screen at all. The server sets `phase: "ended"`
+  // (safety/moderation.ts, applyModerationBlock) and emits an E.ERROR carrying
+  // the explanation, but that error is only ever rendered in the lobby and in
+  // Chat — so both players fell through to the debug fallback at the bottom of
+  // this component and read the bare word "ended". The one moment a player most
+  // needs to be told something, and the game said nothing.
+  //
+  // Rendered from `state.phase`, deliberately NOT from `mp.error`. The phase is
+  // persisted, so a reload or a reconnect rehydrates straight into `ended` with
+  // no E.ERROR ever arriving — a screen that printed the error text would be
+  // blank for exactly those players, which is the same bug wearing a new hat.
+  //
+  // On the copy: it says nothing about IP bans in either direction, because
+  // both are true depending on the trigger — the per-message check bans, the
+  // scene-level check deliberately does not (see the `banIp` doc on
+  // applyModerationBlock) — and this screen cannot tell which fired. That cuts
+  // both ways, and the button says only where it goes rather than promising a
+  // new game: on the banning trigger, `io.use`'s isIpBanned check (app.ts)
+  // refuses the next socket outright, so "you can start another whenever you
+  // like" would be a promise the game knows it may not keep. It also offers no
+  // appeal, because there is no appeal flow to offer.
+  if (state.phase === "ended") {
+    return (
+      <div className="app fade-in">
+        <div className="ended-screen" role="status" aria-live="polite">
+          <p className="ended-title">this session ended here</p>
+          <p className="dim ended-body">
+            a safety system reads each scene as it closes. something in this one
+            crossed a line it holds, and it stopped the story rather than carry
+            it further.
+          </p>
+          <p className="dim ended-body">
+            that's the whole of it. {state.childName ? `${state.childName}'s` : "this"} story
+            doesn't continue from here, and nothing on this screen will move it.
+          </p>
+          <button
+            className="btn"
+            onClick={() => {
+              clearResume();
+              const url = new URL(window.location.href);
+              url.searchParams.delete("game");
+              url.hash = "";
+              window.location.href = url.toString();
+            }}
+          >
+            back to the start
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // ---- Between chapters: one ready gate straight into the next chapter ----
   if (state.phase === "event_intro") {
     return (
@@ -436,6 +490,19 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
             underneath "building the next scene…". While we're generating,
             there is no scene to show. */}
         <div className="event-intro">
+          {/* A scene that failed to build said nothing at all: the server
+              emitted E.ERROR to one socket, this screen never rendered
+              mp.error, and both clients simply reappeared at the gate they had
+              just passed. The gate below is genuinely live — the server clears
+              ready flags before it generates — so this is a message next to a
+              working retry, not a dead end. It sits above the ternary because
+              it is true of the failed state regardless of which branch renders.
+              Cleared the moment a generation starts (see E.GENERATING). */}
+          {mp.error && !mp.generating && (
+            <p className="error intro-error" role="alert">
+              {mp.error}
+            </p>
+          )}
           {mp.generating ? (
             <p className="dim" role="status" aria-live="polite">
               building the next scene…
@@ -703,6 +770,17 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
               autoFocus={false}
             />
           </div>
+          {/* Same surface as event_intro, and required for the same reason.
+              The READY catch broadcasts room-wide for EVERY branch, and the
+              debrief gate is the one that runs the intervention rungs, the
+              epilogue and the removal epilogue — all model calls, all able to
+              fail. Without this the failure would be broadcast and still
+              unrendered here, which is the bug wearing a new hat. */}
+          {mp.error && (
+            <p className="error intro-error" role="alert">
+              {mp.error}
+            </p>
+          )}
           <ReadyToggle
             ready={meReady}
             onToggle={mp.ready}

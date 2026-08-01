@@ -1,0 +1,12 @@
+-- Dark Play Plan 3: the consult (rung 1) and CPS-review (rung 3) beat text.
+--
+-- 016 persisted the other two pieces of ladder state (cps_outcome,
+-- therapy_messages) but not this one, so a game rehydrated in `consult` or
+-- `cps_review` came back with interventionText = null and both screens blanked
+-- to their "..." fallback. cps_review is the screen parents read before the
+-- outcome branch that can remove the child, so losing it gutted the most
+-- consequential beat in the game.
+--
+-- Nullable with no default: null is the real value outside those two phases
+-- (END_INTERVENTION and the rung-2/therapy branch both set it back to null).
+ALTER TABLE games ADD COLUMN IF NOT EXISTS intervention_text TEXT;

@@ -998,8 +998,39 @@ export function registerSocketHandlers(deps: SocketDeps): void {
             }
           }
         } catch (err) {
-          // Ready flags were already cleared above; just surface the error.
-          failWithError(err, "READY");
+          /**
+           * A failed advance has to be *said*, to both players, in words a
+           * player can act on.
+           *
+           * This used to be `failWithError(err, "READY")`, which is wrong twice
+           * over. It emits to `socket` alone — but the READY that reaches this
+           * code is whichever one completed the pair, so the other parent was
+           * told nothing at all. And it sends `String(err)`, which for the
+           * failure actually seen in the wild is
+           * "TimeoutError: The operation was aborted due to timeout" — the
+           * world-manager call gives up at 90s (AbortSignal.timeout(90_000) in
+           * llm/routing-client.ts completeResponse; withRetry deliberately
+           * does not retry timeouts, so 90s is the whole budget). Nothing
+           * rendered it, so both clients just slid back to the ready gate as if
+           * they had never pressed it.
+           *
+           * The retry needs no new protocol. resetReady() ran before the try,
+           * and the inner `finally` has already broadcast STATE with
+           * generating:false — so both players are sitting at a live gate and
+           * pressing ready again regenerates. The copy says so.
+           */
+          captureException(err, { tags: { component: "socket", event: "READY" } });
+          logger.error("ready_advance_failed", {
+            gameId,
+            phase: games.get(gameId)?.phase,
+            error: err instanceof Error ? err.stack : String(err),
+          });
+          io.to(gameId).emit(E.ERROR, {
+            error:
+              games.get(gameId)?.phase === "event_intro"
+                ? "the next scene didn't finish building. ready up again to retry."
+                : "something went wrong moving the story on. try that again.",
+          });
         }
       });
     });
