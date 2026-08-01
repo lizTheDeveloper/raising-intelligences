@@ -79,6 +79,35 @@ describe("InMemoryGameRepository", () => {
     expect(loaded!.currentEvent).toEqual(event1);
   });
 
+  it("does not resurrect the finished scene when a game is parked between scenes", async () => {
+    // The exact shape a game persists in after a debrief: END_DEBRIEF sets
+    // phase=event_intro and nulls the event WITHOUT advancing
+    // currentEventNumber, so the games row still says "1" while the events
+    // table still holds scene 1. Re-deriving the event by number handed the
+    // pair back the scene they had just played — on every reload, deterministically.
+    const repo = new InMemoryGameRepository();
+    await repo.saveGame(baseState({ phase: "event_intro", currentEventNumber: 1 }));
+    await repo.saveEvent("game-1", event1);
+    await repo.saveMessage("game-1", {
+      sender: "parent1",
+      content: "It's only a vase.",
+      chatType: "shared",
+      visibleTo: ["parent1", "parent2", "kid"],
+      timestamp: 1,
+      eventNumber: 1,
+    });
+
+    const loaded = await repo.loadGame("game-1");
+    // `event_intro` means "between scenes" — there is no current scene.
+    expect(loaded!.currentEvent).toBeNull();
+    // Nothing is lost: the played scene is still in the history, and a null
+    // currentEvent is what LOAD_EVENT is guarded on, so the next gate builds a
+    // fresh one instead of replaying this.
+    expect(loaded!.events).toHaveLength(1);
+    expect(loaded!.currentEventNumber).toBe(1);
+    expect(loaded!.messages).toHaveLength(1);
+  });
+
   it("persists messages and reconstructs them in timestamp order", async () => {
     const repo = new InMemoryGameRepository();
     await repo.saveGame(baseState());
