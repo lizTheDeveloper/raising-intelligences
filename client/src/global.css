@@ -1406,6 +1406,27 @@ body::after {
   margin-top: 8px;
 }
 
+/* Floated variant, for the guardian quiz. That screen's narrative steps mount
+   a fixed, full-viewport skip overlay at z-index 2; anything below it is
+   unclickable. Sits above it, and top-right so it never overlaps the
+   bottom-centre skip hint. Opaque, because it floats over live content. */
+.handoff-floating {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 3;
+  text-align: right;
+}
+.handoff-floating .handoff-open {
+  margin: 0 0 0 auto;
+}
+.handoff-floating .handoff-panel {
+  margin: 8px 0 0;
+  width: min(92vw, 460px);
+  background: var(--bg);
+  text-align: center;
+}
+
 /* ---- Superseded: another device has this slot -------------------------- */
 /* Deliberately a full, calm screen rather than a toast. The player has walked
    away from this device; what matters when they glance back is that nothing

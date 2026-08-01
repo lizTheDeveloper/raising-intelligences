@@ -412,6 +412,14 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
           onSubmitPersonality={mp.submitPersonality}
           seedReadyProp={mp.seedReady}
         />
+        {/* The quiz is long, typed and confessional — the likeliest moment in
+            the whole game for someone to get up and walk outside. It had no
+            handoff control at all, because GuardianScreen's narrative steps
+            mount a full-screen `.guardian-skip-overlay` (fixed, inset 0,
+            z-index 2) that swallows anything rendered under it. Floated above
+            that overlay, and anchored top-right so it never lands on the
+            bottom-centre "click to skip" hint the overlay exists to serve. */}
+        <div className="handoff-floating">{handoffUi}</div>
       </div>
     );
   }

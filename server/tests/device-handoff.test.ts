@@ -11,7 +11,13 @@ import type { Session } from "../src/game/session-manager.js";
 import type { GameEvent, GameState, Message } from "../src/types.js";
 import { SOCKET_EVENTS as E } from "../src/socket/protocol.js";
 import type { LobbyState, ViewerState } from "../src/socket/protocol.js";
-import { TestClient, connect } from "./helpers/socket-client.js";
+import {
+  TestClient,
+  connect,
+  submitPersonalities,
+  OCEAN_P1,
+  OCEAN_P2,
+} from "./helpers/socket-client.js";
 
 /**
  * Device handoff — "if they step outside, can they continue from their phone?"
@@ -207,8 +213,14 @@ describe("device handoff", () => {
   it("carries the player's ready state across the handoff", async () => {
     const p = await pair("Wren");
 
-    // Parent 2 readies at the opening gate, then steps outside. Parent 1 has
-    // not readied, so the gate is still open and the flag is observable.
+    // Parent 2 passes the lobby, then steps outside.
+    //
+    // Since the opening reorder this flag carries MORE weight than it did when
+    // this test was written, not less. The gate no longer generates anything:
+    // readying is simply what takes a player into the guardian quiz, and it is
+    // the only durable, server-owned record that they got past the lobby
+    // (nothing in GameState says so). A handoff that dropped it would land the
+    // player back in the lobby mid-quiz.
     const readied = p.p1.waitFor<LobbyState>(
       E.LOBBY,
       (l) => l.players.find((pl) => pl.slot === "parent2")?.ready === true
@@ -218,21 +230,35 @@ describe("device handoff", () => {
 
     const code = await mint(p.p2);
     const phone = await client();
+    // The LOBBY the *new device* receives is the one that matters: the client
+    // derives "am I readied" from it, and that is what keeps the guardian quiz
+    // on screen instead of the lobby.
+    const lobbyOnPhone = phone.waitFor<LobbyState>(
+      E.LOBBY,
+      (l) => l.players.find((pl) => pl.slot === "parent2")?.ready === true
+    );
     const joinedPhone = phone.once(E.JOINED);
     phone.emit(E.JOIN_GAME, { gameId: p.gameId, handoffCode: code });
     await joinedPhone;
+    await lobbyOnPhone;
 
     // reconnectPlayer used to force `ready: false`, so handing off mid-gate
     // silently threw the click away and both players sat on "1 of 2 ready".
-    const after = await p.p1.waitFor<LobbyState>(E.LOBBY, () => true, 2000).catch(() => p.p1.lastLobby!);
-    const parent2 = (p.p1.lastLobby ?? after).players.find((pl) => pl.slot === "parent2")!;
+    const parent2 = p.p1.lastLobby!.players.find((pl) => pl.slot === "parent2")!;
     expect(parent2.ready).toBe(true);
     expect(parent2.connected).toBe(true);
 
-    // And the gate still completes from the new device: parent 1 readies, both
-    // are ready, the game advances. Nothing has to be re-clicked.
-    const chatting = phone.waitFor<ViewerState>(E.STATE, (s) => s.phase === "family_chat");
-    p.p1.emit(E.READY, { ready: true });
+    // And the opening still completes from the new device, with nothing
+    // re-clicked: parent 1 readies and answers, the phone answers, and the
+    // seeded scene 1 arrives. (Before the reorder this assertion readied both
+    // players and waited for the gate to generate; the gate no longer does,
+    // so the same property — "the new device can carry the opening through" —
+    // is now proved through the quiz.)
+    const chatting = phone.waitFor<ViewerState>(
+      E.STATE,
+      (s) => s.phase === "family_chat" && s.currentEvent != null
+    );
+    submitPersonalities(p.p1, phone);
     await chatting;
   });
 
@@ -246,18 +272,22 @@ describe("device handoff", () => {
     await joinedPhone;
 
     // Redemption itself answers with the current state, so the new device opens
-    // on the scene in progress rather than an empty screen.
+    // on where the game actually is rather than an empty screen.
     expect(phone.lastState).toBeDefined();
 
-    // Readied from the PHONE, which is what now holds the slot. (Readying from
-    // the laptop would be a no-op — see the takeover test below.)
-    const chatting = phone.waitFor<ViewerState>(E.STATE, (s) => s.phase === "family_chat");
-    p.p1.emit(E.READY, { ready: true });
-    phone.emit(E.READY, { ready: true });
+    // Scene 1 is now built by startFirstScene, off the back of the personality
+    // seed, and announced with its own broadcastState. That broadcast addresses
+    // the per-slot room — so it has to reach a socket that joined the slot
+    // through a handoff, not only the one that originally claimed it. This is
+    // the core invariant of the feature, re-proved against the new opening.
+    const chatting = phone.waitFor<ViewerState>(
+      E.STATE,
+      (s) => s.phase === "family_chat" && s.currentEvent != null
+    );
+    submitPersonalities(p.p1, phone);
     await chatting;
 
-    // The live broadcast reaches it too — this is the per-slot room, not a
-    // remembered connection id.
+    // …and so does the ordinary in-scene broadcast.
     const heard = phone.waitFor<ViewerState>(E.STATE, (s) =>
       s.messages.some((m: Message) => m.content.includes("STEPPED_OUTSIDE"))
     );
@@ -294,9 +324,11 @@ describe("device handoff", () => {
     // view behind the takeover notice stays current and taking the game back is
     // instant. (This is the invariant playtest-fixes.test.ts pins for a second
     // socket generally; the handoff must not quietly break it.)
-    const oldStillSynced = p.p2.waitFor<ViewerState>(E.STATE, (s) => s.phase === "family_chat");
-    p.p1.emit(E.READY, { ready: true });
-    phone.emit(E.READY, { ready: true });
+    const oldStillSynced = p.p2.waitFor<ViewerState>(
+      E.STATE,
+      (s) => s.phase === "family_chat" && s.currentEvent != null
+    );
+    submitPersonalities(p.p1, phone);
     await oldStillSynced;
   });
 
@@ -319,6 +351,117 @@ describe("device handoff", () => {
     p.p2.emit(E.JOIN_GAME, { gameId: p.gameId, playerToken: p.token2 });
     expect((await rejoined).slot).toBe("parent2");
     expect((await supersededPhone).slot).toBe("parent2");
+  });
+
+  // ------------------------------------------- handing off mid-quiz (new) --
+  // The guardian quiz did not sit in front of scene 1 when this feature was
+  // built. Since the opening reorder it does, and it is a long, typed,
+  // confessional screen — precisely the point at which someone gets up and
+  // walks outside. These pin what does and does not survive that.
+
+  it("lands the new device back in the guardian quiz, not the lobby", async () => {
+    const p = await pair("Wren");
+
+    // Both parents pass the lobby and are now taking the quiz.
+    const bothIn = p.p1.waitFor<LobbyState>(E.LOBBY, (l) => l.players.every((pl) => pl.ready));
+    p.p1.emit(E.READY, { ready: true });
+    p.p2.emit(E.READY, { ready: true });
+    await bothIn;
+
+    // Parent 2 steps outside partway through the questions.
+    const code = await mint(p.p2);
+    const phone = await client();
+    const lobbyOnPhone = phone.waitFor<LobbyState>(
+      E.LOBBY,
+      (l) => l.players.find((pl) => pl.slot === "parent2")?.ready === true
+    );
+    const joinedPhone = phone.once(E.JOINED);
+    phone.emit(E.JOIN_GAME, { gameId: p.gameId, handoffCode: code });
+    await joinedPhone;
+    await lobbyOnPhone;
+
+    // The phone holds both halves of what `showGuardian` reads: a pre-game
+    // state, and a ready flag saying this player is past the lobby. Had the
+    // handoff cleared ready — as reconnectPlayer used to — the phone would
+    // render the lobby instead, on a game whose lobby is over.
+    expect(phone.lastState!.phase).toBe("event_intro");
+    expect(phone.lastState!.currentEventNumber).toBe(0);
+
+    // KNOWN LIMIT, asserted rather than assumed: answers typed but not yet
+    // submitted are React state in GuardianScreen and do not cross. Nothing
+    // server-side records a partially-taken quiz, so the phone must take it
+    // again — parent 1 submitting alone cannot start the scene.
+    //
+    // Anchored to a server event, not a wall-clock delay: PERSONALITY_SUBMITTED
+    // is broadcast from inside the SUBMIT_PERSONALITY handler, so receiving it
+    // proves parent 1's answers were processed. The seed requires BOTH parents,
+    // so at that point no scene can be starting — the state below is provably
+    // settled rather than merely not-yet-arrived.
+    const p1Submitted = phone.waitFor<{ slot: string }>(
+      E.PERSONALITY_SUBMITTED,
+      (d) => d.slot === "parent1"
+    );
+    p.p1.emit(E.SUBMIT_PERSONALITY, {
+      ocean: OCEAN_P1,
+      confessional1: "I told my sister her hamster ran away.",
+      confessional2: "I failed a class and forged the report card.",
+    });
+    await p1Submitted;
+    expect(phone.lastState!.phase).toBe("event_intro");
+    expect(phone.lastState!.currentEventNumber).toBe(0);
+
+    // Retaken on the phone, the opening completes normally.
+    const chatting = phone.waitFor<ViewerState>(
+      E.STATE,
+      (s) => s.phase === "family_chat" && s.currentEvent != null
+    );
+    phone.emit(E.SUBMIT_PERSONALITY, {
+      ocean: OCEAN_P2,
+      confessional1: "I broke a window and blamed the neighbour's kid.",
+      confessional2: "I never told them I got expelled from chess club.",
+    });
+    await chatting;
+  });
+
+  it("keeps a personality that was already submitted before the handoff", async () => {
+    const p = await pair("Wren");
+    const bothIn = p.p1.waitFor<LobbyState>(E.LOBBY, (l) => l.players.every((pl) => pl.ready));
+    p.p1.emit(E.READY, { ready: true });
+    p.p2.emit(E.READY, { ready: true });
+    await bothIn;
+
+    // Parent 2 finishes the quiz on the laptop, THEN walks out. Unlike the
+    // in-progress answers above, a submitted personality lives in GameState —
+    // so it must survive, and parent 1 finishing alone must be enough to seed
+    // and start scene 1.
+    const submitted = p.p1.waitFor<{ slot: string }>(
+      E.PERSONALITY_SUBMITTED,
+      (d) => d.slot === "parent2"
+    );
+    p.p2.emit(E.SUBMIT_PERSONALITY, {
+      ocean: OCEAN_P2,
+      confessional1: "I broke a window and blamed the neighbour's kid.",
+      confessional2: "I never told them I got expelled from chess club.",
+    });
+    await submitted;
+
+    const code = await mint(p.p2);
+    const phone = await client();
+    const joinedPhone = phone.once(E.JOINED);
+    phone.emit(E.JOIN_GAME, { gameId: p.gameId, handoffCode: code });
+    await joinedPhone;
+
+    // Parent 1 answers; the seed lands; scene 1 is built and reaches the phone.
+    const chatting = phone.waitFor<ViewerState>(
+      E.STATE,
+      (s) => s.phase === "family_chat" && s.currentEvent != null
+    );
+    p.p1.emit(E.SUBMIT_PERSONALITY, {
+      ocean: OCEAN_P1,
+      confessional1: "I told my sister her hamster ran away.",
+      confessional2: "I failed a class and forged the report card.",
+    });
+    await chatting;
   });
 
   it("does not raise a takeover notice for an ordinary reload", async () => {
