@@ -1461,3 +1461,42 @@ body::after {
   line-height: 1.65;
   margin-bottom: 26px;
 }
+
+/* ---- Ended: a safety system stopped the session ------------------------ */
+/* Same calm full-screen shape as the superseded notice, and for the same
+   reason: this is the last thing the player reads, and a toast over a dead
+   game would be worse than the bare word "ended" it replaces. */
+
+.ended-screen {
+  max-width: 420px;
+  margin: 22vh auto 0;
+  text-align: center;
+  padding: 0 24px;
+}
+
+.ended-title {
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  margin-bottom: 14px;
+}
+
+.ended-body {
+  font-size: 13px;
+  line-height: 1.65;
+  margin-bottom: 18px;
+}
+
+.ended-body:last-of-type {
+  margin-bottom: 26px;
+}
+
+/* ---- event_intro: a scene that failed to generate ---------------------- */
+/* The gate the player is returned to is live and re-readying regenerates, so
+   this is a message beside a working control, not a dead end. */
+
+.intro-error {
+  max-width: 420px;
+  margin: 0 auto 20px;
+  font-size: 13px;
+  line-height: 1.65;
+}

@@ -64,14 +64,18 @@ describe("intervention ladder — phase transitions", () => {
 });
 
 describe("intervention ladder — persistence (in-memory repo)", () => {
-  it("round-trips highestRungFired, cpsOutcome, and therapyMessages; interventionText loads as null", async () => {
+  // This assertion used to read `interventionText` loads as *null*, codifying
+  // the omission rather than the intent: the column simply did not exist, so
+  // the ladder's other two pieces of state survived a reload and this one did
+  // not. Migration 019 adds it; the round trip is now symmetric.
+  it("round-trips highestRungFired, cpsOutcome, therapyMessages and interventionText", async () => {
     const repo = new InMemoryGameRepository();
     let s = createGame("Kai");
     s = {
       ...s,
       highestRungFired: 2,
       cpsOutcome: "safety_plan",
-      interventionText: "should not survive a reload",
+      interventionText: "the psychologist's words to the parents",
       therapyMessages: [{ speaker: "therapist", content: "let's talk" }],
     };
     await repo.saveGame(s);
@@ -79,6 +83,13 @@ describe("intervention ladder — persistence (in-memory repo)", () => {
     expect(loaded?.highestRungFired).toBe(2);
     expect(loaded?.cpsOutcome).toBe("safety_plan");
     expect(loaded?.therapyMessages).toEqual([{ speaker: "therapist", content: "let's talk" }]);
-    expect(loaded?.interventionText).toBeNull();
+    expect(loaded?.interventionText).toBe("the psychologist's words to the parents");
+  });
+
+  it("keeps interventionText null when there is none", async () => {
+    const repo = new InMemoryGameRepository();
+    const s = createGame("Kai");
+    await repo.saveGame(s);
+    expect((await repo.loadGame(s.id))?.interventionText).toBeNull();
   });
 });

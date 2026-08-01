@@ -81,9 +81,20 @@ export interface GameState {
    * consult, 2 therapy, 3 cps). Persisted; gates the ladder so each rung fires
    * at most once and reaching the next requires new dark play. Server-only. */
   highestRungFired: number;
-  /** The generated read-and-advance text on screen (psychologist consult or CPS
-   * determination). Ephemeral — regenerated per beat, not persisted. Null
-   * outside consult/cps_review. */
+  /**
+   * The generated read-and-advance text on screen (psychologist consult or CPS
+   * determination). Null outside consult/cps_review.
+   *
+   * Persisted (migration 019), like `therapyMessages` and `cpsOutcome` beside
+   * it. It was previously documented as "ephemeral — regenerated per beat",
+   * which was not true of the code: nothing regenerates it. ENTER_INTERVENTION
+   * writes it once and END_INTERVENTION clears it, so an unpersisted value was
+   * simply lost on any rehydration — restart, eviction, a second process — and
+   * both screens that read it blanked to their "..." fallback while therapy,
+   * whose text rides in `therapyMessages`, came back intact. `cps_review` is
+   * the beat parents read immediately before the outcome branch that can
+   * remove the child.
+   */
   interventionText: string | null;
   /** Rung-2 family-therapy session transcript. Persisted so a mid-session
    * reconnect resumes; cleared on END_INTERVENTION. Empty outside therapy. */

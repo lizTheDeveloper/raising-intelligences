@@ -413,7 +413,14 @@ export function useMultiplayer() {
       }
     });
     socket.on(E.SCENE_ENDED, () => setSceneEnding(true));
-    socket.on(E.GENERATING, (d: { generating: boolean }) => setGenerating(!!d.generating));
+    socket.on(E.GENERATING, (d: { generating: boolean }) => {
+      setGenerating(!!d.generating);
+      // A generation that has actually started supersedes the message saying
+      // the last one failed. Deliberately keyed on this and not on the `ready`
+      // emit: clearing there would let a stray "not yet" wipe the explanation
+      // before the player had read it.
+      if (d.generating) setError(null);
+    });
     socket.on(E.TYPING, (d: { slot: Slot; typing: boolean }) => {
       // The server addresses this to the other player, but ignore any echo of
       // our own slot defensively — we never want to show ourselves typing.

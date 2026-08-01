@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { InMemoryGameRepository } from "../src/db/repository.js";
+import { InMemoryGameRepository, PgGameRepository } from "../src/db/repository.js";
 import type { GameEvent, GameState, Message } from "../src/types.js";
 
 function baseState(overrides: Partial<GameState> = {}): GameState {
@@ -452,5 +452,84 @@ describe("Album features", () => {
     expect(scrapbook!.relationshipSummary).toBeNull();
     expect(scrapbook!.epilogue).toBe("");
     expect(scrapbook!.reportCard).toBe("");
+  });
+});
+
+/**
+ * The consult / cps_review beat text has to reach POSTGRES, not just the
+ * in-memory repo.
+ *
+ * An in-memory round trip alone cannot prove this: both repositories share
+ * `reconstructState`, so fixing the hardcoded `interventionText: null` there
+ * makes an InMemoryGameRepository test pass while the games-table column list —
+ * the actual production bug, which is what the live game rehydrated through —
+ * stays untouched. These two stub `Pick<pg.Pool, "query">` (the constructor
+ * parameter exists for exactly this) and assert on the SQL and parameters that
+ * would have gone to the database.
+ */
+describe("PgGameRepository — intervention_text reaches Postgres", () => {
+  function stubDb(handler: (sql: string) => { rows: unknown[] }) {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const db = {
+      query: async (sql: string, params?: unknown[]) => {
+        calls.push({ sql, params: params ?? [] });
+        return handler(sql);
+      },
+    } as unknown as ConstructorParameters<typeof PgGameRepository>[0];
+    return { db, calls };
+  }
+
+  it("saveGame writes the column and the value", async () => {
+    const { db, calls } = stubDb(() => ({ rows: [] }));
+    const repo = new PgGameRepository(db);
+
+    await repo.saveGame(
+      baseState({
+        phase: "cps_review",
+        highestRungFired: 3,
+        interventionText: "the determination the parents read",
+      })
+    );
+
+    expect(calls).toHaveLength(1);
+    const { sql, params } = calls[0];
+    // Both halves of the upsert: a column missing from either one silently
+    // drops the value (INSERT) or drops it on every subsequent save (UPDATE).
+    expect(sql).toContain("intervention_text");
+    expect(sql).toContain("intervention_text     = EXCLUDED.intervention_text");
+    expect(params).toContain("the determination the parents read");
+  });
+
+  it("loadGame selects the column and rebuilds the text", async () => {
+    const gameRow = {
+      id: "game-1",
+      child_name: "Luna",
+      child_gender: "nonbinary",
+      relationship_type: "co-parents",
+      phase: "cps_review",
+      current_event_number: 3,
+      total_events: 10,
+      identity_document: "",
+      memory_summary: "",
+      personality_seed: "",
+      parent_personalities: null,
+      sidebar_used_parent1: false,
+      sidebar_used_parent2: false,
+      sidebar_active: null,
+      concern_level: 7,
+      highest_rung_fired: 3,
+      cps_outcome: "safety_plan",
+      therapy_messages: [],
+      intervention_text: "the determination the parents read",
+    };
+    const { db, calls } = stubDb((sql) =>
+      sql.includes("FROM games") ? { rows: [gameRow] } : { rows: [] }
+    );
+    const repo = new PgGameRepository(db);
+
+    const loaded = await repo.loadGame("game-1");
+
+    expect(calls[0].sql).toContain("intervention_text");
+    expect(loaded?.interventionText).toBe("the determination the parents read");
   });
 });

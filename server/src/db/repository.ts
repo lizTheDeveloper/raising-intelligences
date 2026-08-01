@@ -155,6 +155,7 @@ function reconstructState(input: {
   highestRungFired?: number;
   cpsOutcome?: "stay" | "safety_plan" | "removal" | null;
   therapyMessages?: TherapyMessage[];
+  interventionText?: string | null;
 }): GameState {
   /**
    * `event_intro` means "between scenes" — there is no current scene, ever.
@@ -225,7 +226,15 @@ function reconstructState(input: {
     concerningStreak: 0,
     concernLevel: input.concernLevel ?? 0,
     highestRungFired: input.highestRungFired ?? 0,
-    interventionText: null,
+    // Persisted (migration 019), exactly like therapyMessages and cpsOutcome
+    // beside it. This used to be a hardcoded null, which meant the consult and
+    // cps_review screens survived only as long as the process that generated
+    // them: any rehydration — restart, eviction, a second server — blanked both
+    // to their "..." fallback while therapy (whose text lives in
+    // therapyMessages) came back intact. Null remains the correct value outside
+    // those two phases; END_INTERVENTION and the rung-2 branch both clear it, so
+    // nothing stale can carry forward.
+    interventionText: input.interventionText ?? null,
     therapyMessages: input.therapyMessages ?? [],
     cpsOutcome: input.cpsOutcome ?? null,
     // Not persisted anywhere the games row can reach: the endgames row that
@@ -248,9 +257,9 @@ export class PgGameRepository implements GameRepository {
          (id, child_name, child_gender, relationship_type, phase, current_event_number,
           total_events, identity_document, memory_summary, personality_seed, parent_personalities,
           sidebar_used_parent1, sidebar_used_parent2, sidebar_active, concern_level,
-          highest_rung_fired, cps_outcome, therapy_messages, updated_at)
+          highest_rung_fired, cps_outcome, therapy_messages, intervention_text, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15,
-               $16, $17, $18::jsonb, now())
+               $16, $17, $18::jsonb, $19, now())
        ON CONFLICT (id) DO UPDATE SET
          child_name            = EXCLUDED.child_name,
          child_gender          = EXCLUDED.child_gender,
@@ -269,6 +278,7 @@ export class PgGameRepository implements GameRepository {
          highest_rung_fired    = EXCLUDED.highest_rung_fired,
          cps_outcome           = EXCLUDED.cps_outcome,
          therapy_messages      = EXCLUDED.therapy_messages,
+         intervention_text     = EXCLUDED.intervention_text,
          updated_at            = now()`,
       [
         state.id,
@@ -289,6 +299,7 @@ export class PgGameRepository implements GameRepository {
         state.highestRungFired,
         state.cpsOutcome,
         JSON.stringify(state.therapyMessages),
+        state.interventionText,
       ]
     );
   }
@@ -418,6 +429,7 @@ export class PgGameRepository implements GameRepository {
       highest_rung_fired: number;
       cps_outcome: "stay" | "safety_plan" | "removal" | null;
       therapy_messages: TherapyMessage[];
+      intervention_text: string | null;
     }>(
       `SELECT id, child_name,
               COALESCE(child_gender, 'nonbinary') AS child_gender,
@@ -432,7 +444,8 @@ export class PgGameRepository implements GameRepository {
               COALESCE(concern_level, 0) AS concern_level,
               COALESCE(highest_rung_fired, 0) AS highest_rung_fired,
               cps_outcome,
-              COALESCE(therapy_messages, '[]'::jsonb) AS therapy_messages
+              COALESCE(therapy_messages, '[]'::jsonb) AS therapy_messages,
+              intervention_text
        FROM games WHERE id = $1`,
       [gameId]
     );
@@ -520,6 +533,7 @@ export class PgGameRepository implements GameRepository {
       highestRungFired: game.highest_rung_fired,
       cpsOutcome: game.cps_outcome,
       therapyMessages: game.therapy_messages,
+      interventionText: game.intervention_text,
     });
   }
 
@@ -804,6 +818,7 @@ export class InMemoryGameRepository implements GameRepository {
       highestRungFired: number;
       cpsOutcome: "stay" | "safety_plan" | "removal" | null;
       therapyMessages: TherapyMessage[];
+      interventionText: string | null;
     }
   >();
   private messages = new Map<string, Message[]>();
@@ -851,6 +866,7 @@ export class InMemoryGameRepository implements GameRepository {
       highestRungFired: state.highestRungFired,
       cpsOutcome: state.cpsOutcome,
       therapyMessages: state.therapyMessages.map((m) => ({ ...m })),
+      interventionText: state.interventionText,
     });
   }
 
@@ -940,6 +956,7 @@ export class InMemoryGameRepository implements GameRepository {
       highestRungFired: game.highestRungFired,
       cpsOutcome: game.cpsOutcome,
       therapyMessages: game.therapyMessages.map((m) => ({ ...m })),
+      interventionText: game.interventionText,
     });
   }
 
