@@ -148,24 +148,98 @@ The end-of-run Matrix handle exchange exists **only between two verified-adult
 subscribers on the human path.** Never on AI runs, never for minors, never for
 free or anonymous users. This is a bright line in the code, not a soft default.
 
-## Open Risks & Required Sign-offs
+## Legal & Regulatory Findings
 
-1. **Legal review required (blocking for launch of the human tier).** Matching
-   strangers — with a residual chance of an undetected minor — into private
-   post-run contact is exactly the surface online-safety / COPPA-type regimes
-   target. Stripe Identity mitigates but does not by itself discharge whatever
-   the specific obligations are. This must go to whoever owns legal before the
-   human tier ships. Do not treat the verification step as self-clearing.
-2. **PII / data handling.** Two new categories of sensitive data:
-   - **Confessionals** are intimate free-text. They blend into a shared child
-     *and* are fed to the LLM matchmaker, so a co-parent could reverse-infer a
-     partner's confessional themes from the seeded child. Define retention, who
-     can read them, and whether raw confessionals are ever exposed cross-partner.
-   - **Stripe Identity** returns real-world identity documents. Follow Stripe's
-     handling guidance; store verification *status*, not documents.
-3. **Verification strength.** The paywall must be a Stripe Identity check
-   (document + selfie), not merely a successful card charge — a card alone
-   (a parent's card) does not verify age.
+*Not legal advice — engineering research to scope controls; a licensed attorney
+must confirm applicability before the human tier ships. Sourced from a verified
+deep-research pass (24 primary/secondary sources, 24 of 25 claims confirmed).
+This area is fast-moving; re-check before launch.*
+
+Eight regimes have **verified, citable controls**. Each maps to a review
+checkpoint in the phase table below.
+
+| # | Law (citation) | Applies because | Concrete control required |
+|---|---|---|---|
+| 1 | **COPPA** — 15 U.S.C. 6501; amended Rule, Fed. Reg. 2025-05904 (eff. 23 Jun 2025; full compliance **22 Apr 2026**) | Free tier is open to children; threshold is **under-13** (not 16). Amended Rule now treats **biometric identifiers and gov-issued IDs as personal information**. | Neutral age gate at signup; if child-directed or actual knowledge of under-13s, verifiable parental consent (VPC) *before* any collection; third-party/targeted-ad sharing **off** absent separate opt-in VPC; **written data-retention policy** (purpose-bound, no indefinite retention); treat any selfie/faceprint or gov-ID from a minor as COPPA PI. |
+| 2 | **NJ Internet Dating Safety Act** — N.J.S.A. 56:8-168 to 56:8-171 | A "NJ member" = anyone giving a NJ billing zip — so the **Stripe billing step** is the jurisdictional hook. Opt-in stranger-matching + handle exchange plausibly = an "Internet dating service" (arguable; conservative posture = comply). Enforced (Bumble consent order, $315k, Feb 2024). | Post a **safety-awareness notice**; if no criminal background checks are run, disclose that to NJ members in **2+ channels** (email / click-through / profile / signup), in **bold, CAPITAL letters, ≥12-pt type**. |
+| 3 | **TX Internet Dating Safety Act** — Tex. Bus. & Com. Code Ch. 106 (§§106.001, .004, .006) | Broad "online dating service provider" definition, no "primarily engaged" limiter; same billing-based hook. | Same as NJ (bold/caps/≥12-pt no-background-check disclosure + safety notice). **One combined multi-state disclosure template** satisfying the strictest rule covers both. |
+| 4 | **Biometric privacy** — IL **BIPA** 740 ILCS 14/15; TX **CUBI**; (WA RCW 19.375 **excludes** photo-derived data) | Stripe Identity's **selfie face-geometry** is a biometric identifier under BIPA/CUBI. *Cothron v. White Castle* (2023) = per-scan liability. Stripe states it is **not** the compliance owner. | **Informed written consent screen BEFORE** the selfie step; published **retention/destruction schedule**; configure Stripe so biometric templates aren't retained beyond need. (No legal duty to offer a non-biometric alternative — *refuted 0-3* — though it's good practice.) |
+| 5 | **UK Online Safety Act 2023** — Part 3/5; Ofcom HEAA Guidance (24 Apr 2025) | Service likely accessed by UK children with an adult tier must use **"highly effective age assurance" (HEAA)**. Self-declaration / debit-card / T&C age limits are **not** HEAA. Reddit fined £14.47m (Feb 2026). | Deploy a **HEAA method** to separate the child tier from the adult tier — Stripe Identity photo-ID matching / facial age estimation qualifies; **document the choice against Ofcom's criteria**. |
+| 6 | **EU GDPR age assurance** — EDPB Statement 1/2025; GDPR Arts. 5(1)(c), 6, 9(2), 35 | Age/biometric verification of EU users is high-risk special-category processing. | **DPIA (Art. 35) signed off before** any EU user hits verification; documented **Art. 6 basis + Art. 9(2) exception**; privacy-preserving design (store **age-attribute confirmation only**, not raw IDs/biometrics). |
+| 7 | **EU age-verification blueprint** (v2, 10 Oct 2025) + **DSA** minor-protection | DSA-covered user-to-user functionality in the EU. | Align device-based age verification with the **blueprint / EUDI-wallet** reference to evidence DSA compliance. |
+| 8 | **CSAM reporting** — 18 U.S.C. 2258A (+2258E; REPORT Act 2024) | RI **self-hosts a Matrix server** carrying private messages → covered provider. Trigger = **actual knowledge** of apparent CSAM. **No** proactive-scan duty (§2258A(f)). | **Register with NCMEC**; stand up a **CyberTipline reporting workflow + evidence-preservation** procedure; train moderation/support on the actual-knowledge trigger — all before private messaging goes live. |
+
+### Data-handling notes (carry into design)
+- **Confessionals** are intimate free-text that blend into a shared child *and*
+  feed the LLM matchmaker — a co-parent could reverse-infer a partner's themes
+  from the seeded child. Define retention, who can read them, and whether raw
+  confessionals are ever exposed cross-partner. (Interacts with COPPA #1, GDPR #6.)
+- **Stripe Identity** returns real identity documents. Store verification
+  *status*, not documents (aligns #4, #6). The paywall must be an actual Stripe
+  Identity check (doc + selfie), **not** a mere card charge — a parent's card
+  does not verify age.
+
+### Open questions — asked but NOT yet verified (need dedicated legal follow-up)
+These regimes are in-scope but produced no surviving verified claim; treat as
+**known gaps**, not cleared:
+1. **US state minor social-media / design-code laws** — CA AADC (post-9th-Cir.),
+   Utah Minor Protection in Social Media Act, TX SCOPE Act / HB 18 + app-store
+   age-verification, FL HB 3: which survived injunction, and is RI a "covered
+   platform" under each?
+2. **EU AI Act Art. 50** — duty to disclose to users they're interacting with an
+   AI (directly relevant to the **free-tier AI co-parent**); applies **from 2 Aug
+   2026**. Confirm exact UI implementation. *(Unverified but near-certain — build
+   the disclosure in.)*
+3. **EU CSAM Regulation ("Chat Control")** — adoption status as of 2026 and
+   whether it adds detection duties on the Matrix server beyond §2258A.
+4. **Auto-renewal / subscription law** — FTC "Click-to-Cancel" Rule was **vacated
+   by the 8th Cir. (July 2025)**; California ARL (Bus. & Prof. 17600 et seq., SB
+   313) still applies. Confirm before wiring Stripe recurring billing.
+5. **UK ICO Children's Code (AADC)** — map the free child tier against its 15
+   standards (default high-privacy, data minimization, profiling off by default).
+
+## Review Checkpoints (mapped to build phases)
+
+Each checkpoint must be **verified before that phase ships to production**. The
+human/dating tier is blocked on Phase-4 legal sign-off in full.
+
+**Phase 0 — Legal groundwork (before anything ships publicly)**
+- [ ] Engage counsel; confirm applicability of the eight regimes + five open
+  questions to RI's model and target geographies.
+- [ ] Draft privacy policy + **written data-retention policy** (COPPA #1, GDPR #6).
+- [ ] Decide launch geographies (US-only first materially narrows UK/EU load).
+
+**Phase 1 — Free AI-parent tier + intake maturity items**
+- [ ] **COPPA (#1):** neutral age gate; no under-13 PI to third parties without
+  VPC; retention policy live. Re-verify if/when any analytics or ad SDK is added.
+- [ ] **AI Act Art. 50 (open-Q 2):** AI co-parent clearly disclosed as AI at
+  first interaction.
+- [ ] **UK Children's Code (open-Q 5):** free child tier defaults to high-privacy,
+  profiling off.
+
+**Phase 2 — Age/ID verification (Stripe Identity)**
+- [ ] **BIPA/CUBI (#4):** written biometric-consent screen renders *before* the
+  selfie step; retention/destruction schedule published; Stripe retention configured.
+- [ ] **UK HEAA (#5):** verification method meets HEAA criteria and blocks the
+  human path for anyone not verified-adult; choice documented vs. Ofcom criteria.
+- [ ] **GDPR (#6):** DPIA signed off and Art. 6 / Art. 9(2) basis documented
+  *before* any EU user hits the flow; store age-attribute only, not documents.
+- [ ] **EU blueprint (#7):** device-based approach evaluated against the reference model.
+
+**Phase 3 — Paid subscription + recurring billing**
+- [ ] **Auto-renewal (open-Q 4):** CA ARL disclosures + easy-cancel implemented;
+  confirm current FTC negative-option posture at build time.
+
+**Phase 4 — Matchmaking queue + dating handoff + Matrix private messaging**
+- [ ] **NJ + TX dating-safety (#2, #3):** member detection by billing zip;
+  combined bold/caps/≥12-pt no-background-check disclosure + safety notice in 2+
+  channels incl. a click-through captured at opt-in.
+- [ ] **NCMEC / §2258A (#8):** CyberTipline reporting pipeline + evidence
+  preservation live; staff trained on the actual-knowledge trigger — **before**
+  any adult-to-adult private contact is enabled.
+- [ ] **EU CSAM Regulation (open-Q 3):** re-check status; add detection duties if adopted.
+- [ ] **Final legal sign-off** on the full human/dating tier — the bright-line
+  gate before this tier is enabled in production.
 
 ## Reused vs. New
 
