@@ -91,6 +91,7 @@ export function createGame(childName: string, relationshipType = "co-parents"): 
     interventionText: null,
     therapyMessages: [],
     cpsOutcome: null,
+    epilogue: "",
     pendingGuidance: null,
     lastActivityAt: Date.now(),
   };
@@ -316,9 +317,15 @@ function applyTransition(state: GameState, action: GameAction): GameState {
       };
 
     case "START_EPILOGUE":
+      // The text is kept, not just the phase. The report card is generated
+      // from the epilogue, and the only other copy used to be whichever
+      // client caught the one-shot EPILOGUE event — see GameState.epilogue.
+      // START_ADULT_CHAT spreads `...state`, so it survives into `adult_chat`
+      // and the report card generated from that phase gets it too.
       return {
         ...state,
         phase: "epilogue",
+        epilogue: action.epilogue,
       };
 
     case "START_ADULT_CHAT":

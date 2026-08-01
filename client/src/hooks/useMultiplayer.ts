@@ -211,6 +211,17 @@ interface ViewerState {
    * rather than a confident `false`.
    */
   partnerPersonalitySubmitted?: boolean;
+  /**
+   * The epilogue narrative, "" before it exists.
+   *
+   * Server-owned, same class as the two fields above: `E.EPILOGUE` is a
+   * one-shot event and is not replayed on reconnect, join, or device handoff,
+   * so a client that arrived afterwards had nothing to show and nothing to
+   * base a report card on. Optional for the same reason as the others — a
+   * server that predates the field must read as `undefined`, not as a
+   * confident empty string.
+   */
+  epilogue?: string;
 }
 
 export function useMultiplayer() {
@@ -390,6 +401,12 @@ export function useMultiplayer() {
       // type so a server build that predates the field leaves the
       // event-driven value alone rather than clearing it from `undefined`.
       if (typeof s.generating === "boolean") setGenerating(s.generating);
+      // Same self-correction for the epilogue, which the one-shot E.EPILOGUE
+      // event alone left empty on any client that joined, reloaded or picked
+      // the game up on a second device after it fired. Only a non-empty value
+      // is honoured: every STATE before the epilogue exists carries "", and
+      // taking those would clobber an EPILOGUE event that arrived first.
+      if (typeof s.epilogue === "string" && s.epilogue !== "") setEpilogue(s.epilogue);
       if (s.phase !== phaseRef.current) {
         phaseRef.current = s.phase;
         clearPartnerTyping();
@@ -655,6 +672,12 @@ export function useMultiplayer() {
     // back instead of stranding the player. The epilogue screen calls this too
     // and doesn't read the flag, so it is gated to the phase that needs it.
     if (phaseRef.current === "adult_chat") setSceneEnding(true);
+    // Still sent, but no longer load-bearing: the server prefers its own copy
+    // (GameState.epilogue) and only falls back to this one for a game
+    // rehydrated from the database, where nothing restores the text. This
+    // client's value may legitimately be "" — a device that picked the game up
+    // after the epilogue was generated never saw the one-shot event — and that
+    // is exactly the case the server-side field exists to cover.
     socketRef.current?.emit(E.REPORT_CARD, { epilogue });
   }, [epilogue]);
 

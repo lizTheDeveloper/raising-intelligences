@@ -91,6 +91,26 @@ export interface GameState {
   /** Last CPS determination, if Rung 3 has run. "removal" routes the game to a
    * terminal removal epilogue. Persisted (drives the epilogue branch). */
   cpsOutcome: "stay" | "safety_plan" | "removal" | null;
+  /**
+   * The generated epilogue narrative, once `START_EPILOGUE` has run. Empty
+   * before that.
+   *
+   * Server-owned on purpose. It used to exist only in the closure of the
+   * handler that generated it and in whatever client happened to catch the
+   * one-shot `EPILOGUE` event — so the report card, which is built FROM the
+   * epilogue, took the client's copy on trust. Any client that joined,
+   * reloaded, or took the game over on another device after that event fired
+   * held `""` and could generate a report card from nothing. Keeping it in
+   * state means every STATE broadcast carries it and the server never has to
+   * ask.
+   *
+   * NOT persisted (there is no column for it, and `saveEndgame` only writes one
+   * at report-card time), so a game evicted from memory and rehydrated through
+   * `repo.loadGame` comes back with `""`. That pre-existing durability gap is
+   * why the socket handler still falls back to the client's value when state
+   * has none.
+   */
+  epilogue: string;
   /** Queued for the next World Manager call: weave a supportive side
    * character into the next scene giving genuinely good, actionable advice
    * relevant to this (never naming or diagnosing the pattern). Cleared once
