@@ -1,5 +1,5 @@
 import type { Server, Socket } from "socket.io";
-import type { GameState, Sender, ParentPersonality } from "../types.js";
+import type { GameState, GameEvent, Sender, ParentPersonality } from "../types.js";
 import type { ConversationEngine } from "../game/conversation-engine.js";
 import type { EndgameEngine } from "../game/endgame-engine.js";
 import type { GameRepository } from "../db/repository.js";
@@ -38,6 +38,7 @@ import {
   type TherapyMessagePayload,
   type AdultChatPayload,
   type PersonalityPayload,
+  type TypingPayload,
   type LobbyState,
   type ViewerState,
 } from "./protocol.js";
@@ -73,7 +74,90 @@ interface SocketData {
 // THERAPY_MESSAGE parity with REST.
 const MAX_MESSAGE_LENGTH = 2000;
 
-function viewerState(state: GameState, slot: Sender): ViewerState {
+/**
+ * A game rehydrated from the database can come back in `event_intro` holding
+ * the PREVIOUS scene's event, which is a state the live state machine never
+ * produces (LOAD_EVENT is guarded on `currentEvent === null`).
+ *
+ * Why it happens: `reconstructState` (db/repository.ts) rebuilds `currentEvent`
+ * as `events.find(e => e.eventNumber === currentEventNumber)`, but END_DEBRIEF
+ * and END_INTERVENTION set `currentEvent: null` WITHOUT advancing
+ * `currentEventNumber`. So a game parked between scenes persists as
+ * "phase=event_intro, current_event_number=N" while the events table still
+ * holds scene N — and any reload (JOIN after the 4h eviction sweep, a
+ * reconnect into a restarted process, an invite link resumed later) resurrects
+ * scene N as if it were pending.
+ *
+ * Two things then go wrong, both reported from live play: the event_intro
+ * screen renders the previous scene's description (playtest note 7), and the
+ * READY recovery branch calls beginChat() on it, dropping both players back
+ * into the scene they just finished, transcript and all.
+ *
+ * `event_intro` + a loaded event is only ever a within-lock transient here, so
+ * normalising it away on rehydration is lossless: the pair simply generate a
+ * fresh scene at the next gate. The durable fix belongs in `reconstructState`
+ * (the games row cannot represent "no current event"); this keeps the socket
+ * transport correct in the meantime.
+ */
+function normalizeRehydrated(state: GameState): GameState {
+  if (
+    state.phase === "event_intro" &&
+    state.currentEvent !== null &&
+    sceneAlreadyPlayed(state)
+  ) {
+    return { ...state, currentEvent: null };
+  }
+  return state;
+}
+
+/**
+ * Room holding every socket currently authenticated to one parent slot.
+ *
+ * STATE cannot be a plain room broadcast the way LOBBY/GENERATING/DOC_CHUNK are
+ * — `viewerState` is slot-specific (it filters `visibleTo`, which is what keeps
+ * a sidebar private). But addressing it to `player.connectionId`, a single
+ * remembered socket id, made STATE the only message in the protocol that a
+ * second socket for the same player never receives.
+ *
+ * `reconnectPlayer` overwrites `connectionId` and `addPlayer`'s
+ * disconnected-slot reclaim replaces the whole player entry, while socket.io
+ * leaves the superseded socket in the game room. That socket then keeps getting
+ * LOBBY, GENERATING, KID_CHUNK and MESSAGE_DONE, and never another STATE: ready
+ * counts and "building the next scene…" tick along live on top of a game view
+ * frozen at whatever scene it last received. Every symptom of a "stuck" client
+ * follows from that one asymmetry.
+ *
+ * A per-slot room fixes it at the addressing layer: every socket that joined as
+ * that slot is a member, sockets that have gone away are removed by socket.io
+ * itself, and the privacy boundary is unchanged (a slot room only ever contains
+ * sockets that authenticated to that slot).
+ */
+function slotRoom(gameId: string, slot: Sender): string {
+  return `${gameId}:${slot}`;
+}
+
+/**
+ * Whether the scene at `currentEventNumber` has already been played out.
+ *
+ * Two independent signals, because either can be absent:
+ * - real family-chat messages stamped with this event number (debrief messages
+ *   are the two parents talking afterwards, so they don't count as the scene
+ *   being live); and
+ * - an identity snapshot for this event number. `endChat` has no minimum
+ *   message count, so a scene ended with zero parent messages leaves no
+ *   messages at all — but IDENTITY_UPDATED always pushes a snapshot stamped
+ *   with the finished scene's number, which makes it the reliable marker.
+ */
+function sceneAlreadyPlayed(state: GameState): boolean {
+  return (
+    state.messages.some(
+      (m) => m.eventNumber === state.currentEventNumber && m.chatType !== "debrief"
+    ) ||
+    state.identitySnapshots.some((s) => s.eventNumber === state.currentEventNumber)
+  );
+}
+
+function viewerState(state: GameState, slot: Sender, generating: boolean): ViewerState {
   const messages = state.messages.filter((m) => m.visibleTo.includes(slot));
   return {
     id: state.id,
@@ -91,6 +175,7 @@ function viewerState(state: GameState, slot: Sender): ViewerState {
     sidebarUsed: state.sidebarUsed,
     interventionText: state.interventionText,
     therapyMessages: state.therapyMessages,
+    generating,
   };
 }
 
@@ -117,14 +202,51 @@ export function registerSocketHandlers(deps: SocketDeps): void {
   // album moments are a bare INSERT and would otherwise be duplicated.
   const albumGenerated = new Set<string>();
 
+  // Games with a scenario generation in flight right now. This is the SOURCE OF
+  // TRUTH behind ViewerState.generating — set before the (long) world-manager
+  // await and cleared in the matching `finally`, so every STATE broadcast,
+  // reconnect and fresh join reports the truth instead of relying on a client
+  // having caught a one-shot GENERATING event. Never inferred from phase.
+  const generatingGames = new Set<string>();
+
+  // Next-event prefetches, keyed by game — the multiplayer twin of the map in
+  // routes/game.ts. Kicked off when a scene ends so the world-manager call runs
+  // in parallel with the psychologist/identity-document pass and the debrief
+  // beat, instead of making the pair sit through the full ~20s wait at the
+  // event_intro gate. Promises are pre-caught to null: an orphaned prefetch
+  // (game abandoned, provider error) must be inert, never an unhandled
+  // rejection, and a null simply falls back to the synchronous loadEvent path.
+  const prefetchedEvents = new Map<string, Promise<GameEvent | null>>();
+
+  function startPrefetch(state: GameState): void {
+    if (state.currentEventNumber >= state.totalEvents) return;
+    prefetchedEvents.set(
+      state.id,
+      conversationEngine.prefetchNextEvent(state).catch((err) => {
+        logger.error("prefetch_next_event_failed", {
+          gameId: state.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return null;
+      })
+    );
+  }
+
   function broadcastState(gameId: string): void {
     const state = games.get(gameId);
     const session = sessions.get(gameId);
     if (!state || !session) return;
+    const generating = generatingGames.has(gameId);
     for (const player of session.players) {
-      if (player.connected) {
-        io.to(player.connectionId).emit(E.STATE, viewerState(state, player.slot));
-      }
+      // No `connected` gate: a genuinely departed player's slot room is empty,
+      // so this is a no-op for them — whereas gating on the flag meant any
+      // player whose entry was momentarily marked disconnected, or superseded
+      // by a newer socket, stopped receiving STATE while every other event in
+      // the protocol kept arriving. See slotRoom.
+      io.to(slotRoom(gameId, player.slot)).emit(
+        E.STATE,
+        viewerState(state, player.slot, generating)
+      );
     }
   }
 
@@ -147,6 +269,20 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     const session = sessions.get(gameId);
     if (!state || !session) return;
     if (state.phase !== "family_chat") return;
+
+    // Kick the next scene off NOW, so the world manager runs in parallel with
+    // the psychologist below and with however long the pair spend in the
+    // debrief — rather than serially at the event_intro gate, where two people
+    // sat watching "building the next scene…" for the whole call. This mirrors
+    // the solo/HTTP path (routes/game.ts end-chat). It reuses the current
+    // identity document, one scene behind: guidance queued by *this* scene's
+    // trajectory check lands in the following scene's prefetch. A natural
+    // one-scene delay, not a bug.
+    //
+    // Placed after the phase guard above so a duplicate END_CHAT (double-click,
+    // reconnect, retry) cannot start a second world-manager call.
+    startPrefetch(state);
+
     const emitChunk = (chunk: string) => {
       io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
     };
@@ -228,7 +364,15 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     }
 
     function currentState(): GameState | undefined {
-      return data.gameId ? games.get(data.gameId) : undefined;
+      const state = data.gameId ? games.get(data.gameId) : undefined;
+      if (!state) return state;
+      // Repair-on-read, with write-back so the shared map converges: any
+      // transport can seed `games` from the repository (lib/resolve-game.ts),
+      // and only this normalisation keeps a rehydrated between-scenes game from
+      // handing the READY handler a scene it has already played.
+      const repaired = normalizeRehydrated(state);
+      if (repaired !== state) games.set(state.id, repaired);
+      return repaired;
     }
 
     // ---- CREATE_GAME ----
@@ -250,6 +394,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       data.gameId = state.id;
       data.slot = added.player.slot;
       await socket.join(state.id);
+      await socket.join(slotRoom(state.id, added.player.slot));
 
       await repo.savePlayer(state.id, added.player.slot, added.player.displayName, added.player.token, added.player.userId);
       socket.emit(E.JOINED, { gameId: state.id, slot: added.player.slot, playerToken: added.player.token });
@@ -272,6 +417,17 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         }
       }
       if (!state) return fail("Game not found");
+
+      // Repair the one state the persistence layer cannot represent faithfully
+      // (see normalizeRehydrated). Applied to the resolved state, not just to a
+      // fresh reload: `lib/resolve-game.ts` seeds the SAME games map from the
+      // repo on any REST touch, so the map can already hold an unrepaired
+      // reload by the time a player joins.
+      const repaired = normalizeRehydrated(state);
+      if (repaired !== state) {
+        games.set(gameId, repaired);
+        state = repaired;
+      }
 
       // Restore session from DB if not in memory
       let session = sessions.get(gameId) ?? createSession(gameId);
@@ -307,9 +463,16 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           data.gameId = gameId;
           data.slot = reconnected.player.slot;
           await socket.join(gameId);
+          await socket.join(slotRoom(gameId, reconnected.player.slot));
           socket.emit(E.JOINED, { gameId, slot: reconnected.player.slot, playerToken: reconnected.player.token });
           broadcastLobby(gameId);
-          socket.emit(E.STATE, viewerState(state, reconnected.player.slot));
+          // Reconnect used to emit STATE but never GENERATING, so a returning
+          // client kept whatever stale generating flag it had. The flag now
+          // rides on STATE itself, which closes that hole (playtest note 7).
+          socket.emit(
+            E.STATE,
+            viewerState(state, reconnected.player.slot, generatingGames.has(gameId))
+          );
           return;
         }
       }
@@ -327,11 +490,15 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       data.gameId = gameId;
       data.slot = added.player.slot;
       await socket.join(gameId);
+      await socket.join(slotRoom(gameId, added.player.slot));
 
       await repo.savePlayer(gameId, added.player.slot, added.player.displayName, added.player.token, added.player.userId);
       socket.emit(E.JOINED, { gameId, slot: added.player.slot, playerToken: added.player.token });
       broadcastLobby(gameId);
-      socket.emit(E.STATE, viewerState(state, added.player.slot));
+      socket.emit(
+        E.STATE,
+        viewerState(state, added.player.slot, generatingGames.has(gameId))
+      );
     });
 
     // ---- READY ----
@@ -364,8 +531,20 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         broadcastLobby(gameId);
 
         try {
-          if (state.phase === "event_intro" && state.currentEvent === null) {
-            // One gate takes the pair all the way into the chat: generate the
+          // A fresh scene is needed when no scenario is loaded, and ALSO when
+          // the loaded scenario has already been played out. The latter is the
+          // "it dropped us back into the same conversation" report: a
+          // rehydrated game can arrive at event_intro still holding the last
+          // finished scene (see normalizeRehydrated), and the recovery branch
+          // below would beginChat() straight back into it — same event, same
+          // transcript. Playing a scene twice is never the right answer, so it
+          // routes here instead.
+          const needsFreshScene =
+            state.phase === "event_intro" &&
+            (state.currentEvent === null || sceneAlreadyPlayed(state));
+
+          if (needsFreshScene) {
+            // One gate takes the pair all the way into the chat: obtain the
             // scenario, then begin the chat inside the same lock.
             //
             // This used to stop after loadEvent and demand a SECOND both-ready
@@ -373,22 +552,59 @@ export function registerSocketHandlers(deps: SocketDeps): void {
             // event_intro with zero messages and no exception logged — two
             // people cannot reliably re-synchronise across a ~20s model call
             // while the UI silently clears the ready flags they just set.
+            generatingGames.add(gameId);
             io.to(gameId).emit(E.GENERATING, { generating: true });
+            // Broadcast immediately so the flag reaches clients on STATE too,
+            // not only via the fire-and-forget GENERATING event.
+            broadcastState(gameId);
             try {
-              const loaded = await conversationEngine.loadEvent(state);
-              if (loaded.currentEvent) await repo.saveEvent(loaded.id, loaded.currentEvent);
-              const next = conversationEngine.beginChat(loaded);
+              // LOAD_EVENT is guarded on `currentEvent === null`, so a stale
+              // already-played scenario has to be cleared before we regenerate.
+              const base =
+                state.currentEvent === null ? state : { ...state, currentEvent: null };
+
+              // Consume the prefetch started at scene end (endChat). When one
+              // is available this gate costs nothing; otherwise — first scene
+              // of the game, a failed prefetch, or a game rehydrated in another
+              // process — fall back to the synchronous world-manager call.
+              const pending = prefetchedEvents.get(gameId);
+              prefetchedEvents.delete(gameId);
+              const prefetched = pending ? await pending : null;
+
+              // applyPrefetchedEvent reduces START_EVENT, which lands directly
+              // in family_chat — beginChat() after it would be an illegal
+              // transition. Only the loadEvent path needs the second step.
+              const next = prefetched
+                ? conversationEngine.applyPrefetchedEvent(base, prefetched)
+                : conversationEngine.beginChat(await conversationEngine.loadEvent(base));
+
+              // Save order is deliberate and crash-safe: the event row lands
+              // BEFORE the game row. Crashing in between leaves the games row
+              // one scene back, which regenerates cleanly (saveEvent upserts on
+              // (game_id, event_number)). The reverse order would persist
+              // "family_chat at scene N+1" with no scene N+1 row — a chat with
+              // no scenario, unrecoverable.
+              if (next.currentEvent) await repo.saveEvent(next.id, next.currentEvent);
               games.set(next.id, next);
               await repo.saveGame(next);
-              broadcastState(gameId);
-              broadcastLobby(gameId);
               generateNextPortrait(gameId).catch(() => {});
             } finally {
+              // Order matters. Clearing the flag first means the STATE below
+              // already carries `generating: false` alongside the new scene, so
+              // the authoritative update lands as one consistent frame. The
+              // GENERATING event goes out AFTER it: emitting it first left a
+              // window where a client held generating=false against a stale
+              // event_intro STATE and briefly rendered a live ready button.
+              generatingGames.delete(gameId);
+              broadcastState(gameId);
               io.to(gameId).emit(E.GENERATING, { generating: false });
+              broadcastLobby(gameId);
             }
           } else if (state.phase === "event_intro" && state.currentEvent !== null) {
             // Recovery path: games left mid-handshake by the old two-round gate
-            // still have a scenario but no chat. One gate finishes them.
+            // still have a scenario and no messages against it. One gate
+            // finishes them. Guarded by needsFreshScene above, so this can only
+            // begin a scene that has genuinely never been played.
             const next = conversationEngine.beginChat(state);
             games.set(next.id, next);
             await repo.saveGame(next);
@@ -518,12 +734,44 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           return;
         }
 
+        // ---- Debrief chat ----
+        // "Later that night. The kids are asleep. It's just you two." The one
+        // screen in the game where two humans talk to each other with nothing
+        // generating between them: append, persist, broadcast — no kid LLM
+        // turn, no scene-end detection, no message cap, no endChat. The
+        // reducer stamps chatType "debrief" and visibleTo [parent1, parent2],
+        // which keeps it out of every LLM context (they all filter through
+        // currentEventMessages(), which admits only shared|private) and out of
+        // the per-scene message count (repository.ts reconstructState).
+        //
+        // Moderation still runs above: this is player-typed free text in a
+        // game about a child, so the Tier B bright line applies here too.
+        if (state.phase === "debrief") {
+          const next = transition(state, {
+            type: "PARENT_MESSAGE",
+            sender: slot,
+            content: payload.content.trim(),
+          });
+          games.set(next.id, next);
+          const appended = next.messages[next.messages.length - 1];
+          if (appended) await repo.saveMessage(next.id, appended);
+          await repo.saveGame(next);
+          broadcastState(gameId);
+          // Nothing streams here, but the client clears its in-flight send
+          // state on MESSAGE_DONE, so the round trip still has to be closed.
+          io.to(gameId).emit(E.MESSAGE_DONE, {});
+          return;
+        }
+
         const inSidebar = state.phase === "sidebar";
         const emitChunk = (chunk: string) => {
           const filtered = chunk.replace(/\[SCENE_END\]/g, "");
           if (!filtered) return;
           if (inSidebar) {
-            socket.emit(E.KID_CHUNK, { text: filtered });
+            // Slot room, not `socket` — a private sidebar belongs to the
+            // PLAYER, so every socket that parent has open should see the
+            // stream, and no socket belonging to the other parent should.
+            io.to(slotRoom(gameId, slot)).emit(E.KID_CHUNK, { text: filtered });
           } else {
             io.to(gameId).emit(E.KID_CHUNK, { text: filtered });
           }
@@ -662,6 +910,19 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         io.to(gameId).emit(E.DOC_DONE, { documentType: "therapy" });
         broadcastState(gameId);
       }).catch((err) => failWithError(err, "THERAPY_MESSAGE"));
+    });
+
+    // ---- TYPING ----
+    // Co-presence only. Deliberately does nothing else: no lock, no state
+    // machine, no persistence, no rate limit beyond what the client's own
+    // debounce provides. `socket.to(room)` excludes the sender, so a player
+    // never sees their own typing indicator echoed back. Silently ignored when
+    // the socket is not in a game — a stray ping is not worth an ERROR frame.
+    socket.on(E.TYPING, (payload: TypingPayload) => {
+      const gameId = data.gameId;
+      const slot = data.slot;
+      if (!gameId || !slot) return;
+      socket.to(gameId).emit(E.TYPING, { slot, typing: !!payload?.typing });
     });
 
     socket.on(E.START_SIDEBAR, () => {

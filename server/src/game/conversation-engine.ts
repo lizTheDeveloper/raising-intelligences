@@ -92,6 +92,17 @@ export class ConversationEngine {
     content: string,
     onKidChunk?: (chunk: string) => void
   ): Promise<{ state: GameState; kidResponse: string; sceneSafety?: SceneSafetyResult }> {
+    // The debrief chat has no kid turn — the child is asleep; it is two humans
+    // talking. PARENT_MESSAGE is now a legal transition from `debrief` (so the
+    // socket handler can append the message directly), which means this method
+    // must refuse it explicitly: without this guard a caller that does not
+    // phase-check first — REST's POST /game/:id/message only rejects "ended" —
+    // would append the parent message, pay for a kid completion, and only THEN
+    // throw on `KID_MESSAGE from phase debrief`, leaving a half-applied state.
+    if (state.phase === "debrief") {
+      throw new Error("Invalid transition: KID_MESSAGE from phase debrief");
+    }
+
     let next = transition(state, { type: "PARENT_MESSAGE", sender, content });
 
     const ctx = buildKidContext(next);

@@ -108,6 +108,12 @@ export function canTransition(state: GameState, action: GameAction): boolean {
       if (state.phase === "sidebar") {
         return state.sidebarActive === action.sender;
       }
+      // Debrief chat: "later that night, the kids are asleep, it's just you
+      // two." Deliberately NOT subject to PARENT_MESSAGE_CAP — that cap is the
+      // per-scene family-chat budget, and a debrief message must never eat a
+      // parent's turns with their child. See the PARENT_MESSAGE reducer for
+      // the chatType/visibleTo stamping that keeps the kid out of it.
+      if (state.phase === "debrief") return true;
       return (
         state.phase === "family_chat" && state.parentMessageCount < PARENT_MESSAGE_CAP
       );
@@ -190,9 +196,24 @@ function applyTransition(state: GameState, action: GameAction): GameState {
       };
 
     case "PARENT_MESSAGE": {
-      const chatType = state.phase === "sidebar" ? ("private" as const) : ("shared" as const);
-      const visibleTo: Sender[] =
-        chatType === "private" ? [action.sender, "kid"] : ["parent1", "parent2", "kid"];
+      // The debrief is the one room in the game where the two humans talk to
+      // each other with nothing generating between them: the kid is asleep, so
+      // the message is stamped `debrief` and made invisible to "kid" (which
+      // keeps it out of buildKidContext / buildSceneTranscript / the identity
+      // document — all of which go through currentEventMessages(), which
+      // already admits only "shared" | "private"). It also must not consume the
+      // per-scene parent-message budget.
+      const isDebrief = state.phase === "debrief";
+      const chatType = isDebrief
+        ? ("debrief" as const)
+        : state.phase === "sidebar"
+        ? ("private" as const)
+        : ("shared" as const);
+      const visibleTo: Sender[] = isDebrief
+        ? ["parent1", "parent2"]
+        : chatType === "private"
+        ? [action.sender, "kid"]
+        : ["parent1", "parent2", "kid"];
       const message: Message = {
         sender: action.sender,
         content: action.content,
@@ -204,7 +225,9 @@ function applyTransition(state: GameState, action: GameAction): GameState {
       return {
         ...state,
         messages: [...state.messages, message],
-        parentMessageCount: state.parentMessageCount + 1,
+        parentMessageCount: isDebrief
+          ? state.parentMessageCount
+          : state.parentMessageCount + 1,
       };
     }
 
@@ -285,10 +308,22 @@ function applyTransition(state: GameState, action: GameAction): GameState {
       };
 
     case "START_ADULT_CHAT":
+      // Advances currentEventNumber and appends to `events` exactly like
+      // START_EVENT, because the adult conversation IS another scene.
+      //
+      // It previously swapped `currentEvent` while leaving the number pinned to
+      // the final childhood scene, so PARENT_MESSAGE stamped adult-chat
+      // messages with that scene's eventNumber. Anything keyed on the number
+      // then conflated the two: the per-scene transcript filter would render
+      // the last childhood conversation above the adult one (playtest item 4),
+      // currentEventMessages() fed the childhood transcript into the adult
+      // kid-context, and reconstructState's parentMessageCount counted both.
       return {
         ...state,
         phase: "adult_chat",
         currentEvent: action.event,
+        currentEventNumber: state.currentEventNumber + 1,
+        events: [...state.events, action.event],
         parentMessageCount: 0,
       };
 

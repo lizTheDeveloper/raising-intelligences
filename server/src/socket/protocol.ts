@@ -39,6 +39,11 @@ export interface PersonalityPayload {
   confessional1?: string;
   confessional2?: string;
 }
+/** Client → server co-presence ping. Fire-and-forget: no persistence, no
+ * state-machine involvement, no lock. Ignored when the socket is not in a game. */
+export interface TypingPayload {
+  typing: boolean;
+}
 
 // ---- Server → Client ----
 export interface PublicPlayer {
@@ -76,6 +81,25 @@ export interface ViewerState {
   interventionText: string | null;
   /** Rung-2 family-therapy session transcript, for the therapy screen. */
   therapyMessages: TherapyMessage[];
+  /**
+   * Whether the server is currently generating the next scenario for this game.
+   * Derived from server-owned in-flight state on EVERY viewerState() call, so
+   * every STATE broadcast self-corrects it — including the reconnect/join paths,
+   * which emit STATE but no GENERATING event.
+   *
+   * This is the source of truth. `E.GENERATING` still fires around the call for
+   * latency (the client may use it as a fast-path hint), but it is a
+   * fire-and-forget event: a client that misses the `false` edge (reconnect,
+   * backgrounded tab, dropped frame) used to display "building the next
+   * scene…" forever over a perfectly correct scene. See playtest note 7.
+   */
+  generating: boolean;
+}
+
+/** Server → room co-presence broadcast, emitted to the *other* player only. */
+export interface TypingBroadcast {
+  slot: Sender;
+  typing: boolean;
 }
 
 export const SOCKET_EVENTS = {
@@ -88,6 +112,10 @@ export const SOCKET_EVENTS = {
    * Distinct from PARENT_MESSAGE (guarded to family_chat) so the two flows
    * stay unambiguous. */
   THERAPY_MESSAGE: "therapy_message",
+  /** Co-presence signal. Client → server `{ typing }`; the server re-broadcasts
+   * `{ slot, typing }` under the same name to the OTHER player only. Purely
+   * ephemeral: no persistence, no state-machine involvement, no game lock. */
+  TYPING: "typing",
   START_SIDEBAR: "start_sidebar",
   END_SIDEBAR: "end_sidebar",
   END_CHAT: "end_chat",
