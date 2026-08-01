@@ -38,6 +38,16 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   const [relationship, setRelationship] = useState(RELATIONSHIP_OPTIONS[0]);
   const [guardianDismissed, setGuardianDismissed] = useState(false);
   const autoResumeAttempted = useRef(false);
+  /**
+   * A handoff redemption is in flight.
+   *
+   * Not cosmetic: without it the join form flashes on screen between mount and
+   * JOINED, and submitting it would emit a *new* join for a game that already
+   * has two players — which, if the co-parent happened to be disconnected, the
+   * server would satisfy by reclaiming their slot. The player who followed a
+   * link to their own seat must never be able to land in the other one.
+   */
+  const [redeemingHandoff, setRedeemingHandoff] = useState(false);
 
   // "Previous kids" — mirror the solo flow so a two-parent player can see and
   // reopen the children they've raised, both in this browser and (when logged
@@ -61,6 +71,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     // single-use so it has to be spent on the intent the player just expressed.
     const code = takeHandoffCodeFromUrl();
     if (code && joinGameId) {
+      setRedeemingHandoff(true);
       mp.redeemHandoff(joinGameId, code);
       return;
     }
@@ -205,6 +216,24 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   // Previous kids to offer on the setup screen: server-backed when signed in,
   // otherwise this browser's local history.
   const galleryKids = cloudKids.length > 0 ? cloudKids : getSavedKids();
+
+  // ---- Picking up a handoff link, before the slot comes back ----
+  // Held until JOINED (which sets mp.gameId and moves us on) or until the
+  // server refuses the code, at which point mp.error explains why on the
+  // ordinary setup screen below.
+  if (!mp.gameId && redeemingHandoff && !mp.error) {
+    return (
+      <div className="app fade-in">
+        <div className="start-screen">
+          <div className="start-glow" aria-hidden="true" />
+          <h1>raising intelligences</h1>
+          <p className="dim" role="status" aria-live="polite">
+            picking up where you left off…
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // ---- Setup: create or join ----
   if (!mp.gameId) {
