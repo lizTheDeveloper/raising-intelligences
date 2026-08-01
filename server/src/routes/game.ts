@@ -8,6 +8,7 @@ import {
   createGame,
   PARENT_MESSAGE_CAP,
   transition,
+  canTransition,
   concernDeltaForTier,
   selectDueRung,
   CONSULT_DECAY,
@@ -192,6 +193,28 @@ export function createGameRoutes(
           // A terminated session must not accept further input.
           if (state.phase === "ended") {
             sseTerminated(res);
+            return;
+          }
+
+          // This REST endpoint is the solo family-chat path: it produces a KID
+          // response, so it can only serve phases where the kid replies
+          // (family_chat / sidebar / adult_chat). Reject anything else CLEANLY,
+          // before moderation/LLM work:
+          //   - `debrief` is a legal PARENT_MESSAGE transition (the parents-only
+          //     night chat) but has NO kid turn — handleParentMessage refuses it
+          //     by throwing `KID_MESSAGE from phase debrief`. Debrief chat is a
+          //     multiplayer/socket feature; solo has no debrief input, so a REST
+          //     debrief message is only a stray/racy send (a message in flight as
+          //     family_chat -> debrief).
+          //   - other phases (processing/epilogue/…) aren't valid PARENT_MESSAGE
+          //     transitions at all.
+          // Either way, letting it fall through throws inside handleParentMessage,
+          // caught into a generic 500 + a GlitchTip event (RI's
+          // PARENT_MESSAGE/KID_MESSAGE-from-debrief errors). Mirrors the end-chat
+          // idempotency + end-debrief 409 guards; the client reconciles to the
+          // real phase.
+          if (state.phase === "debrief" || !canTransition(state, { type: "PARENT_MESSAGE", sender, content })) {
+            sseError(res, "This conversation can no longer accept messages.");
             return;
           }
 
