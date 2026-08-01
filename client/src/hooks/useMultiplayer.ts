@@ -641,6 +641,20 @@ export function useMultiplayer() {
   );
   const generateReportCard = useCallback(() => {
     setStreamingDocText("");
+    // Make the press visible when this is the `adult_chat` exit. That screen's
+    // button is `disabled={isStreaming}`, and `isStreaming` is the kid-message
+    // flag which this never sets — so without this the player presses, the
+    // report-card LLM call runs for its full duration with the screen
+    // unchanged, and the button stays clickable. Two presses = two report
+    // cards. Same bug the `processing` broadcast removed from "walk away".
+    //
+    // Reuses `sceneEnding` rather than adding a second local flag: it already
+    // hides the exit control and disables the input, and it is already cleared
+    // on BOTH exits — the next STATE that isn't family_chat/sidebar (here, the
+    // `report_card` one) and E.ERROR, so a failed generation gives the button
+    // back instead of stranding the player. The epilogue screen calls this too
+    // and doesn't read the flag, so it is gated to the phase that needs it.
+    if (phaseRef.current === "adult_chat") setSceneEnding(true);
     socketRef.current?.emit(E.REPORT_CARD, { epilogue });
   }, [epilogue]);
 

@@ -1326,6 +1326,17 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       const gameId = data.gameId;
       const state = currentState();
       if (!gameId || !state) return fail("Not in a game");
+      // Idempotency guard, same shape as the end-chat one (RI's #1 production
+      // error). Either player can emit REPORT_CARD, and `adult_chat` now
+      // renders a "finish → report card" button for both of them — so two
+      // near-simultaneous presses used to mean two report-card LLM calls, two
+      // saveEndgame writes, and an "Invalid transition: SHOW_REPORT_CARD from
+      // phase report_card" thrown over the finished report card. Re-emit what
+      // is already there instead.
+      if (state.phase === "report_card") {
+        broadcastState(gameId);
+        return;
+      }
       try {
         const emitChunk = (chunk: string) => {
           io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });

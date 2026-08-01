@@ -531,7 +531,14 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
             partnerName={partnerName}
           />
           {mp.sceneEnding && (
-            <p className="dim scene-ending">the moment passes...</p>
+            <p className="dim scene-ending">
+              {/* One flag, two exits. "the moment passes..." is scene-end copy
+                  and reads wrong for the endgame, where what is actually
+                  happening is the report card being written. */}
+              {state.phase === "adult_chat"
+                ? "writing the report card..."
+                : "the moment passes..."}
+            </p>
           )}
           <div className="chat-controls">
             {inMySidebar && (
