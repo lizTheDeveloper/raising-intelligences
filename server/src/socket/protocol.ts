@@ -123,6 +123,17 @@ export interface ViewerState {
    * opening that isn't true.
    */
   partnerPersonalitySubmitted: boolean;
+  /**
+   * The epilogue narrative, or "" before it has been generated.
+   *
+   * Carried on every STATE for the same reason as the two fields above: the
+   * one-shot `E.EPILOGUE` event is not replayed on reconnect, join, or device
+   * handoff, so a client that arrived after it fired held "" — and the
+   * epilogue screen's "continue" sends that value up as the basis for the
+   * report card. Server-owned means a client never has to have been present
+   * for the epilogue to ask for a report card about it.
+   */
+  epilogue: string;
 }
 
 /** Server → room co-presence broadcast, emitted to the *other* player only. */

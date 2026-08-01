@@ -208,6 +208,7 @@ function viewerState(state: GameState, slot: Sender, generating: boolean): Viewe
     therapyMessages: state.therapyMessages,
     generating,
     partnerPersonalitySubmitted: !!state.parentPersonalities[otherSlot],
+    epilogue: state.epilogue,
   };
 }
 
@@ -1322,28 +1323,54 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       }
     });
 
-    socket.on(E.REPORT_CARD, async (payload: { epilogue?: string }) => {
+    socket.on(E.REPORT_CARD, (payload: { epilogue?: string }) => {
       const gameId = data.gameId;
-      const state = currentState();
-      if (!gameId || !state) return fail("Not in a game");
-      // Idempotency guard, same shape as the end-chat one (RI's #1 production
-      // error). Either player can emit REPORT_CARD, and `adult_chat` now
-      // renders a "finish → report card" button for both of them — so two
-      // near-simultaneous presses used to mean two report-card LLM calls, two
-      // saveEndgame writes, and an "Invalid transition: SHOW_REPORT_CARD from
-      // phase report_card" thrown over the finished report card. Re-emit what
-      // is already there instead.
-      if (state.phase === "report_card") {
-        broadcastState(gameId);
-        return;
-      }
-      try {
+      if (!gameId) return fail("Not in a game");
+
+      // Serialized on the game lock like every other expensive handler
+      // (READY, PARENT_MESSAGE, THERAPY_MESSAGE, END_CHAT).
+      //
+      // The phase guard below is necessary but NOT sufficient on its own: it
+      // reads a phase that only changes after the model call returns, so two
+      // presses landing inside that window both passed it. This is the one
+      // screen where that is the expected case rather than a rare race —
+      // `epilogue` and `adult_chat` both render the button to BOTH players,
+      // who are looking at it at the same moment. Two calls meant two report
+      // cards, two saveEndgame writes, and an "Invalid transition:
+      // SHOW_REPORT_CARD from phase report_card" thrown over the finished one.
+      //
+      // Nothing inside takes the lock again — endgameEngine and repo are
+      // lock-free, and the album generation below is fire-and-forget — so
+      // there is no re-entrancy here (cf. `endChat`, which is deliberately
+      // lock-free because its callers already hold it).
+      lock(gameId, async () => {
+        // Read state INSIDE the lock: the whole point is that the second
+        // press must observe what the first one committed.
+        const state = currentState();
+        if (!state) { fail("Not in a game"); return; }
+
+        // Idempotency guard, same shape as the end-chat one (RI's #1
+        // production error). Re-emit what is already there instead.
+        if (state.phase === "report_card") {
+          broadcastState(gameId);
+          return;
+        }
+
+        // The server's own copy wins. The client sends its `epilogue` up, but
+        // that value comes from the one-shot E.EPILOGUE event, so any client
+        // that joined, reloaded, or took the game over on another device
+        // afterwards holds "" — and the report card would be generated from
+        // nothing. The payload survives only as the fallback for a game
+        // rehydrated from the database, where state.epilogue is "" because
+        // there is nowhere to persist it (see GameState.epilogue).
+        const epilogue = state.epilogue || payload?.epilogue || "";
+
         const emitChunk = (chunk: string) => {
           io.to(gameId).emit(E.DOC_CHUNK, { text: chunk });
         };
-        const result = await endgameEngine.generateReportCard(state, payload?.epilogue ?? "", emitChunk);
+        const result = await endgameEngine.generateReportCard(state, epilogue, emitChunk);
         games.set(result.state.id, result.state);
-        await repo.saveEndgame(result.state.id, payload?.epilogue ?? "", result.reportCard);
+        await repo.saveEndgame(result.state.id, epilogue, result.reportCard);
         await repo.saveGame(result.state);
         broadcastState(gameId);
         io.to(gameId).emit(E.REPORT_CARD_READY, { reportCard: result.reportCard });
@@ -1360,16 +1387,14 @@ export function registerSocketHandlers(deps: SocketDeps): void {
             engine: endgameEngine,
             repo,
             state: result.state,
-            epilogue: payload?.epilogue ?? "",
+            epilogue,
             reportCard: result.reportCard,
             players,
           }).catch((e) => {
             logger.error("mp_album_generation_failed", { gameId, error: (e as Error).message });
           });
         }
-      } catch (err) {
-        failWithError(err, "REPORT_CARD");
-      }
+      }).catch((err) => failWithError(err, "REPORT_CARD"));
     });
 
     // ---- SUBMIT_PERSONALITY ----

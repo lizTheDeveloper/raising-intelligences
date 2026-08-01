@@ -228,6 +228,12 @@ function reconstructState(input: {
     interventionText: null,
     therapyMessages: input.therapyMessages ?? [],
     cpsOutcome: input.cpsOutcome ?? null,
+    // Not persisted anywhere the games row can reach: the endgames row that
+    // holds the epilogue is only written at report-card time. A game
+    // rehydrated in the `epilogue` phase therefore comes back without its
+    // text, and the socket REPORT_CARD handler falls back to the client's copy
+    // for exactly that case. See GameState.epilogue.
+    epilogue: "",
     pendingGuidance: null,
     lastActivityAt: Date.now(),
   };

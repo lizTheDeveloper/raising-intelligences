@@ -99,12 +99,18 @@ export function createEndgameRoutes(
       await lock(req.params.id as string, async () => {
         const state = await resolve(req.params.id as string);
         if (!state) { sseError(res, "Game not found"); return; }
+        // Server's own copy wins over the request body, matching the socket
+        // REPORT_CARD handler: the client's epilogue can be "" on any client
+        // that wasn't present when it was generated. The body survives as the
+        // fallback for a game rehydrated from the database, where the epilogue
+        // is not restored (see GameState.epilogue).
+        const resolvedEpilogue = state.epilogue || epilogue || "";
         try {
-          const result = await engine.generateReportCard(state, epilogue ?? "", (chunk) => {
+          const result = await engine.generateReportCard(state, resolvedEpilogue, (chunk) => {
             sseChunk(res, chunk);
           });
           games.set(result.state.id, result.state);
-          await repo.saveEndgame(result.state.id, epilogue ?? "", result.reportCard);
+          await repo.saveEndgame(result.state.id, resolvedEpilogue, result.reportCard);
           await repo.saveGame(result.state);
           sseDone(res, { phase: result.state.phase, reportCard: result.reportCard });
 
@@ -122,7 +128,7 @@ export function createEndgameRoutes(
                 }
 
                 const albumData = await engine.generateAlbumData(
-                  state, epilogue ?? "", result.reportCard, partnerDisplayName
+                  state, resolvedEpilogue, result.reportCard, partnerDisplayName
                 );
 
                 const partnerType = isSoloGame ? "generated" : "real";
