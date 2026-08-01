@@ -279,3 +279,44 @@ This shares a root cause with #2: both are client-local React state duplicating
 something the server already owns, drifting when the server changes it out from
 under them. `gateReady`, `ladderReady`, and `generating` are all the same bug
 class. Worth fixing as one pass rather than three patches.
+
+### 8. Advancing drops players back into the same conversation
+
+> "it dropped us back into the same conversation."
+
+Reported immediately after using the item-2 workaround to break the ready
+deadlock in game `8eda7ff3`.
+
+**The recovery branch replays the scene.** `handlers.ts:389`:
+
+```ts
+} else if (state.phase === "event_intro" && state.currentEvent !== null) {
+  const next = conversationEngine.beginChat(state);
+```
+
+`beginChat` reduces to `BEGIN_FAMILY_CHAT` (`conversation-engine.ts:85-87`), and
+that reducer (`state-machine.ts:176-180`) does nothing but flip `phase` to
+`family_chat`. It does **not** clear `messages`, does **not** reset
+`parentMessageCount`, and does **not** load a new event. So every time that
+branch fires, the players land back in family_chat on the same event with the
+same transcript.
+
+The branch is commented as a one-off recovery for games stranded by the older
+two-round ready gate, but it is plainly reachable in normal play. Note 7's
+screenshot is corroborating evidence: `event_intro` rendering a live scene
+description means `currentEvent` really is non-null at `event_intro` in the wild.
+
+**Open question handed to implementation:** how does a game *reach*
+`event_intro` with a non-null `currentEvent`? In the in-memory `games` map the
+happy path goes straight from `event_intro`/null to `family_chat`/scene inside
+one lock and never rests in between. Leading hypothesis is **rehydration**:
+`repo.saveEvent(...)` is awaited *before* `repo.saveGame(next)`
+(`handlers.ts:380-383`), leaving a window where the events table has the new
+event but the games row still reads `event_intro`. If the loader reconstructs
+`currentEvent` from the events table on JOIN/reconnect or after a restart, a
+rehydrated game lands in exactly this state. That would explain both this item
+and note 7.
+
+Fixing the branch alone is not enough — if it is genuinely dead it should go,
+and if it is still needed it must start a fresh scene rather than silently
+replaying the old one. The save ordering wants to be crash-safe either way.
