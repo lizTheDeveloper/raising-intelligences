@@ -250,6 +250,9 @@ export function useMultiplayer() {
   const supersededRef = useRef(false);
   /** A handoff code waiting for the socket to finish connecting. */
   const pendingHandoffRef = useRef<{ gameId: string; code: string } | null>(null);
+  /** A "take it back on this device" waiting for the same. Same mechanism as
+   * pendingHandoffRef, for the same reason — see reclaimHere. */
+  const pendingReclaimRef = useRef<{ gameId: string; playerToken: string } | null>(null);
   /** Our own slot, readable from inside the socket listeners (which are
    * registered once and never see later renders' state). */
   const slotRef = useRef<Slot | null>(null);
@@ -281,6 +284,15 @@ export function useMultiplayer() {
       if (pending) {
         pendingHandoffRef.current = null;
         socket.emit(E.JOIN_GAME, { gameId: pending.gameId, handoffCode: pending.code });
+        return;
+      }
+      // An explicit "play here instead" outranks the automatic resume below —
+      // and must be the ONLY join this connection makes, or we'd emit twice for
+      // the same slot on a socket that had gone away and come back.
+      const reclaim = pendingReclaimRef.current;
+      if (reclaim) {
+        pendingReclaimRef.current = null;
+        socket.emit(E.JOIN_GAME, reclaim);
         return;
       }
       // Don't crawl back into a game another device has taken over. Purely a
@@ -478,15 +490,32 @@ export function useMultiplayer() {
    * credential this device already holds — no code round-trip — and in turn
    * supersedes whichever device is currently playing, which gets the same
    * notice this one just showed. The handoff is symmetric in both directions.
+   *
+   * Goes through `pendingReclaimRef` and the connect handler rather than
+   * emitting directly, because the device being taken back is very often the
+   * one that went away: a phone in a pocket, a laptop that slept. Its socket
+   * may be disconnected, in which case a direct emit would sit in socket.io's
+   * buffer and land *alongside* the connect handler's own automatic resume —
+   * two JOIN_GAMEs for one slot, the second superseding the first. Spending the
+   * intent inside the connect handler makes that unrepresentable.
    */
   const reclaimHere = useCallback(() => {
     const resume = loadResume();
-    const id = gameIdRef.current ?? resume?.gameId;
-    const token = playerTokenRef.current ?? resume?.playerToken;
-    if (!id || !token) return;
+    const gameId = gameIdRef.current ?? resume?.gameId;
+    const playerToken = playerTokenRef.current ?? resume?.playerToken;
+    if (!gameId || !playerToken) return;
     supersededRef.current = false;
     setSuperseded(false);
-    ensureSocket().emit(E.JOIN_GAME, { gameId: id, playerToken: token });
+    pendingReclaimRef.current = { gameId, playerToken };
+    const socket = ensureSocket();
+    if (socket.connected) {
+      pendingReclaimRef.current = null;
+      socket.emit(E.JOIN_GAME, { gameId, playerToken });
+    } else {
+      // Dropped, or exhausted its reconnection attempts while the player was
+      // away. Nudge it; the connect handler spends the intent above.
+      socket.connect();
+    }
   }, [ensureSocket]);
 
   const sendMessage = useCallback((content: string) => {
