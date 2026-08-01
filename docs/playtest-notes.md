@@ -114,6 +114,10 @@ coupling is purely structural: `IDENTITY_UPDATED` is what sets the phase. That
 suggests splitting the transition (enter `debrief` on `END_FAMILY_CHAT`, apply
 the identity document when it lands) rather than reordering.
 
+**See item 6** — the reason "static text" is the right description is that the
+debrief conversation was never built. Moving parents into the debrief early only
+pays off if there's something there to do; otherwise it relocates the wait.
+
 **Open question to resolve before implementing:** the psychologist document
 streams to clients via `DOC_CHUNK` during `processing`. If any downstream screen
 or the report card assumes the document has fully landed by the time `debrief`
@@ -173,3 +177,44 @@ room, surfaced near `MessageInput`. Worth noting it compounds with #1 and #2 —
 this is a two-player game where the current co-presence cues are the ready
 counter and nothing else, which is likely part of why the ready gates feel load-
 bearing. A live typing signal may reduce the *felt* need for some of them.
+
+### 6. The debrief has no chat
+
+> "ok there's no chat"
+
+Screenshot: `later that night / the kids are asleep. it's just you two.` →
+`next chapter` → `1 of 2 ready`. The screen sets up a private conversation
+between the two parents and then offers no way to have it.
+
+**The schema anticipated this conversation; it was never implemented.**
+`ChatType` is `"shared" | "private" | "debrief"` (`server/src/types.ts:16`), but
+**nothing anywhere ever creates a message with `chatType: "debrief"`**.
+`PARENT_MESSAGE` sets `"private"` in `sidebar` and `"shared"` otherwise
+(`state-machine.ts:192-194`). The single reference to the value in the whole
+codebase is a defensive exclusion in the per-scene message counter
+(`server/src/db/repository.ts:171`). It's vestigial.
+
+And the phase guard makes it impossible today regardless of UI: `PARENT_MESSAGE`
+is gated to `state.phase === "family_chat"`
+(`state-machine.ts:111-113`), so a debrief message would throw
+`Invalid transition`. Both `MultiplayerGame.tsx:503` and the solo
+`Debrief.tsx` render a text block plus one button — there is no `MessageInput`
+on either path.
+
+**Suggested direction:** allow `PARENT_MESSAGE` in `debrief`, stamp it
+`chatType: "debrief"`, and render `MessageInput` on the debrief screen. Two
+design questions worth settling before building:
+
+- Is the kid present? Almost certainly not — the whole framing is "the kids are
+  asleep." That means no `KID_MESSAGE`, no LLM turn: it's the one screen in the
+  game where two humans talk to each other with nothing generating between them.
+  Cheap to build, and it's the emotional payload of the co-parenting premise.
+- Does the debrief conversation feed the evaluator? It is the most honest signal
+  in the game about what the parents actually think — worth deciding explicitly
+  whether it enters `buildWorldManagerContext` / the identity document, or stays
+  deliberately unobserved. (`visibleTo` on `Message` already supports excluding
+  the kid; `repository.ts:171` already excludes debrief from the scene message
+  cap, so a debrief conversation wouldn't eat the parents' scene turns.)
+
+This is the highest-value item in this list. #1–#5 are friction; this one is a
+missing room in the house.
