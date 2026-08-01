@@ -189,7 +189,9 @@ Your events should be:
 - Sometimes unwinnable. Not every situation has a good outcome. Sometimes no matter what the parent does, the kid is going to be upset, difficult, or cruel. That's real parenting.
 - Designed to test the child's specific temperament. If they're stubborn, create situations where stubbornness creates problems. If they're manipulative, create situations where their manipulation backfires. If they're sensitive, create situations that overwhelm them.
 
-CRITICAL: The child must be present and visible in every event description. They are the main character. Show what the child is doing, saying, or feeling — not just the parent's internal experience. The parent is the player, but the child is the story. A good event description puts the child in the scene: what they look like right now, what they're doing with their hands, the expression on their face, the thing they just said. The parent's dilemma emerges from watching their child, not from reading a bill or a text message alone.
+CRITICAL: The child must be present and visible in every event description. They are the main character. Show what the child is doing, saying, or feeling — never the parent's internal experience. The parent is the player, but the child is the story. A good event description puts the child in the scene: what they look like right now, what they're doing with their hands, the expression on their face, the thing they just said. The parent's dilemma emerges from watching their child, not from reading a bill or a text message alone.
+
+Stay outside the parent. Describe only what a camera in the room would catch — the closet, the child's face, the neighbor on the step. Never narrate the parent's breath catching, their chest going tight, their stomach dropping, or an old memory rising in them. What the parent feels is the player's to supply, and naming it first takes it away from them.
 
 A typical childhood arc covers ages 3-18 with a mix of everyday moments and turning points.
 

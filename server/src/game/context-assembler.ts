@@ -370,30 +370,131 @@ export function buildMemorySummarizerContext(state: GameState): {
   return { system, userMessage };
 }
 
+/** Scenes 1-2 establish the child and the household before anything is aimed
+ * at the parents. */
+const LANDMINE_FIRST_ELIGIBLE_EVENT = 3;
+/** At most this many landmines fire in a whole playthrough. Rarity is the
+ * point — a wound in context for all ten scenes cannot stand out. */
+const LANDMINE_MAX_FIRINGS = 2;
+/** Minimum number of scenes between two firings. */
+const LANDMINE_COOLDOWN = 3;
+
+/** FNV-1a. Small, stable, and dependency-free — we only need a spread of bits,
+ * not cryptographic quality. */
+function hash32(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** Deterministic 0..n-1 draw from a seed string. */
+function draw(seed: string, n: number): number {
+  return n <= 1 ? 0 : hash32(seed) % n;
+}
+
+interface Landmine {
+  /** Stable identity — parent slot + confessional index. Deliberately NOT an
+   * array position: parent 2's personality can be submitted after the story
+   * has started (routes/game.ts), and a position-keyed schedule would
+   * retroactively reshuffle parent 1's already-fired slot when it lands. */
+  key: string;
+  label: string;
+  text: string;
+}
+
+function collectLandmines(state: GameState): Landmine[] {
+  const out: Landmine[] = [];
+  const solo = isSolo(state.relationshipType);
+  const slots: Array<["parent1" | "parent2", string]> = [
+    ["parent1", solo ? "The parent" : "Parent 1"],
+    ["parent2", "Parent 2"],
+  ];
+
+  for (const [slot, label] of slots) {
+    const p = state.parentPersonalities?.[slot];
+    if (!p) continue;
+    for (const [i, text] of [p.confessional1, p.confessional2].entries()) {
+      if (text) out.push({ key: `${slot}:${i + 1}`, label, text });
+    }
+  }
+  return out;
+}
+
 /**
- * Build the landmine section for the world manager prompt from parent confessionals.
- * Returns an empty string when no confessionals are present.
+ * Which landmine — if any — the scene being generated is allowed to sit near.
+ *
+ * Derived, not stored. The schedule is a pure function of the game id, the
+ * total scene count, and the landmines' stable keys, so every call site agrees
+ * without anyone writing state back: `startEvent`, `loadEvent`, and
+ * `prefetchNextEvent` all generate event `currentEventNumber + 1` and all get
+ * the same answer. That matters because a prefetch can be thrown away (the
+ * player advances before it lands, or the call is retried) — a mutable
+ * `fired` flag would burn a landmine on a scene nobody ever read, or spend two
+ * on one scene. It also survives reconnects and restarts for free, since the
+ * inputs are already persisted.
+ *
+ * Each landmine fires at most once, at most two fire per playthrough, and
+ * never within LANDMINE_COOLDOWN scenes of each other.
  */
-function buildLandmineSection(state: GameState): string {
-  const entries: string[] = [];
+function landmineForEvent(state: GameState, eventNumber: number): Landmine | null {
+  if (eventNumber < 1) return null;
 
-  const p1 = state.parentPersonalities?.parent1;
-  const p2 = state.parentPersonalities?.parent2;
+  const landmines = collectLandmines(state);
+  if (landmines.length === 0) return null;
 
-  if (p1?.confessional1) entries.push(`- Parent 1 confessed: "${p1.confessional1}"`);
-  if (p1?.confessional2) entries.push(`- Parent 1 confessed: "${p1.confessional2}"`);
-  if (p2?.confessional1) entries.push(`- Parent 2 confessed: "${p2.confessional1}"`);
-  if (p2?.confessional2) entries.push(`- Parent 2 confessed: "${p2.confessional2}"`);
+  const last = Math.max(1, state.totalEvents);
+  const first = Math.min(LANDMINE_FIRST_ELIGIBLE_EVENT, last);
+  if (eventNumber < first || eventNumber > last) return null;
 
-  if (entries.length === 0) return "";
+  // Order is seeded by game id, not by arrival, so a late-joining co-parent
+  // can't rewrite a schedule the story is already running on.
+  const ordered = [...landmines].sort(
+    (a, b) => hash32(`${state.id}|order|${a.key}`) - hash32(`${state.id}|order|${b.key}`)
+  );
 
-  return `## Emotional landmines
+  // First firing in the early half of the eligible range, second at least a
+  // cooldown later. Holding the first one early is what keeps the second from
+  // being shoved onto the finale every time — across games the two should land
+  // in different places, or a returning player learns the rhythm.
+  const firstMax = Math.max(first, Math.floor((first + last) / 2) - 1);
+  const slots: number[] = [];
+  slots.push(first + draw(`${state.id}|slot1`, firstMax - first + 1));
 
-The parents have revealed things about themselves — fears, wounds, patterns they know are there. These are the places where rational parenting breaks down. Use them to create situations that hit these specific pressure points.
+  if (LANDMINE_MAX_FIRINGS > 1 && ordered.length > 1) {
+    const secondMin = slots[0] + LANDMINE_COOLDOWN;
+    if (secondMin <= last) {
+      slots.push(secondMin + draw(`${state.id}|slot2`, last - secondMin + 1));
+    }
+  }
 
-${entries.join("\n")}
+  const index = slots.indexOf(eventNumber);
+  return index === -1 ? null : ordered[index];
+}
 
-Let these surface naturally. Don't announce them. Create events that quietly activate these patterns and watch what the parents do.`;
+/**
+ * Build the landmine section for the world manager prompt. Empty on the great
+ * majority of scenes — see `landmineForEvent` for the rationing.
+ */
+export function buildLandmineSection(state: GameState): string {
+  const landmine = landmineForEvent(state, state.currentEventNumber + 1);
+  if (!landmine) return "";
+
+  const who = isSolo(state.relationshipType) ? "The parent" : "One of the parents";
+
+  return `## A pressure point
+
+${who} told us something about themselves before the story started. Read it once — it is for you, not for the page.
+
+${landmine.label}: ${landmine.text}
+
+This scene should sit near that and never on it. Build an ordinary situation with the same shape of pressure arriving through a completely different door: different people, different objects, different room, a different decade of their life. It rhymes. It does not repeat.
+
+What they told us must not appear in what you write — not its words, not its imagery, not its specifics. If the animal, the room, the relative, or the phrasing above turns up in your description, you have written the wrong scene.
+
+And don't tell the parent what any of it does to them. No breath catching, no chest going tight, no old memory surfacing. Write the closet, the child's face, the neighbor on the step. Whether they recognize anything is theirs to have or to miss, and it only works if you never point at it.`;
 }
 
 export function buildWorldManagerContext(state: GameState): {
