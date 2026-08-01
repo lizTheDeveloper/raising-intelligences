@@ -74,17 +74,19 @@ describe("processing phase reaches clients before the identity document lands", 
   let built: BuiltServer;
   let baseUrl: string;
   let llm: GatedLLM;
+  let repo: InMemoryGameRepository;
   const clients: TestClient[] = [];
 
   beforeAll(async () => {
     process.env.DISABLE_PORTRAITS = "1";
     llm = new GatedLLM();
+    repo = new InMemoryGameRepository();
     // Scene 1 plus one for the end-of-scene prefetch, so the prefetch is a
     // normal success rather than an error path incidental to this test.
     llm.events = [mockEvent(1), mockEvent(2)];
     built = buildServer({
       llm,
-      repo: new InMemoryGameRepository(),
+      repo,
       adminQueries: new InMemoryAdminQueries(),
       enableEviction: false,
       allowedOrigin: "*",
@@ -138,6 +140,14 @@ describe("processing phase reaches clients before the identity document lands", 
     // `debrief`.
     expect(llm.psychStarted).toBe(true);
     expect(llm.psychResolved).toBe(false);
+
+    // …and the phase the clients can see is NOT the phase on disk. `processing`
+    // is a live transient: a crash here has to rehydrate as `family_chat`, or
+    // the END_CHAT recovery path has nothing left to re-run and the game is
+    // stuck in a phase with no exit. Persisting it would look like a tidy-up.
+    const persisted = await repo.loadGame(gameId);
+    expect(persisted!.phase).not.toBe("processing");
+    expect(persisted!.phase).toBe("family_chat");
 
     const debrief = p1.waitFor<ViewerState>(E.STATE, (s) => s.phase === "debrief");
     llm.releasePsychologist();

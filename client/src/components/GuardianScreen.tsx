@@ -181,7 +181,9 @@ interface Props {
    * start. Undefined on the solo path, which has no co-parent to wait for.
    */
   partnerSubmitted?: boolean;
-  /** Multiplayer: the co-parent's display name, for that same line. */
+  /** Multiplayer: the co-parent's display name, for that same line. Already
+   * defaulted to "your partner" by the caller; the fallback here is belt-and-
+   * braces and uses the same word, so the game never has two names for them. */
   partnerName?: string;
   /**
    * Solo: the personality seed has been generated server-side. This is the
@@ -640,7 +642,7 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
                   3. Seed done; scene 1 is being generated. */}
               <p className="guardian-loading-hint">
                 {partnerSubmitted === false
-                  ? `waiting for ${partnerName ?? "your co-parent"} to finish theirs…`
+                  ? `${partnerName ?? "your partner"} is still answering…`
                   : !effectiveSeedReady
                   ? "shaping who they'll become…"
                   : "getting your story ready…"}
