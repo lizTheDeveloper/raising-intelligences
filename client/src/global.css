@@ -449,6 +449,48 @@ body::after {
   font-size: 11px;
 }
 
+/* Click-to-skip surface for the timed narrative/transition/reveal beats. Only
+   mounted during those steps, so it never sits over the quiz options, the
+   confessional inputs or the waiting footer. The beats still auto-advance —
+   this only lets an impatient player get there sooner. */
+.guardian-skip-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 0 30px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.guardian-skip-hint {
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--fg-dim);
+  opacity: 0;
+  animation: guardianSkipHintIn 1s ease 0.9s forwards;
+  pointer-events: none;
+}
+
+.guardian-skip-overlay:hover .guardian-skip-hint,
+.guardian-skip-overlay:focus-visible .guardian-skip-hint {
+  /* Cancel the fill-forwards animation so the hover state can win. */
+  animation: none;
+  opacity: 0.7;
+}
+
+@keyframes guardianSkipHintIn {
+  from { opacity: 0; }
+  to   { opacity: 0.35; }
+}
+
 /* ----- Guardian quiz ----- */
 .guardian-quiz {
   display: flex;
@@ -1234,4 +1276,56 @@ body::after {
 
 .message-parent .message-content {
   color: var(--fg);
+}
+
+/* ─── Debrief Conversation ───────────────────────────────────── */
+
+/* The debrief is a centered, vertically-composed beat; the chat has to sit
+   inside it without collapsing (`.chat` is flex:1, which would fight the
+   parent's centering) and without stretching to the full app width. */
+.debrief-chat {
+  flex: 0 1 auto;
+  width: 100%;
+  max-width: 560px;
+  text-align: left;
+  gap: 4px;
+}
+
+.debrief-chat .message-list {
+  flex: 0 1 auto;
+  max-height: 42dvh;
+  padding: 0;
+}
+
+.debrief-chat .message-input-wrap {
+  position: static;
+  padding-bottom: 0;
+}
+
+/* ─── Co-parent Typing Indicator ─────────────────────────────── */
+
+.typing-indicator {
+  font-size: 11px;
+  letter-spacing: 2px;
+  padding: 4px 2px 0;
+  min-height: 16px;
+  animation: fadeIn 400ms ease both;
+}
+
+/* ─── Ladder Gate Strip ──────────────────────────────────────── */
+
+/* The consult/therapy/CPS screens keep their own "continue"/"conclude"
+   button as the single ready action. Once readied, dim it so it doesn't
+   read as unpressed — the screen text stays fully legible while the other
+   parent finishes reading. Pressing it again would be a server-side no-op
+   anyway; this is about not asking for a second interaction. */
+.gate-readied [data-testid="btn-consult-continue"],
+.gate-readied [data-testid="btn-cps-continue"],
+.gate-readied [data-testid="btn-therapy-conclude"] {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.ready-strip {
+  margin-top: 16px;
 }

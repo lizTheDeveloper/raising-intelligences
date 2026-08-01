@@ -5,6 +5,8 @@ interface Message {
   sender: string;
   content: string;
   chatType: string;
+  /** See MessageList — optional, and filtered by the caller. */
+  eventNumber?: number;
 }
 
 interface Props {

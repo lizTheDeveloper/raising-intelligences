@@ -66,8 +66,11 @@ const QUIZ_QUESTIONS: QuizQuestion[] = [
 ];
 
 // ---------- Step sequence ----------
-// Narrative lines auto-advance on a timer; quiz/confessional/reveal steps
-// advance only on user action.
+// Narrative, transition and reveal beats auto-advance on a timer and can be
+// skipped ahead with a click — they are pacing, never a gate. Only quiz,
+// confessional and waiting steps require the player to act: answering,
+// submitting, and the co-parent handshake respectively. Nothing on this screen
+// asks the player to "ready up" before they may begin.
 
 type StepKind = "narrative" | "quiz" | "transition" | "reveal" | "confessional" | "waiting";
 
@@ -238,6 +241,43 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
     const timer = setTimeout(() => setStepIndex((i) => i + 1), delay);
     return () => clearTimeout(timer);
   }, [stepIndex, currentStep]);
+
+  // ---------- Skip ahead through the timed beats ----------
+  // Timed beats are pacing, not gates: a click advances them early instead of
+  // being required to advance them at all. Quiz / confessional / waiting steps
+  // are deliberately not skippable — a stray click must never answer a
+  // question for the player or jump the co-parent handshake.
+  const isSkippable =
+    currentStep.kind === "narrative" ||
+    currentStep.kind === "transition" ||
+    currentStep.kind === "reveal";
+
+  const skipAhead = useCallback(() => {
+    const step = STEPS[stepIndex];
+    if (!step) return;
+    if (step.kind !== "narrative" && step.kind !== "transition" && step.kind !== "reveal") return;
+    // Record the line even if the auto-advance timer never got to it, so
+    // skipping never drops a beat from the accumulated narrative.
+    if (step.text) {
+      setNarrativeLines((prev) =>
+        prev[prev.length - 1] === step.text ? prev : [...prev, step.text!]
+      );
+    }
+    // Guard against advancing twice if the timer fired between render and click.
+    setStepIndex((i) => (i === stepIndex ? i + 1 : i));
+  }, [stepIndex]);
+
+  useEffect(() => {
+    if (!isSkippable) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " " || e.key === "ArrowRight") {
+        e.preventDefault();
+        skipAhead();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isSkippable, skipAhead]);
 
   // ---------- Quiz answer handler ----------
   const handleQuizAnswer = useCallback((quizIndex: number, value: number) => {
@@ -497,6 +537,22 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
             </div>
           )}
         </div>
+      )}
+
+      {/* Timed beats can be clicked past. They advance on their own regardless —
+          this is an accelerator, not a gate. */}
+      {isSkippable && (
+        <button
+          type="button"
+          className="guardian-skip-overlay"
+          data-testid="btn-guardian-skip"
+          aria-label="skip ahead"
+          onClick={skipAhead}
+        >
+          <span className="guardian-skip-hint" aria-hidden="true">
+            tap to continue
+          </span>
+        </button>
       )}
     </div>
   );
