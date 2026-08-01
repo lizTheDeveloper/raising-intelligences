@@ -620,12 +620,12 @@ export function useMultiplayer() {
     // and by E.ERROR, so a failed end-chat gives the button back rather than
     // leaving a dead screen.
     //
-    // Set ONLY in the phases whose exit is what clears it. The same button
-    // renders as "finish → report card" during `adult_chat`, where the server's
-    // endChat returns on its `phase !== "family_chat"` guard without an error
-    // and without a broadcast (a pre-existing no-op, untouched here) — setting
-    // the flag there would hide the control forever instead of merely failing
-    // to advance.
+    // Set ONLY in the phases whose exit is what clears it. `adult_chat` no
+    // longer reaches this function at all — that button now calls
+    // generateReportCard, because endChat returned silently on its
+    // `phase !== "family_chat"` server guard. The check stays as a guard: this
+    // flag hides the scene-exit control, so setting it in a phase whose exit
+    // isn't END_CHAT would strand the player on a screen with no way out.
     if (phaseRef.current === "family_chat" || phaseRef.current === "sidebar") {
       setSceneEnding(true);
     }
@@ -641,6 +641,20 @@ export function useMultiplayer() {
   );
   const generateReportCard = useCallback(() => {
     setStreamingDocText("");
+    // Make the press visible when this is the `adult_chat` exit. That screen's
+    // button is `disabled={isStreaming}`, and `isStreaming` is the kid-message
+    // flag which this never sets — so without this the player presses, the
+    // report-card LLM call runs for its full duration with the screen
+    // unchanged, and the button stays clickable. Two presses = two report
+    // cards. Same bug the `processing` broadcast removed from "walk away".
+    //
+    // Reuses `sceneEnding` rather than adding a second local flag: it already
+    // hides the exit control and disables the input, and it is already cleared
+    // on BOTH exits — the next STATE that isn't family_chat/sidebar (here, the
+    // `report_card` one) and E.ERROR, so a failed generation gives the button
+    // back instead of stranding the player. The epilogue screen calls this too
+    // and doesn't read the flag, so it is gated to the phase that needs it.
+    if (phaseRef.current === "adult_chat") setSceneEnding(true);
     socketRef.current?.emit(E.REPORT_CARD, { epilogue });
   }, [epilogue]);
 

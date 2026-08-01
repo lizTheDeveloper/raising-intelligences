@@ -75,6 +75,9 @@ export function createEndgameRoutes(
     try {
       const next = await engine.startAdultConversation(state, scenario);
       games.set(next.id, next);
+      // Persist the scenario event itself — `events` is its own table, so
+      // saveGame stores only the number. See the socket ADULT_CHAT handler.
+      if (next.currentEvent) await repo.saveEvent(next.id, next.currentEvent);
       await repo.saveGame(next);
       res.json({ phase: next.phase, event: next.currentEvent });
     } catch (err) {

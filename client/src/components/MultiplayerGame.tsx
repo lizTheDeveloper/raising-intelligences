@@ -478,16 +478,16 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     // the parents alone at night — they belong to the debrief screen, not
     // here, and (unlike the family chat) they don't consume the scene cap.
     //
-    // Deliberately NOT applied to adult_chat: START_ADULT_CHAT leaves
-    // `currentEventNumber` at the final scene's value, so adult-chat messages
-    // share it with the last childhood scene and there is no client-side
-    // discriminator between them. Filtering there would reintroduce the bug.
-    const sceneMessages =
-      state.phase === "adult_chat"
-        ? state.messages
-        : state.messages.filter(
-            (m) => m.eventNumber === state.currentEventNumber && m.chatType !== "debrief"
-          );
+    // This now applies to adult_chat too. It used to be exempted because
+    // START_ADULT_CHAT left `currentEventNumber` pinned to the final childhood
+    // scene, so the two shared a number and filtering would have hidden the
+    // adult conversation. START_ADULT_CHAT advances the number now (it appends
+    // to `events` exactly like START_EVENT), so the adult conversation is its
+    // own scene and the unfiltered stopgap would render the last childhood
+    // conversation above it — the very bug this filter exists to fix.
+    const sceneMessages = state.messages.filter(
+      (m) => m.eventNumber === state.currentEventNumber && m.chatType !== "debrief"
+    );
     return (
       <div className="app fade-in">
         <div className="chat-portrait-header">
@@ -531,7 +531,14 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
             partnerName={partnerName}
           />
           {mp.sceneEnding && (
-            <p className="dim scene-ending">the moment passes...</p>
+            <p className="dim scene-ending">
+              {/* One flag, two exits. "the moment passes..." is scene-end copy
+                  and reads wrong for the endgame, where what is actually
+                  happening is the report card being written. */}
+              {state.phase === "adult_chat"
+                ? "writing the report card..."
+                : "the moment passes..."}
+            </p>
           )}
           <div className="chat-controls">
             {inMySidebar && (
@@ -540,7 +547,17 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
               </button>
             )}
             {!sidebarActive && !mp.sceneEnding && (
-              <button className="btn btn-secondary" onClick={mp.endChat} disabled={mp.isStreaming}>
+              // Two different exits behind one button. "walk away" ends a
+              // childhood scene (psychologist → debrief). "finish → report
+              // card" ends the game, and must call generateReportCard: the
+              // server's endChat returns silently on its
+              // `phase !== "family_chat"` guard, which is what made this
+              // control dead — it looked live, did nothing, and said nothing.
+              <button
+                className="btn btn-secondary"
+                onClick={state.phase === "adult_chat" ? mp.generateReportCard : mp.endChat}
+                disabled={mp.isStreaming}
+              >
                 {state.phase === "adult_chat" ? "finish → report card" : "walk away"}
               </button>
             )}
