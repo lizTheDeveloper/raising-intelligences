@@ -443,8 +443,12 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   // On the copy: it says nothing about IP bans in either direction, because
   // both are true depending on the trigger — the per-message check bans, the
   // scene-level check deliberately does not (see the `banIp` doc on
-  // applyModerationBlock) — and this screen cannot tell which fired. It also
-  // offers no appeal, because there is no appeal flow to offer.
+  // applyModerationBlock) — and this screen cannot tell which fired. That cuts
+  // both ways, and the button says only where it goes rather than promising a
+  // new game: on the banning trigger, `io.use`'s isIpBanned check (app.ts)
+  // refuses the next socket outright, so "you can start another whenever you
+  // like" would be a promise the game knows it may not keep. It also offers no
+  // appeal, because there is no appeal flow to offer.
   if (state.phase === "ended") {
     return (
       <div className="app fade-in">
@@ -458,7 +462,6 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
           <p className="dim ended-body">
             that's the whole of it. {state.childName ? `${state.childName}'s` : "this"} story
             doesn't continue from here, and nothing on this screen will move it.
-            you can start another one whenever you want.
           </p>
           <button
             className="btn"
@@ -470,7 +473,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
               window.location.href = url.toString();
             }}
           >
-            start again
+            back to the start
           </button>
         </div>
       </div>
@@ -767,6 +770,17 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
               autoFocus={false}
             />
           </div>
+          {/* Same surface as event_intro, and required for the same reason.
+              The READY catch broadcasts room-wide for EVERY branch, and the
+              debrief gate is the one that runs the intervention rungs, the
+              epilogue and the removal epilogue — all model calls, all able to
+              fail. Without this the failure would be broadcast and still
+              unrendered here, which is the bug wearing a new hat. */}
+          {mp.error && (
+            <p className="error intro-error" role="alert">
+              {mp.error}
+            </p>
+          )}
           <ReadyToggle
             ready={meReady}
             onToggle={mp.ready}
