@@ -71,10 +71,34 @@ no personality seed and no parent personalities.** Moving the quiz ahead of
 first-scene generation removes both ready gates and the wait *and* makes the
 opening scene personality-informed for the first time.
 
-Suggested direction: run the Guardian quiz concurrently with (or ahead of) scene
-1 generation instead of after it, and drop the `currentEvent !== null` condition
-from `showGuardian`. Deferred until the client-state pass lands, to avoid two
-agents editing `MultiplayerGame.tsx` at once.
+**Approved direction (Liz, 2026-07-31): reorder the quiz ahead of scene 1.**
+
+Note that "run the quiz concurrently with generation" is the *wrong* fix — it
+removes the wait but leaves scene 1 personality-blind, which is the more
+valuable half of the bug. The seed has to exist before the world manager runs.
+
+Sequencing to build:
+
+1. Lobby ready → **Guardian quiz immediately**, no `event_intro` gate, no scene
+   generation yet. Drop the `currentEvent !== null` condition from
+   `showGuardian` (`MultiplayerGame.tsx:125-130`) and the equivalent in
+   `SoloGame.tsx`.
+2. Both parents submit → `generatePersonalitySeed` runs as it does today
+   (`handlers.ts:826-841`).
+3. **Kick off scene-1 generation the moment `PERSONALITY_SEED_READY` fires**,
+   not on a ready gate. The seed and both `parentPersonalities` are now in
+   state, so the world manager finally sees them.
+4. The generation wait is masked by content that already exists: the portrait
+   reveal and the terminal "I'm ready" / "most people aren't" beat play over it.
+   `canBegin = effectiveSeedReady && portraitRevealed` is already the right
+   condition to hold on; it just needs to also await the event.
+
+Net effect: one ready gate removed from the opening, ~20s of dead waiting
+replaced by existing written content, and scene 1 becomes personality-informed
+for the first time.
+
+Deferred until the client-state pass lands, to avoid two agents editing
+`MultiplayerGame.tsx` at once.
 
 **Already shipped on this item:** ~14.9s of unskippable narrative pacing before
 the quiz (1200+1600ms before Q1, then 2400+1600, 2400+1600, a 1600 transition
