@@ -14,16 +14,26 @@ implemented.
 > "You shouldn't have to ready up to take the quiz or do the confession.
 > There's too many 'ready up' moments — try to reduce gates."
 
-Every gate below funnels through the single `E.READY` handler in
-`server/src/socket/handlers.ts:346`. Inventory, classified by whether the gated
-action is **per-player** (each player can proceed independently — safe to
-un-gate) or a **shared phase transition** (both clients must land in the same
-phase — this is what `server/tests/ready-race.test.ts` guards):
+**CORRECTION (verified during implementation):** row #2 below was wrong in the
+original write-up, and the framing sentence was over-broad. `GuardianScreen`
+never emits `E.READY` — its `onReady` prop is a purely local overlay dismissal
+(`MultiplayerGame.tsx:288` → `setGuardianDismissed(true)`;
+`SoloGame.tsx:256` → `setShowGuardian(false)`), and `MultiplayerGame.tsx:122-124`
+documents it as such. There is no pre-quiz or pre-confessional confirming click
+in that component at all; entry to both is timer-driven. Rows #1 and #3–#7 were
+re-verified against the source and do funnel through the single `E.READY`
+handler at `server/src/socket/handlers.ts:346`. See the addendum below for what
+the player was actually describing.
+
+Inventory, classified by whether the gated action is **per-player** (each player
+can proceed independently — safe to un-gate) or a **shared phase transition**
+(both clients must land in the same phase — this is what
+`server/tests/ready-race.test.ts` guards):
 
 | # | Gate | Phase branch | Kind | Notes |
 |---|------|--------------|------|-------|
 | 1 | Lobby "ready" | pre-`event_intro` | shared | `client/src/components/Lobby.tsx:25`. Legitimate — both players must be present before the game exists. |
-| 2 | OCEAN quiz + confessional | `GuardianScreen` | **per-player** | `client/src/components/GuardianScreen.tsx` — `QUIZ_QUESTIONS` (5 items) then `{ kind: "confessional" }`, ending in a `"waiting"` step. Each parent's personality seed is independent (`submitPersonality`). **This is the one Liz called out — no synchronization reason for it to be gated.** |
+| 2 | ~~OCEAN quiz + confessional~~ | `GuardianScreen` | **not a ready gate** | Struck — see correction above. Local overlay dismissal, never emits `E.READY`. The real finding is in the addendum. |
 | 3 | `event_intro` → `family_chat` | `handlers.ts:369` | shared | Also triggers `loadEvent()` (~20s LLM). Already collapsed from two ready-rounds to one after 9/13 games stranded in `event_intro`; see comment at `handlers.ts:371-375`. |
 | 4 | `debrief` → next chapter | `handlers.ts:398` | shared | Rendered as `ReadyToggle label="next chapter"` at `MultiplayerGame.tsx:512`. |
 | 5 | `consult` → continue | `handlers.ts:440` | shared | Dark Play rung 1. `MultiplayerGame.tsx:410` — the screen's own "continue" sets ready, *then* swaps to a ReadyToggle waiting view. Two-step feel. |
@@ -36,6 +46,42 @@ the Guardian screen, and the "waiting" step at the end already covers the
 synchronization. Gates #3–#7 are genuine two-player barriers, but #5–#7 present
 *two* interactions where one would do (screen's continue button → ReadyToggle),
 which is likely part of why it reads as "too many."
+
+#### Addendum to item 1 — what "ready up to take the quiz" actually refers to
+
+Since there is no gate *inside* `GuardianScreen`, the gates the player hit are
+the ones **before** it. `showGuardian` (`MultiplayerGame.tsx:125-130`) requires
+`currentEventNumber === 1` **and `currentEvent !== null`** — so the quiz cannot
+appear until scene 1 has finished generating. The actual opening sequence is:
+
+1. lobby ready (gate #1)
+2. `event_intro` ready (gate #3)
+3. ~20s `loadEvent` wait — "building the next scene…"
+4. *then* the OCEAN quiz and the confessional
+5. terminal "I'm ready"
+
+So: two ready gates and a full scene-generation wait stand between the player
+and a questionnaire that needs neither. That matches the complaint exactly.
+
+**This is also a latent content bug, not just pacing.** The personality seed
+feeds the kid's temperament (`context-assembler.ts:140-141`) and is passed into
+the world-manager context (`:412`), but it does not exist until *after* the quiz
+— which is after scene 1 is already generated. **Scene 1 is currently built with
+no personality seed and no parent personalities.** Moving the quiz ahead of
+first-scene generation removes both ready gates and the wait *and* makes the
+opening scene personality-informed for the first time.
+
+Suggested direction: run the Guardian quiz concurrently with (or ahead of) scene
+1 generation instead of after it, and drop the `currentEvent !== null` condition
+from `showGuardian`. Deferred until the client-state pass lands, to avoid two
+agents editing `MultiplayerGame.tsx` at once.
+
+**Already shipped on this item:** ~14.9s of unskippable narrative pacing before
+the quiz (1200+1600ms before Q1, then 2400+1600, 2400+1600, a 1600 transition
+and a 2500 reveal) is now skippable via click or Enter/Space, with the skip
+overlay deliberately not mounted on `quiz`, `confessional`, or `waiting` steps so
+a stray click can never answer a question or jump the co-parent handshake. No
+prose was removed. Required content clicks are unchanged at 6.
 
 ### 2. "Not yet" / "ready" must be clicked twice — and it can deadlock the game
 
