@@ -338,18 +338,47 @@ describe("landmine rationing", () => {
     }
   });
 
-  it("does not reshuffle parent 1's schedule when parent 2 joins later", () => {
-    // Parent 2 can submit their personality after the story has started
-    // (routes/game.ts), so the schedule must key on parent slot, not on
-    // position in a growing array.
-    for (let i = 0; i < 100; i++) {
-      const soloFirings = firingsFor(`game-${i}`, { parent1: twoWounds });
-      const bothFirings = firingsFor(`game-${i}`, { parent1: twoWounds, parent2: otherWound });
+  const allWounds = [
+    twoWounds.confessional1,
+    twoWounds.confessional2,
+    otherWound.confessional1,
+  ];
+  const woundIn = (section: string) => allWounds.find((t) => section.includes(t));
 
-      // Whichever of parent 1's wounds was scheduled first keeps its scene.
-      const firstSolo = soloFirings[0];
-      const firstBoth = bothFirings[0];
-      expect(firstSolo.event).toBe(firstBoth.event);
+  it("does not reshuffle the first firing when parent 2 joins later", () => {
+    // Parent 2 can submit their personality after the story has started
+    // (routes/game.ts). If that displaced an already-fired wound down the
+    // firing order it would land in a later slot too — the same wound twice.
+    // Both the scene AND the wound occupying it must be unchanged.
+    for (let i = 0; i < 200; i++) {
+      const before = firingsFor(`game-${i}`, { parent1: twoWounds });
+      const after = firingsFor(`game-${i}`, { parent1: twoWounds, parent2: otherWound });
+
+      expect(after[0].event).toBe(before[0].event);
+      expect(woundIn(after[0].section)).toBe(woundIn(before[0].section));
+
+      // And the wound that already fired never reappears later.
+      const firedFirst = woundIn(before[0].section);
+      expect(after.slice(1).map((f) => woundIn(f.section))).not.toContain(firedFirst);
+    }
+  });
+
+  it("gives both parents a turn rather than spending both firings on parent 1", () => {
+    let parent2Fired = 0;
+    for (let i = 0; i < 100; i++) {
+      const fired = firingsFor(`game-${i}`, { parent1: twoWounds, parent2: otherWound });
+      if (fired.some((f) => woundIn(f.section) === otherWound.confessional1)) parent2Fired++;
+    }
+    expect(parent2Fired).toBe(100);
+  });
+
+  it("fires nothing in a story too short to have an establishing stretch", () => {
+    const base = createGame("Luna");
+    base.id = "short-id";
+    base.totalEvents = 2;
+    base.parentPersonalities = { parent1: twoWounds };
+    for (let target = 1; target <= 2; target++) {
+      expect(buildLandmineSection({ ...base, currentEventNumber: target - 1 })).toBe("");
     }
   });
 

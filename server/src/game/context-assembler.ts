@@ -405,19 +405,42 @@ interface Landmine {
   text: string;
 }
 
+/**
+ * The landmines in firing order.
+ *
+ * The ordering has to be stable under a co-parent who submits their
+ * personality after the story has started (routes/game.ts submits per parent,
+ * and its own comment notes /next-event racing that call). So parents are
+ * round-robined — parent 1's first wound always holds rank 0 — and only the
+ * order *within* one parent is seeded, which is safe because a parent's two
+ * confessionals always arrive together in a single submission. If parent 2
+ * shows up late they take rank 1, displacing parent 1's second wound to rank 2
+ * rather than pushing an already-fired wound down into a later slot, which is
+ * how the same wound would end up firing twice.
+ */
 function collectLandmines(state: GameState): Landmine[] {
-  const out: Landmine[] = [];
   const solo = isSolo(state.relationshipType);
   const slots: Array<["parent1" | "parent2", string]> = [
     ["parent1", solo ? "The parent" : "Parent 1"],
     ["parent2", "Parent 2"],
   ];
 
-  for (const [slot, label] of slots) {
+  const perParent = slots.map(([slot, label]) => {
     const p = state.parentPersonalities?.[slot];
-    if (!p) continue;
-    for (const [i, text] of [p.confessional1, p.confessional2].entries()) {
-      if (text) out.push({ key: `${slot}:${i + 1}`, label, text });
+    if (!p) return [];
+    const mine = [p.confessional1, p.confessional2]
+      .map((text, i) => ({ key: `${slot}:${i + 1}`, label, text }))
+      .filter((m) => !!m.text);
+    return mine.sort(
+      (a, b) => hash32(`${state.id}|order|${a.key}`) - hash32(`${state.id}|order|${b.key}`)
+    );
+  });
+
+  const out: Landmine[] = [];
+  const depth = Math.max(...perParent.map((m) => m.length), 0);
+  for (let i = 0; i < depth; i++) {
+    for (const mine of perParent) {
+      if (mine[i]) out.push(mine[i]);
     }
   }
   return out;
@@ -445,15 +468,13 @@ function landmineForEvent(state: GameState, eventNumber: number): Landmine | nul
   const landmines = collectLandmines(state);
   if (landmines.length === 0) return null;
 
-  const last = Math.max(1, state.totalEvents);
-  const first = Math.min(LANDMINE_FIRST_ELIGIBLE_EVENT, last);
+  const last = state.totalEvents;
+  const first = LANDMINE_FIRST_ELIGIBLE_EVENT;
+  // A story too short to have an establishing stretch gets no landmines at all
+  // rather than one in its opening scene.
   if (eventNumber < first || eventNumber > last) return null;
 
-  // Order is seeded by game id, not by arrival, so a late-joining co-parent
-  // can't rewrite a schedule the story is already running on.
-  const ordered = [...landmines].sort(
-    (a, b) => hash32(`${state.id}|order|${a.key}`) - hash32(`${state.id}|order|${b.key}`)
-  );
+  const ordered = landmines;
 
   // First firing in the early half of the eligible range, second at least a
   // cooldown later. Holding the first one early is what keeps the second from
@@ -492,7 +513,7 @@ ${landmine.label}: ${landmine.text}
 
 This scene should sit near that and never on it. Build an ordinary situation with the same shape of pressure arriving through a completely different door: different people, different objects, different room, a different decade of their life. It rhymes. It does not repeat.
 
-What they told us must not appear in what you write — not its words, not its imagery, not its specifics. If the animal, the room, the relative, or the phrasing above turns up in your description, you have written the wrong scene.
+What they told us must not appear in what you write. Whatever it names — the people in it, the place, the objects, the phrasing — is now off limits to you, and so is any near-synonym for it. If a player could hold their confession beside your scene and point at the overlap, you have written the wrong scene.
 
 And don't tell the parent what any of it does to them. No breath catching, no chest going tight, no old memory surfacing. Write the closet, the child's face, the neighbor on the step. Whether they recognize anything is theirs to have or to miss, and it only works if you never point at it.`;
 }
