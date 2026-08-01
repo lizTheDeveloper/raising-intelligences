@@ -495,11 +495,14 @@ describe("Playtest fixes (server)", () => {
         trigger: "They called first",
       };
       state = transition(state, { type: "START_ADULT_CHAT", event: adultEvent });
-      // NB: PARENT_MESSAGE is not currently a legal transition from
-      // `adult_chat` (canTransition permits only family_chat/sidebar/debrief),
-      // so the adult conversation is driven here through KID_MESSAGE, which is
-      // permitted. Same stamping either way — messages take
+      // PARENT_MESSAGE is a legal transition from `adult_chat` now, so drive
+      // both halves of the turn. Same stamping either way — messages take
       // `state.currentEventNumber` at creation time.
+      state = transition(state, {
+        type: "PARENT_MESSAGE",
+        sender: "parent1",
+        content: "ADULT_MARKER I've thought about that day a lot.",
+      });
       state = transition(state, {
         type: "KID_MESSAGE",
         content: "ADULT_MARKER how have you been?",

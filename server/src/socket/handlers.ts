@@ -1142,9 +1142,23 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         io.to(gameId).emit(E.MESSAGE_DONE, {});
 
         // Auto-end the scene if the kid ended it naturally or the cap is reached.
-        // Skip during sidebar: emitting SCENE_ENDED mid-sidebar locks both clients
-        // since the endChat phase guard returns early, leaving no recovery path.
-        if (!inSidebar && (sceneEnded || result.state.parentMessageCount >= PARENT_MESSAGE_CAP)) {
+        // Gated to `family_chat` — the only phase `endChat` will act on.
+        //
+        // Sidebar: emitting SCENE_ENDED mid-sidebar locks both clients, since
+        // the endChat phase guard returns early leaving no recovery path.
+        //
+        // adult_chat: same trap, worse. `endChat` no-ops on its own
+        // `phase !== "family_chat"` guard, but SCENE_ENDED sets the client's
+        // `sceneEnding`, and that is what hides the "finish → report card"
+        // button (MultiplayerGame.tsx). Firing it here would remove the phase's
+        // only exit at exactly the moment the player needs it. The adult
+        // conversation ends on the player's own button, or by running out of
+        // messages — MessageInput disables itself at 0 remaining and the button
+        // stays live.
+        if (
+          result.state.phase === "family_chat" &&
+          (sceneEnded || result.state.parentMessageCount >= PARENT_MESSAGE_CAP)
+        ) {
           io.to(gameId).emit(E.SCENE_ENDED, {});
           await endChat(gameId, getSocketIp(socket));
         }
@@ -1293,6 +1307,14 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       try {
         const next = await endgameEngine.startAdultConversation(state, payload.scenario);
         games.set(next.id, next);
+        // The scenario lives on the event, and `events` is a separate table —
+        // saveGame alone persists only `current_event_number`. Without this the
+        // adult conversation rehydrates with `currentEvent: null` after any
+        // reload or device handoff: the kid context loses the scenario it is
+        // answering, and solo's transcript filter (which keys on
+        // `currentEvent?.eventNumber`) hides every message. Matches what the
+        // childhood scenes already do at :403.
+        if (next.currentEvent) await repo.saveEvent(next.id, next.currentEvent);
         await repo.saveGame(next);
         broadcastState(gameId);
       } catch (err) {

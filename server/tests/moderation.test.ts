@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createGame } from "../src/game/state-machine.js";
-import { classifyParentMessage, moderateParentMessage, applyModerationBlock, recordConcern } from "../src/safety/moderation.js";
+import { classifyParentMessage, moderateParentMessage, applyModerationBlock, recordConcern, categoriesForPhase } from "../src/safety/moderation.js";
 import { InMemoryGameRepository } from "../src/db/repository.js";
 import type { GameState } from "../src/types.js";
 
@@ -9,6 +9,21 @@ function mockOpenAiFlagged(flagged: boolean, categories: Record<string, boolean>
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response(
       JSON.stringify({ results: [{ flagged, categories: { sexual: flagged, "sexual/minors": false, ...categories } }] }),
+      { status: 200 }
+    )
+  );
+}
+
+/** Mock a specific per-category OpenAI verdict. The phase-scoped check reads
+ * individual categories, not the top-level `flagged` boolean, so which
+ * categories are true is the whole point of these cases. */
+function mockOpenAiCategories(categories: Record<string, boolean>) {
+  process.env.OPENAI_API_KEY = "sk-test";
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        results: [{ flagged: Object.values(categories).some(Boolean), categories }],
+      }),
       { status: 200 }
     )
   );
@@ -129,25 +144,112 @@ describe("moderateParentMessage", () => {
     expect(games.get(state.id)!.phase).toBe("ended");
   });
 
-  it("skips moderation entirely in the adult_chat phase (recipient is a 25-year-old, not a minor)", async () => {
-    // Even an OpenAI response that would flag everything must not be consulted here.
-    mockOpenAiFlagged(true);
-    const { repo, games } = setup();
-    const adultChatState: GameState = { ...createGame("Luna"), phase: "adult_chat" };
-    games.set(adultChatState.id, adultChatState);
+  // ------------------------------------------------------------ adult_chat --
+  // The endgame conversation is with a 25-year-old, so the per-message check is
+  // NARROWED there, not skipped. It used to return before classifyParentMessage
+  // ran at all, which was harmless only while PARENT_MESSAGE was an illegal
+  // transition from the phase; now that it is legal, that early return would be
+  // an unmoderated LLM endpoint.
+  describe("adult_chat", () => {
+    function adultSetup() {
+      const repo = new InMemoryGameRepository();
+      const state: GameState = { ...createGame("Luna"), phase: "adult_chat" };
+      const games = new Map<string, GameState>([[state.id, state]]);
+      return { repo, state, games };
+    }
 
-    const result = await moderateParentMessage({
-      repo,
-      games,
-      state: adultChatState,
-      sender: "parent1",
-      content: "anything at all",
-      ipAddress: "9.9.9.9",
+    it("STILL blocks and bans on sexual/minors — the check is narrowed, not skipped", async () => {
+      mockOpenAiCategories({ "sexual/minors": true, sexual: true });
+      const { repo, state, games } = adultSetup();
+
+      const result = await moderateParentMessage({
+        repo,
+        games,
+        state,
+        sender: "parent1",
+        content: "content OpenAI flags as sexual/minors",
+        ipAddress: "9.9.9.9",
+      });
+
+      expect(result.blocked).toBe(true);
+      expect(repo.getModerationFlags()).toHaveLength(1);
+      expect(repo.getModerationFlags()[0].reason).toContain("sexual/minors");
+      // Same posture as family_chat: the per-message OpenAI check is the
+      // reliable one, and it auto-bans.
+      expect(await repo.isIpBanned("9.9.9.9")).toBe(true);
+      expect(games.get(state.id)!.phase).toBe("ended");
     });
 
-    expect(result.blocked).toBe(false);
-    expect(repo.getModerationFlags()).toEqual([]);
-    expect(await repo.isIpBanned("9.9.9.9")).toBe(false);
+    it("does NOT block adult-to-adult content that is only inappropriate to a minor", async () => {
+      // The design intent. OpenAI flags plain "sexual" but not "sexual/minors"
+      // — e.g. a parent asking their grown child about their marriage, their
+      // sexuality, or whether they're trying for a baby. Under family_chat
+      // rules that is a block AND a permanent IP ban; here it must pass.
+      mockOpenAiCategories({ sexual: true, "sexual/minors": false });
+      const { repo, state, games } = adultSetup();
+
+      const result = await moderateParentMessage({
+        repo,
+        games,
+        state,
+        sender: "parent1",
+        content: "are you and Sam still trying for a baby?",
+        ipAddress: "9.9.9.9",
+      });
+
+      expect(result.blocked).toBe(false);
+      expect(repo.getModerationFlags()).toEqual([]);
+      expect(await repo.isIpBanned("9.9.9.9")).toBe(false);
+      expect(games.get(state.id)!.phase).toBe("adult_chat");
+    });
+
+    it("the SAME message in family_chat is blocked — the difference is the recipient", async () => {
+      // Direct comparison against the case above: identical OpenAI verdict,
+      // identical text, different phase. This is what makes the narrowing a
+      // deliberate phase policy rather than a hole.
+      mockOpenAiCategories({ sexual: true, "sexual/minors": false });
+      const { repo, state, games } = setup();
+
+      const result = await moderateParentMessage({
+        repo,
+        games,
+        state, // createGame() starts in event_intro; any non-adult_chat phase
+        sender: "parent1",
+        content: "are you and Sam still trying for a baby?",
+        ipAddress: "9.9.9.9",
+      });
+
+      expect(result.blocked).toBe(true);
+      expect(await repo.isIpBanned("9.9.9.9")).toBe(true);
+    });
+
+    it("consults the classifier at all in adult_chat (the old early return did not)", async () => {
+      mockOpenAiCategories({ sexual: false, "sexual/minors": false });
+      const { repo, state, games } = adultSetup();
+
+      await moderateParentMessage({
+        repo,
+        games,
+        state,
+        sender: "parent1",
+        content: "I'm glad you called.",
+        ipAddress: null,
+      });
+
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+
+describe("categoriesForPhase", () => {
+  it("asks only about sexual/minors in adult_chat", () => {
+    expect(categoriesForPhase("adult_chat")).toEqual(["sexual/minors"]);
+  });
+
+  it("asks about both categories in every other phase", () => {
+    for (const phase of ["family_chat", "sidebar", "debrief", "epilogue"] as const) {
+      expect(categoriesForPhase(phase)).toEqual(["sexual/minors", "sexual"]);
+    }
   });
 });
 

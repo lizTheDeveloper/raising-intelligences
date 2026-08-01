@@ -3,13 +3,31 @@ import { getLangfuseClient } from "../observability/langfuse.js";
 
 const OPENAI_MODERATION_URL = "https://api.openai.com/v1/moderations";
 
-// "sexual/minors" is OpenAI's purpose-trained category for this exact risk.
-// Plain "sexual" is included too: the raw message text alone often has no
-// independent signal that the recipient is a minor (e.g. "I want to touch
-// you" doesn't mention age) — but in this app every conversation is a parent
-// talking to their child character, so any sexual content is in-scope
-// regardless of whether the text itself names an age.
-const CHILD_SAFETY_CATEGORIES = ["sexual/minors", "sexual"] as const;
+/**
+ * "sexual/minors" is OpenAI's purpose-trained category for this exact risk. It
+ * is intrinsic to the *text* — it does not depend on who the recipient is — so
+ * it applies in every phase of the game.
+ */
+export const MINOR_SAFETY_CATEGORIES = ["sexual/minors"] as const;
+
+/**
+ * The default set, used everywhere the recipient is the child.
+ *
+ * Plain "sexual" is included on top of "sexual/minors" for a reason that is
+ * entirely about the RECIPIENT, not the text: a raw message often carries no
+ * independent signal that it is aimed at a minor (e.g. "I want to touch you"
+ * doesn't mention an age), and in a childhood scene every message is a parent
+ * talking to their child character — so any sexual content is in-scope
+ * regardless of whether the text itself names an age.
+ *
+ * That inference is phase-conditional, and it is exactly what stops holding in
+ * `adult_chat`, where the recipient is a 25-year-old. See
+ * `categoriesForPhase()` in moderation.ts: that phase uses
+ * MINOR_SAFETY_CATEGORIES instead, so a parent asking their grown child about
+ * their marriage or their fertility is not treated as content aimed at a
+ * minor — while the intrinsic "sexual/minors" line still applies.
+ */
+export const CHILD_SAFETY_CATEGORIES = ["sexual/minors", "sexual"] as const;
 
 export interface OpenAiModerationResult {
   flagged: boolean;
@@ -26,7 +44,10 @@ export interface OpenAiModerationResult {
  * an outage here shouldn't silently disable moderation, but it's logged
  * loudly since it's the primary layer.
  */
-export async function checkOpenAiModeration(content: string): Promise<OpenAiModerationResult> {
+export async function checkOpenAiModeration(
+  content: string,
+  categories: readonly string[] = CHILD_SAFETY_CATEGORIES
+): Promise<OpenAiModerationResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     logger.error("openai_moderation_unconfigured");
@@ -71,8 +92,8 @@ export async function checkOpenAiModeration(content: string): Promise<OpenAiMode
     const data = (await res.json()) as {
       results?: Array<{ flagged?: boolean; categories?: Record<string, boolean> }>;
     };
-    const categories = data.results?.[0]?.categories ?? {};
-    const matched = CHILD_SAFETY_CATEGORIES.filter((c) => categories[c] === true);
+    const flags = data.results?.[0]?.categories ?? {};
+    const matched = categories.filter((c) => flags[c] === true);
     const result = { flagged: matched.length > 0, categories: matched };
 
     generation?.end({ output: result });

@@ -1,7 +1,12 @@
 import type { GameRepository } from "../db/repository.js";
 import type { GameState, Sender } from "../types.js";
 import { logger } from "../logger.js";
-import { checkOpenAiModeration } from "./openai-moderation.js";
+import {
+  checkOpenAiModeration,
+  CHILD_SAFETY_CATEGORIES,
+  MINOR_SAFETY_CATEGORIES,
+} from "./openai-moderation.js";
+import type { GamePhase } from "../types.js";
 
 export interface ModerationResult {
   flagged: boolean;
@@ -40,12 +45,42 @@ export interface SceneSafetyResult {
  * lives in pattern-detection.ts and runs once per completed scene alongside
  * the Psychologist, not per message.
  */
-export async function classifyParentMessage(content: string): Promise<ModerationResult> {
-  const result = await checkOpenAiModeration(content);
+export async function classifyParentMessage(
+  content: string,
+  categories: readonly string[] = CHILD_SAFETY_CATEGORIES
+): Promise<ModerationResult> {
+  const result = await checkOpenAiModeration(content, categories);
   if (result.flagged) {
     return { flagged: true, reason: `openai_moderation:${result.categories.join(",")}` };
   }
   return { flagged: false, reason: "" };
+}
+
+/**
+ * Which OpenAI moderation categories the per-message check runs for, given the
+ * phase the message is spoken in.
+ *
+ * Every phase except `adult_chat` is a parent speaking to their child, so the
+ * full CHILD_SAFETY_CATEGORIES set applies — including plain "sexual", whose
+ * inclusion is justified *by the recipient being a minor* (see the comment on
+ * that constant).
+ *
+ * `adult_chat` is the endgame conversation with the now-25-year-old child. The
+ * recipient is an adult, so the "any sexual content is aimed at a minor"
+ * inference no longer holds, and applying it there would auto-ban a parent for
+ * asking their grown child about their marriage, their sexuality, or whether
+ * they're trying for a baby — the substance of the scene. The narrower set
+ * keeps the one category that is intrinsic to the text rather than to who is
+ * listening.
+ *
+ * This is deliberately a NARROWING, not a skip. The previous implementation
+ * short-circuited `moderateParentMessage` before `classifyParentMessage` ran at
+ * all, which was harmless only because no message could reach the phase; the
+ * moment PARENT_MESSAGE became legal from `adult_chat` it would have been an
+ * unmoderated LLM endpoint.
+ */
+export function categoriesForPhase(phase: GamePhase): readonly string[] {
+  return phase === "adult_chat" ? MINOR_SAFETY_CATEGORIES : CHILD_SAFETY_CATEGORIES;
 }
 
 /**
@@ -124,9 +159,14 @@ export async function recordConcern(params: {
 /**
  * Runs the per-message content check before a parent message reaches the
  * child-LLM. On a flag: blocks the message and terminates the session via
- * applyModerationBlock. Skips entirely in the `adult_chat` phase — that
- * scene is between the parent and their now-adult (25-year-old) child, so
- * "is this sexual content directed at a minor" doesn't apply there.
+ * applyModerationBlock (and bans, as the reliable per-message check always
+ * has).
+ *
+ * The check runs in EVERY phase. What varies by phase is only which categories
+ * it asks about — see categoriesForPhase(). `adult_chat` used to return here
+ * before the classifier ran; that is no longer true and must not be
+ * reintroduced, because PARENT_MESSAGE is now a legal transition from that
+ * phase.
  */
 export async function moderateParentMessage(params: {
   repo: GameRepository;
@@ -138,9 +178,7 @@ export async function moderateParentMessage(params: {
 }): Promise<{ blocked: boolean }> {
   const { repo, games, state, sender, content, ipAddress } = params;
 
-  if (state.phase === "adult_chat") return { blocked: false };
-
-  const result = await classifyParentMessage(content);
+  const result = await classifyParentMessage(content, categoriesForPhase(state.phase));
   if (!result.flagged) return { blocked: false };
 
   await applyModerationBlock({ repo, games, state, sender, content, reason: result.reason, ipAddress });

@@ -620,12 +620,12 @@ export function useMultiplayer() {
     // and by E.ERROR, so a failed end-chat gives the button back rather than
     // leaving a dead screen.
     //
-    // Set ONLY in the phases whose exit is what clears it. The same button
-    // renders as "finish → report card" during `adult_chat`, where the server's
-    // endChat returns on its `phase !== "family_chat"` guard without an error
-    // and without a broadcast (a pre-existing no-op, untouched here) — setting
-    // the flag there would hide the control forever instead of merely failing
-    // to advance.
+    // Set ONLY in the phases whose exit is what clears it. `adult_chat` no
+    // longer reaches this function at all — that button now calls
+    // generateReportCard, because endChat returned silently on its
+    // `phase !== "family_chat"` server guard. The check stays as a guard: this
+    // flag hides the scene-exit control, so setting it in a phase whose exit
+    // isn't END_CHAT would strand the player on a screen with no way out.
     if (phaseRef.current === "family_chat" || phaseRef.current === "sidebar") {
       setSceneEnding(true);
     }

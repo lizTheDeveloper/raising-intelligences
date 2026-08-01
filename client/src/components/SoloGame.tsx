@@ -404,6 +404,16 @@ export function SoloGame() {
   }
 
   if (phase === "adult_chat") {
+    // Same per-scene filter as family_chat above, including the `undefined`
+    // clause — useGame appends the player's own message optimistically with no
+    // eventNumber, so strict equality would hide every parent message. This is
+    // safe now that START_ADULT_CHAT advances currentEventNumber: the adult
+    // conversation is its own scene, so without the filter the last childhood
+    // conversation renders above it.
+    const adultMessages = messages.filter((m) => {
+      if (m.chatType === "debrief") return false;
+      return m.eventNumber === undefined || m.eventNumber === currentEvent?.eventNumber;
+    });
     return (
       <div className="app">
         <div className="chat-portrait-header">
@@ -411,7 +421,7 @@ export function SoloGame() {
           <p className="age-marker">— adulthood —</p>
         </div>
         <Chat
-          messages={messages}
+          messages={adultMessages}
           streamingMessage={streamingMessage}
           childName={childName}
           messagesRemaining={messagesRemaining}

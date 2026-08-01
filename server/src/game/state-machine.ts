@@ -114,8 +114,14 @@ export function canTransition(state: GameState, action: GameAction): boolean {
       // parent's turns with their child. See the PARENT_MESSAGE reducer for
       // the chatType/visibleTo stamping that keeps the kid out of it.
       if (state.phase === "debrief") return true;
+      // `adult_chat` is the endgame conversation with the grown child. It is a
+      // scene like any other — START_ADULT_CHAT advances currentEventNumber and
+      // resets parentMessageCount to 0 — so it gets the same per-scene budget.
+      // The cap also bounds it as an LLM endpoint. Moderation for the phase is
+      // NARROWED (categoriesForPhase in safety/moderation.ts), never skipped.
       return (
-        state.phase === "family_chat" && state.parentMessageCount < PARENT_MESSAGE_CAP
+        (state.phase === "family_chat" || state.phase === "adult_chat") &&
+        state.parentMessageCount < PARENT_MESSAGE_CAP
       );
     case "KID_MESSAGE":
       return (
@@ -150,7 +156,15 @@ export function canTransition(state: GameState, action: GameAction): boolean {
     case "START_ADULT_CHAT":
       return state.phase === "epilogue" || state.phase === "event_intro";
     case "SHOW_REPORT_CARD":
-      return state.phase === "event_intro" || state.phase === "epilogue";
+      // `adult_chat` is the phase the report card is meant to follow: its only
+      // exit control is "finish → report card" (multiplayer) / Chat's
+      // onEndChat={generateReportCard} (solo). Both threw "Invalid transition"
+      // here, which is what made that button dead on a live-looking screen.
+      return (
+        state.phase === "event_intro" ||
+        state.phase === "epilogue" ||
+        state.phase === "adult_chat"
+      );
     case "TRAJECTORY_CHECKED":
       return state.phase === "debrief";
     case "CONCERN_ACCRUED":
