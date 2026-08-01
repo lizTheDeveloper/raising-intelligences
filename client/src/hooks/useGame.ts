@@ -35,6 +35,18 @@ interface Message {
   sender: string;
   content: string;
   chatType: string;
+  /**
+   * Which game event this message belongs to, stamped server-side at creation
+   * (`server/src/types.ts`'s `Message.eventNumber`). The server has always sent
+   * it; this type just never declared it, so callers filtering a transcript per
+   * scene had to cast.
+   *
+   * Optional, and that is not laziness: `sendMessage` below appends the
+   * player's own message optimistically with no event number and nothing ever
+   * replaces it with the server's copy. An un-stamped message is one this
+   * client created, in the current scene, just now.
+   */
+  eventNumber?: number;
 }
 
 export interface TherapyMessage {

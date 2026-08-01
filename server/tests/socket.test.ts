@@ -102,9 +102,12 @@ describe("socket multiplayer flow", () => {
     expect((await joined2).slot).toBe("parent2");
     expect((await lobbyAfterJoin).players).toHaveLength(2);
 
-    // One ready gate: the server generates the scenario AND begins family chat.
-    // (This was two separate both-ready rounds; requiring two synchronised
-    // rounds across a slow model call stranded real games in event_intro.)
+    // One ready gate, then the guardian quiz. (The gate was two separate
+    // both-ready rounds; requiring two synchronised rounds across a slow model
+    // call stranded real games in event_intro. Since the 2026-07-31 reorder the
+    // single remaining round generates nothing either — submitting the
+    // personality quiz is what builds scene 1, so the world manager sees the
+    // seed and both parents.)
     const chat1 = waitUntil<{ phase: string; currentEvent: { description: string } }>(
       p1,
       E.STATE,
@@ -113,6 +116,8 @@ describe("socket multiplayer flow", () => {
     const chat2 = waitUntil<{ phase: string }>(p2, E.STATE, (s) => s.phase === "family_chat");
     p1.emit(E.READY, { ready: true });
     p2.emit(E.READY, { ready: true });
+    p1.emit(E.SUBMIT_PERSONALITY, { ocean: [3, 2, 4, 2, 3], confessional1: "a", confessional2: "b" });
+    p2.emit(E.SUBMIT_PERSONALITY, { ocean: [2, 4, 1, 3, 2], confessional1: "c", confessional2: "d" });
     const s1 = await chat1;
     await chat2;
     expect(s1.phase).toBe("family_chat");

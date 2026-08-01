@@ -209,6 +209,14 @@ export function registerSocketHandlers(deps: SocketDeps): void {
   // having caught a one-shot GENERATING event. Never inferred from phase.
   const generatingGames = new Set<string>();
 
+  // Games whose first scene has been kicked off (in flight or done). Scene 1 is
+  // no longer triggered by a ready gate but by the personality seed landing, and
+  // SUBMIT_PERSONALITY is re-emittable by design (a retry, a double-click, a
+  // co-parent who reloads and retakes the quiz). Without this a second submit
+  // would re-run the world manager on top of a scene the pair may already be
+  // playing. Deleted again if the generation fails, so a retry can still work.
+  const firstSceneStarted = new Set<string>();
+
   // Next-event prefetches, keyed by game — the multiplayer twin of the map in
   // routes/game.ts. Kicked off when a scene ends so the world-manager call runs
   // in parallel with the psychologist/identity-document pass and the debrief
@@ -254,6 +262,57 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     const session = sessions.get(gameId);
     if (!session) return;
     io.to(gameId).emit(E.LOBBY, lobbyState(session));
+  }
+
+  /**
+   * Build and begin scene 1 — driven by the personality seed, not by a ready
+   * gate.
+   *
+   * The opening used to generate this scene at the lobby gate, which put it
+   * *before* the OCEAN quiz: the world manager ran with `personalitySeed: ""`
+   * and an empty `parentPersonalities`, so the first thing anyone played was
+   * the one scene in the game that knew nothing about them. Calling it here,
+   * from SUBMIT_PERSONALITY once the seed exists, is the whole point of the
+   * reorder — `seeded` must therefore be the post-seed state, never the state
+   * the handler started from.
+   *
+   * Ready flags deliberately survive the opening gate (they are what holds each
+   * player on the guardian screen — see the READY handler) and are cleared here,
+   * once there is a scene to clear them into.
+   */
+  async function startFirstScene(gameId: string, seeded: GameState): Promise<void> {
+    if (firstSceneStarted.has(gameId)) return;
+    firstSceneStarted.add(gameId);
+
+    generatingGames.add(gameId);
+    io.to(gameId).emit(E.GENERATING, { generating: true });
+    broadcastState(gameId);
+    try {
+      const next = conversationEngine.beginChat(await conversationEngine.loadEvent(seeded));
+      // Same crash-safe save order as the READY path: the event row lands
+      // before the game row, so a crash in between regenerates cleanly.
+      if (next.currentEvent) await repo.saveEvent(next.id, next.currentEvent);
+      games.set(next.id, next);
+      await repo.saveGame(next);
+      generateNextPortrait(gameId).catch(() => {});
+    } catch (err) {
+      // Let a retry through: the seed is already persisted, so re-readying from
+      // the lobby (see the `finally`) takes the normal needsFreshScene path and
+      // regenerates the scene still personality-informed.
+      firstSceneStarted.delete(gameId);
+      throw err;
+    } finally {
+      generatingGames.delete(gameId);
+      // STATE first, then LOBBY. A LOBBY carrying ready=false that arrives
+      // before the STATE carrying currentEventNumber === 1 reads, on the
+      // client, as "pre-game and not readied" — i.e. a flash of the lobby on
+      // top of a scene that already exists.
+      broadcastState(gameId);
+      io.to(gameId).emit(E.GENERATING, { generating: false });
+      const session = sessions.get(gameId);
+      if (session) sessions.set(gameId, resetReady(session));
+      broadcastLobby(gameId);
+    }
   }
 
   /**
@@ -521,6 +580,29 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
         sessions.set(gameId, setReady(session, socket.id, !!payload?.ready));
         broadcastLobby(gameId);
+
+        // ---- The opening gate does not generate anything ----
+        // Scene 1 is built from the personality seed (see startFirstScene), and
+        // the seed does not exist until both parents have finished the guardian
+        // quiz. Generating here is what made the first scene of every game
+        // personality-blind, and it is what put a ~20s "building the next
+        // scene…" wait in front of a questionnaire that needs neither the scene
+        // nor a second player.
+        //
+        // The ready flags are deliberately NOT reset and NOT waited on for both
+        // players: this one flag, read back off the LOBBY broadcast, is what
+        // takes a player into the quiz. It is per-player (the lobby's own button
+        // is disabled until both parents are connected, so it still can't fire
+        // before the pair exists), it is server-owned, and it survives long
+        // enough to be the durable answer to "has this player passed the
+        // lobby?" — which nothing in GameState records. resetReady() here would
+        // yank both clients back to the lobby mid-quiz. startFirstScene clears
+        // them once scene 1 exists.
+        const awaitingPersonality =
+          state.phase === "event_intro" &&
+          state.currentEventNumber === 0 &&
+          state.personalitySeed === "";
+        if (awaitingPersonality) return;
 
         const updated = sessions.get(gameId)!;
         if (!allReady(updated)) return;
@@ -1100,6 +1182,18 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           games.set(gameId, withSeed);
           await repo.saveGame(withSeed);
           io.to(gameId).emit(E.PERSONALITY_SEED_READY, { personalitySeed: seed });
+
+          // The reorder's whole point: scene 1 is generated HERE, from
+          // `withSeed`, so the world manager sees the personality seed and both
+          // parents' personalities. Passing `updatedState` (the pre-seed state)
+          // or re-reading via currentState() before the games.set above would
+          // silently reproduce the exact bug this replaces.
+          //
+          // Only for the opening — a co-parent submitting late (routes/game.ts
+          // allows it) must never regenerate the scene that is already running.
+          if (withSeed.phase === "event_intro" && withSeed.currentEventNumber === 0) {
+            await startFirstScene(gameId, withSeed);
+          }
         } else {
           await repo.saveGame(updatedState);
         }

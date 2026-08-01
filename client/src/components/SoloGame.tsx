@@ -104,10 +104,23 @@ export function SoloGame() {
       return;
     }
     if (matrixUser) syncKidsToServer(matrixUser);
-    setLoadingEvent(true);
-    await nextEvent(id);
-    setLoadingEvent(false);
+    // Deliberately does NOT load the first event here any more.
+    //
+    // It used to, in parallel with the guardian quiz — which removed the wait
+    // but left scene 1 personality-blind, because the world manager ran before
+    // the OCEAN answers and confessionals existed. The seed has to exist first,
+    // so the load moves to handleSeedReady below. Running the quiz concurrently
+    // with generation is the wrong fix; running it *before* is the right one.
   };
+
+  // The personality seed has landed → build scene 1, now that the world manager
+  // can actually see who these parents are. The guardian screen's portrait
+  // reveal and closing beat play over this call.
+  const handleSeedReady = useCallback(async () => {
+    setLoadingEvent(true);
+    await nextEvent();
+    setLoadingEvent(false);
+  }, [nextEvent]);
 
   const handleNextEvent = async () => {
     setLoadingEvent(true);
@@ -252,8 +265,12 @@ export function SoloGame() {
         <GuardianScreen
           childName={childName || nameInput}
           gameId={gameId}
-          eventReady={phase === "event_intro" && !loadingEvent}
+          // `currentEvent !== null` is required, not decorative: the game sits
+          // in `event_intro` from creation onward, so without it this would
+          // read "ready" before scene 1 had even been requested.
+          eventReady={phase === "event_intro" && !loadingEvent && currentEvent !== null}
           onReady={() => setShowGuardian(false)}
+          onSeedReady={handleSeedReady}
         />
       </div>
     );
@@ -283,12 +300,9 @@ export function SoloGame() {
     // eventNumber and nothing ever replaces it with the server's copy, so a
     // strict equality test would hide every parent message permanently. An
     // un-stamped message was created by this client, in this scene, just now.
-    // (The cast is because useGame's local Message type doesn't declare the
-    // field the server actually sends — see the report.)
     const sceneMessages = messages.filter((m) => {
       if (m.chatType === "debrief") return false;
-      const n = (m as { eventNumber?: number }).eventNumber;
-      return n === undefined || n === currentEvent?.eventNumber;
+      return m.eventNumber === undefined || m.eventNumber === currentEvent?.eventNumber;
     });
     return (
       <div className="app">

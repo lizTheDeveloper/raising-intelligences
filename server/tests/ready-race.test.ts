@@ -4,7 +4,7 @@ import { buildServer, type BuiltServer } from "../src/app.js";
 import { InMemoryGameRepository } from "../src/db/repository.js";
 import { InMemoryAdminQueries } from "../src/db/admin-queries.js";
 import { MockLLMClient } from "../src/llm/mock.js";
-import { TestClient, connect } from "./helpers/socket-client.js";
+import { TestClient, connect, submitPersonalities } from "./helpers/socket-client.js";
 import { SOCKET_EVENTS as E } from "../src/socket/protocol.js";
 import type { ViewerState } from "../src/socket/protocol.js";
 import type { GameEvent } from "../src/types.js";
@@ -84,11 +84,14 @@ describe("Multiplayer READY race", () => {
     const loaded = p1.waitFor<ViewerState>(E.STATE, (s) => s.currentEvent != null);
 
     // Both players ready — and each fires several extra READYs in the same tick,
-    // exactly the double/triple-click the playtest hit.
+    // exactly the double/triple-click the playtest hit. Since the opening
+    // reorder the gate itself generates nothing, so the spam is followed by the
+    // guardian quiz, which is what triggers the (single) world-manager call.
     for (let i = 0; i < 3; i++) {
       p1.emit(E.READY, { ready: true });
       p2.emit(E.READY, { ready: true });
     }
+    submitPersonalities(p1, p2, { ready: false });
 
     const state = await loaded;
     expect(state.currentEvent).not.toBeNull();
