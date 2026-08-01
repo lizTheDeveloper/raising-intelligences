@@ -36,17 +36,6 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   const [nameInput, setNameInput] = useState(matrixDisplayName ?? "");
   const [childInput, setChildInput] = useState("");
   const [relationship, setRelationship] = useState(RELATIONSHIP_OPTIONS[0]);
-  const [gateReady, setGateReady] = useState(false);
-  // Dark Play Plan 3 — separate ready flag for the consult/therapy/
-  // cps_review "advance" gates. Can't reuse `gateReady`: that one only
-  // resets on `currentEventNumber` change, but debrief → consult/therapy/
-  // cps_review happens WITHOUT the event number advancing (it only bumps
-  // once the ladder phase itself concludes back to event_intro). Reusing it
-  // would carry debrief's already-true ready flag straight into the next
-  // screen, skipping the read-and-ready step entirely. Reset on every phase
-  // change instead, since the server clears everyone's `ready` the moment
-  // a round completes (see socket/handlers.ts's `resetReady` call).
-  const [ladderReady, setLadderReady] = useState(false);
   const [guardianDismissed, setGuardianDismissed] = useState(false);
   const autoResumeAttempted = useRef(false);
 
@@ -129,22 +118,29 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     state.currentEventNumber === 1 &&
     state.currentEvent !== null;
 
-  const prevEventNumberRef = useRef(state?.currentEventNumber ?? 0);
-  useEffect(() => {
-    const cur = state?.currentEventNumber ?? 0;
-    if (cur !== prevEventNumberRef.current) {
-      setGateReady(false);
-      prevEventNumberRef.current = cur;
-    }
-  }, [state?.currentEventNumber]);
-
-  const prevPhaseRef = useRef(state?.phase);
-  useEffect(() => {
-    if (state?.phase !== prevPhaseRef.current) {
-      setLadderReady(false);
-      prevPhaseRef.current = state?.phase;
-    }
-  }, [state?.phase]);
+  /**
+   * Am *I* readied — according to the server.
+   *
+   * This is the only ready flag in this component, and it is derived, not
+   * stored. It used to be two pieces of local React state (`gateReady` and
+   * `ladderReady`) resynced by effects keyed on `currentEventNumber` /
+   * `phase`, and that is what deadlocked live games: the server clears every
+   * player's ready flag via `resetReady()` on *each* successful advance, but
+   * `END_DEBRIEF` moves debrief → event_intro without touching
+   * `currentEventNumber`, so the reset effect never fired. The client kept
+   * rendering "you're ready" on a gate the server had already reset, the
+   * player never sent `ready(true)` again, and the pair sat on "1 of 2
+   * ready" forever.
+   *
+   * `mp.players` is refreshed by the LOBBY broadcast that follows every
+   * `setReady` *and* every `resetReady` — including on reconnect and join —
+   * so reading from it can't drift by construction. Lobby.tsx has always
+   * done exactly this. There is deliberately no optimistic local override:
+   * re-introducing one re-introduces the deadlock.
+   */
+  const meReady = mp.players.find((p) => p.slot === mySlot)?.ready ?? false;
+  const partnerName =
+    mp.players.find((p) => p.slot !== mySlot)?.displayName?.trim() || "your partner";
 
   // ---- Family album (logged-in): browse previously-raised children ----
   if (showAlbum && matrixUser) {
@@ -297,29 +293,37 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   if (state.phase === "event_intro") {
     return (
       <div className="app fade-in">
+        {/* One chain, not two independent ternaries. The scene description
+            and the progress line used to be rendered by separate conditions,
+            so a non-null `currentEvent` put the PREVIOUS scene's setup
+            underneath "building the next scene…". While we're generating,
+            there is no scene to show. */}
         <div className="event-intro">
-          {state.currentEvent ? (
-            <>
-              <p className="age-marker">— age {state.currentEvent.age} —</p>
-              <p className="event-description">{state.currentEvent.description}</p>
-            </>
-          ) : (
-            <p className="dim">the story continues…</p>
-          )}
           {mp.generating ? (
             <p className="dim" role="status" aria-live="polite">
               building the next scene…
             </p>
+          ) : state.currentEvent ? (
+            <>
+              <p className="age-marker">— age {state.currentEvent.age} —</p>
+              <p className="event-description">{state.currentEvent.description}</p>
+              <ReadyToggle
+                ready={meReady}
+                onToggle={mp.ready}
+                label="ready to begin"
+                players={mp.players}
+              />
+            </>
           ) : (
-            <ReadyToggle
-              ready={gateReady}
-              onToggle={(v) => {
-                setGateReady(v);
-                mp.ready(v);
-              }}
-              label={state.currentEvent ? "ready to begin" : "ready for the next chapter"}
-              players={mp.players}
-            />
+            <>
+              <p className="dim">the story continues…</p>
+              <ReadyToggle
+                ready={meReady}
+                onToggle={mp.ready}
+                label="ready for the next chapter"
+                players={mp.players}
+              />
+            </>
           )}
         </div>
       </div>
@@ -329,6 +333,23 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   // ---- Family chat / sidebar / adult chat ----
   if (state.phase === "family_chat" || state.phase === "sidebar" || state.phase === "adult_chat") {
     const inputDisabled = mp.isStreaming || inOtherSidebar || mp.sceneEnding;
+    // Per-scene transcript. `state.messages` is cumulative for the whole game,
+    // so without this the previous scene's conversation renders underneath the
+    // new scene's header. Every message is stamped with the event it belongs
+    // to server-side; the play screen just never read it. Debrief messages are
+    // the parents alone at night — they belong to the debrief screen, not
+    // here, and (unlike the family chat) they don't consume the scene cap.
+    //
+    // Deliberately NOT applied to adult_chat: START_ADULT_CHAT leaves
+    // `currentEventNumber` at the final scene's value, so adult-chat messages
+    // share it with the last childhood scene and there is no client-side
+    // discriminator between them. Filtering there would reintroduce the bug.
+    const sceneMessages =
+      state.phase === "adult_chat"
+        ? state.messages
+        : state.messages.filter(
+            (m) => m.eventNumber === state.currentEventNumber && m.chatType !== "debrief"
+          );
     return (
       <div className="app fade-in">
         <div className="chat-portrait-header">
@@ -357,7 +378,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
 
         <div className="chat">
           <MessageList
-            messages={state.messages}
+            messages={sceneMessages}
             streamingMessage={mp.streamingMessage}
             childName={state.childName}
             players={mp.players}
@@ -367,6 +388,9 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
             onSend={mp.sendMessage}
             disabled={inputDisabled}
             messagesRemaining={state.messagesRemaining}
+            onTyping={mp.setTyping}
+            partnerTyping={mp.partnerTyping}
+            partnerName={partnerName}
           />
           {mp.sceneEnding && (
             <p className="dim scene-ending">the moment passes...</p>
@@ -399,63 +423,40 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   // ---- Dark Play Plan 3: consult / therapy / cps_review ----
   // Reuse the same shared screens SoloGame (Task 5) renders. Solo advances
   // immediately on its single onContinue; here both parents must ready up
-  // (mirroring debrief's ReadyToggle) before the server's READY-in-<phase>
-  // branch applies the decay + END_INTERVENTION and moves everyone on.
-  // Once this player has readied, swap the screen for the same ReadyToggle
-  // "waiting" view debrief/event_intro use, rather than stacking a second
-  // button below the shared screen's own "continue"/"conclude" button.
+  // before the server's READY-in-<phase> branch applies the decay +
+  // END_INTERVENTION and moves everyone on. The gate itself is a genuine
+  // two-player barrier (see server/tests/ready-race.test.ts) and stays.
+  //
+  // What changed: the screen used to be REPLACED by a ReadyToggle the moment
+  // you pressed its own "continue"/"conclude" — two screens, two buttons, and
+  // the intervention text yanked away while you waited for your partner to
+  // finish reading it. Now the screen stays mounted, its own button IS the
+  // ready action (one interaction), and a thin strip below reports the count
+  // and offers "not yet". `.gate-readied` dims the screen's own button once
+  // you've readied so it doesn't read as unpressed — a second press would be
+  // a harmless no-op anyway, since setReady(true) is idempotent server-side.
+  const ladderWrapper = `app fade-in${meReady ? " gate-readied" : ""}`;
+
   if (state.phase === "consult") {
     return (
-      <div className="app fade-in">
-        {ladderReady ? (
-          <div className="debrief-enhanced">
-            <ReadyToggle
-              ready={ladderReady}
-              onToggle={(v) => {
-                setLadderReady(v);
-                mp.ready(v);
-              }}
-              label="continue"
-              players={mp.players}
-            />
-          </div>
-        ) : (
-          <ConsultScreen
-            text={state.interventionText ?? ""}
-            onContinue={() => {
-              setLadderReady(true);
-              mp.ready(true);
-            }}
-          />
-        )}
+      <div className={ladderWrapper}>
+        <ConsultScreen
+          text={state.interventionText ?? ""}
+          onContinue={() => mp.ready(true)}
+        />
+        <ReadyStrip ready={meReady} onCancel={() => mp.ready(false)} players={mp.players} />
       </div>
     );
   }
 
   if (state.phase === "cps_review") {
     return (
-      <div className="app fade-in">
-        {ladderReady ? (
-          <div className="debrief-enhanced">
-            <ReadyToggle
-              ready={ladderReady}
-              onToggle={(v) => {
-                setLadderReady(v);
-                mp.ready(v);
-              }}
-              label="continue"
-              players={mp.players}
-            />
-          </div>
-        ) : (
-          <CpsScreen
-            text={state.interventionText ?? ""}
-            onContinue={() => {
-              setLadderReady(true);
-              mp.ready(true);
-            }}
-          />
-        )}
+      <div className={ladderWrapper}>
+        <CpsScreen
+          text={state.interventionText ?? ""}
+          onContinue={() => mp.ready(true)}
+        />
+        <ReadyStrip ready={meReady} onCancel={() => mp.ready(false)} players={mp.players} />
       </div>
     );
   }
@@ -463,44 +464,39 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   if (state.phase === "therapy") {
     const parentTurns = (state.therapyMessages ?? []).filter((m) => m.speaker === "parent").length;
     return (
-      <div className="app fade-in">
-        {ladderReady ? (
-          <div className="debrief-enhanced">
-            <ReadyToggle
-              ready={ladderReady}
-              onToggle={(v) => {
-                setLadderReady(v);
-                mp.ready(v);
-              }}
-              label="conclude session"
-              players={mp.players}
-            />
-          </div>
-        ) : (
-          <TherapyScreen
-            messages={state.therapyMessages ?? []}
-            // The server streams the therapist's reply via the same
-            // DOC_CHUNK event other doc-generation flows use, but (unlike
-            // endChat's identity doc) never follows it with DOC_DONE, so
-            // mp.streamingDocText is never cleared back to "" here — wiring
-            // it up would leave TherapyScreen's `canSend` permanently
-            // false after the first reply. The transcript still updates
-            // normally via the STATE rebroadcast once the reply finishes.
-            streamingReply={undefined}
-            canSend={parentTurns < THERAPY_TURN_CAP}
-            onSend={mp.sendTherapyMessage}
-            onConclude={() => {
-              setLadderReady(true);
-              mp.ready(true);
-            }}
-          />
-        )}
+      <div className={ladderWrapper}>
+        <TherapyScreen
+          messages={state.therapyMessages ?? []}
+          // The server streams the therapist's reply via the same
+          // DOC_CHUNK event other doc-generation flows use, but (unlike
+          // endChat's identity doc) never follows it with DOC_DONE, so
+          // mp.streamingDocText is never cleared back to "" here — wiring
+          // it up would leave TherapyScreen's `canSend` permanently
+          // false after the first reply. The transcript still updates
+          // normally via the STATE rebroadcast once the reply finishes.
+          streamingReply={undefined}
+          canSend={parentTurns < THERAPY_TURN_CAP}
+          onSend={mp.sendTherapyMessage}
+          onConclude={() => mp.ready(true)}
+        />
+        <ReadyStrip ready={meReady} onCancel={() => mp.ready(false)} players={mp.players} />
       </div>
     );
   }
 
   // ---- Debrief ----
+  // The screen sets up a private conversation between the two parents and,
+  // until now, offered no way to have it. The kid is asleep: no kid presence,
+  // no LLM turn, nothing generating between them — the one screen in the game
+  // where two humans just talk. The conversation is optional; the "next
+  // chapter" gate below it is unchanged and is still what advances the game.
   if (state.phase === "debrief") {
+    // Both clauses matter. chatType keeps the family chat out; eventNumber
+    // keeps chapter 1's debrief out of chapter 3's, since END_DEBRIEF never
+    // resets `currentEventNumber`.
+    const debriefMessages = state.messages.filter(
+      (m) => m.chatType === "debrief" && m.eventNumber === state.currentEventNumber
+    );
     return (
       <div className="app fade-in">
         <div className="debrief-enhanced">
@@ -508,12 +504,36 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
             <p className="debrief-line-1">later that night</p>
             <p className="debrief-line-2">the kids are asleep. it's just you two.</p>
           </div>
+          <div className="chat debrief-chat">
+            {debriefMessages.length > 0 && (
+              <MessageList
+                messages={debriefMessages}
+                // Nothing streams here — there is no kid to answer.
+                streamingMessage=""
+                childName={state.childName}
+                players={mp.players}
+                mySlot={mySlot}
+              />
+            )}
+            <MessageInput
+              onSend={mp.sendDebriefMessage}
+              // No LLM waiting state: never disabled, never latched on
+              // isStreaming (which the kid's reply owns and which nothing
+              // would ever clear here).
+              disabled={false}
+              // No messagesRemaining: the debrief doesn't consume the
+              // per-scene cap, so it must not show the cap's dots.
+              onTyping={mp.setTyping}
+              partnerTyping={mp.partnerTyping}
+              partnerName={partnerName}
+              placeholder="say something to your co-parent…"
+              // Let the prose beat land before the keyboard covers it.
+              autoFocus={false}
+            />
+          </div>
           <ReadyToggle
-            ready={gateReady}
-            onToggle={(v) => {
-              setGateReady(v);
-              mp.ready(v);
-            }}
+            ready={meReady}
+            onToggle={mp.ready}
             label="next chapter"
             players={mp.players}
           />
@@ -541,6 +561,40 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   return (
     <div className="app">
       <p>{state.phase}</p>
+    </div>
+  );
+}
+
+/**
+ * The waiting half of a ready gate, without a button that arms it — for
+ * screens that already have their own "continue"/"conclude" action (the
+ * consult/therapy/CPS ladder). Keeps the gate visible and cancellable
+ * without demanding a second press to enter it.
+ */
+function ReadyStrip({
+  ready,
+  onCancel,
+  players,
+}: {
+  ready: boolean;
+  onCancel: () => void;
+  players: { ready: boolean }[];
+}) {
+  const readyCount = players.filter((p) => p.ready).length;
+  return (
+    <div className="ready-toggle ready-strip">
+      {ready && (
+        <div className="ready-waiting" role="status" aria-live="polite">
+          <div className="guardian-spinner" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <p className="ready-waiting-label">you're ready</p>
+          <button className="btn dim ready-cancel" onClick={onCancel}>
+            not yet
+          </button>
+        </div>
+      )}
+      <p className="dim ready-count">{readyCount} of {players.length} ready</p>
     </div>
   );
 }

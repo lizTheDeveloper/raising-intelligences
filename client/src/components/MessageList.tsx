@@ -2,6 +2,11 @@ interface Message {
   sender: string;
   content: string;
   chatType: string;
+  /** Which scene this message belongs to. Optional here because the solo
+   * hook appends parent messages optimistically without one; callers are
+   * responsible for filtering to the current scene before rendering — this
+   * component deliberately shows exactly what it is handed. */
+  eventNumber?: number;
 }
 
 interface PlayerLite {

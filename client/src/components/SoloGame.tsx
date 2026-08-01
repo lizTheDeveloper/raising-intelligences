@@ -274,6 +274,22 @@ export function SoloGame() {
   }
 
   if (phase === "family_chat") {
+    // Per-scene transcript — the same bug as multiplayer: `messages` is
+    // cumulative for the whole game, so a resumed game rendered every past
+    // scene's conversation under the current scene's header.
+    //
+    // The `undefined` clause is load-bearing, not laziness: useGame's
+    // sendMessage appends the player's own message optimistically with no
+    // eventNumber and nothing ever replaces it with the server's copy, so a
+    // strict equality test would hide every parent message permanently. An
+    // un-stamped message was created by this client, in this scene, just now.
+    // (The cast is because useGame's local Message type doesn't declare the
+    // field the server actually sends — see the report.)
+    const sceneMessages = messages.filter((m) => {
+      if (m.chatType === "debrief") return false;
+      const n = (m as { eventNumber?: number }).eventNumber;
+      return n === undefined || n === currentEvent?.eventNumber;
+    });
     return (
       <div className="app">
         {error && <p className="error-banner">{error}</p>}
@@ -285,7 +301,7 @@ export function SoloGame() {
           <p className="event-context">{currentEvent.description}</p>
         )}
         <Chat
-          messages={messages}
+          messages={sceneMessages}
           streamingMessage={streamingMessage}
           childName={childName}
           messagesRemaining={messagesRemaining}
