@@ -123,3 +123,53 @@ handling at `handlers.ts:420` are the places to check.
 **Note:** the `ProcessingScreen` fragment lines are good writing and shouldn't be
 thrown away with the wait — worth considering whether they move into the debrief
 beat rather than disappearing.
+
+### 4. Previous scene's conversation persists under the new scene
+
+> "When we go to the next scene, the previous conversation is shown even though
+> the scene is different at the top."
+
+Confirmed against a screenshot: header reads `— age 3 — · 2 of 10` with the
+fingernail-clipping scene description, while the messages below it are the
+*shoes* conversation from scene 1.
+
+**Cause — the transcript is never filtered by event.** `MultiplayerGame.tsx:360`
+passes `state.messages` straight through to `Chat` → `MessageList`, which just
+does `messages.map(...)` (`MessageList.tsx:43`). Nothing in the render chain
+filters. `SoloGame.tsx:288` has the same shape.
+
+Every message already carries the field needed to fix it — `Message.eventNumber`,
+"which game event this message belongs to (set at creation time)"
+(`server/src/types.ts:26`, mirrored at `client/src/hooks/useMultiplayer.ts:67`).
+The admin view already groups on it (`components/admin/GameDetail.tsx:39-41`);
+the play screen just never learned to.
+
+Per-scene is clearly the intent elsewhere in the state machine too —
+`END_DEBRIEF` resets `parentMessageCount` to 0 (`state-machine.ts:275`), so the
+message cap is per-scene while the visible transcript is cumulative.
+
+**Suggested direction:** filter to
+`state.messages.filter(m => m.eventNumber === state.currentEventNumber)` at the
+two call sites. Worth a moment's thought on whether the debrief/sidebar screens
+want the same treatment, and whether the full history should stay reachable
+somewhere (the scrapbook / album already covers retrospective reading).
+
+### 5. No indication when the co-parent is typing
+
+> "I think we should be able to tell when the other partner starts to talk or
+> like starts typing."
+
+**Not built — there is no typing/presence signal in the protocol at all.** The
+event table (`client/src/hooks/useMultiplayer.ts:5-34`, mirrored in
+`server/src/socket/protocol.ts`) has no `TYPING` event; grepping `typing` across
+client and server turns up only two unrelated code comments. `ChildPresence.tsx`
+is a portrait renderer, not presence in the multiplayer sense — the only
+co-parent signals today are `PublicPlayer.connected` and `PublicPlayer.ready`
+in the lobby payload.
+
+This is additive rather than a fix: a `TYPING` event emitted on input focus /
+keystroke (debounced, with a timeout so it self-clears) and broadcast to the
+room, surfaced near `MessageInput`. Worth noting it compounds with #1 and #2 —
+this is a two-player game where the current co-presence cues are the ready
+counter and nothing else, which is likely part of why the ready gates feel load-
+bearing. A live typing signal may reduce the *felt* need for some of them.
