@@ -21,6 +21,18 @@ export interface JoinGamePayload {
   playerToken?: string;
   /** Matrix user id of the joining player, when signed in. */
   userId?: string;
+  /**
+   * A single-use device-handoff code (see REQUEST_HANDOFF). Redeeming it binds
+   * this socket to the slot the code was minted for and issues the normal
+   * `playerToken` in the JOINED reply — the same credential a first join gets.
+   *
+   * Deliberately NOT the playerToken itself. The token is a long-lived bearer
+   * credential for a game that holds the players' confessed traumas; a link
+   * carrying it, pasted into a chat app or captured by a proxy log, would hand
+   * over the session permanently. This code is bound to {gameId, slot}, expires
+   * in minutes, and is burned on first use.
+   */
+  handoffCode?: string;
 }
 export interface ReadyPayload {
   ready: boolean;
@@ -102,6 +114,33 @@ export interface TypingBroadcast {
   typing: boolean;
 }
 
+/**
+ * Server → the requesting socket only. The freshly minted device-handoff code
+ * and how long it has to live.
+ *
+ * `code` is a 128-bit random value, url-safe encoded. It is never logged, never
+ * broadcast to the room, and never persisted; it exists only in the issuing
+ * process's memory until it is redeemed or expires.
+ */
+export interface HandoffCodePayload {
+  code: string;
+  /** Wall-clock expiry (ms since epoch), so the UI can say how long is left. */
+  expiresAt: number;
+}
+
+/**
+ * Server → the socket that was holding a slot when another live socket claimed
+ * it. Purely informational: the superseded socket keeps its room membership and
+ * keeps receiving STATE (see slotRoom — a second socket for a player is a
+ * supported, tested state), so it is never frozen mid-scene. What it can no
+ * longer do is ready up, because ready is keyed on the slot's current
+ * connection — which is exactly why the client must say so out loud rather than
+ * leave a dead button on screen.
+ */
+export interface SupersededPayload {
+  slot: PlayerSlot;
+}
+
 export const SOCKET_EVENTS = {
   // client → server
   CREATE_GAME: "create_game",
@@ -123,8 +162,24 @@ export const SOCKET_EVENTS = {
   ADULT_CHAT: "adult_chat",
   REPORT_CARD: "report_card",
   SUBMIT_PERSONALITY: "submit_personality",
+  /**
+   * "I want to continue this on another device." Mints a short-lived,
+   * single-use code bound to the requesting socket's {gameId, slot}, answered
+   * with HANDOFF_CODE to that socket alone.
+   *
+   * Socket-only by design, with no REST twin: the socket is already
+   * authenticated to a slot (`socket.data`), whereas an HTTP endpoint would
+   * have nothing to authenticate with. `gameId` travels in the invite link, so
+   * a `POST /api/game/:id/handoff` would let anyone holding that link mint a
+   * credential for a slot they don't own.
+   */
+  REQUEST_HANDOFF: "request_handoff",
   // server → client
   JOINED: "joined",
+  /** The minted handoff code — to the requesting socket only, never the room. */
+  HANDOFF_CODE: "handoff_code",
+  /** Another live socket has taken over this slot. See SupersededPayload. */
+  SUPERSEDED: "superseded",
   LOBBY: "lobby",
   STATE: "state",
   KID_CHUNK: "kid_chunk",

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useMultiplayer, clearResume } from "../hooks/useMultiplayer";
+import { useMultiplayer, clearResume, takeHandoffCodeFromUrl } from "../hooks/useMultiplayer";
 import { getSavedKids, saveKid, syncKidsToServer, fetchServerKids, mergeKids, THERAPY_TURN_CAP } from "../hooks/useGame";
 import type { SavedKid } from "../hooks/useGame";
 import { track } from "../analytics";
@@ -38,6 +38,16 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   const [relationship, setRelationship] = useState(RELATIONSHIP_OPTIONS[0]);
   const [guardianDismissed, setGuardianDismissed] = useState(false);
   const autoResumeAttempted = useRef(false);
+  /**
+   * A handoff redemption is in flight.
+   *
+   * Not cosmetic: without it the join form flashes on screen between mount and
+   * JOINED, and submitting it would emit a *new* join for a game that already
+   * has two players — which, if the co-parent happened to be disconnected, the
+   * server would satisfy by reclaiming their slot. The player who followed a
+   * link to their own seat must never be able to land in the other one.
+   */
+  const [redeemingHandoff, setRedeemingHandoff] = useState(false);
 
   // "Previous kids" — mirror the solo flow so a two-parent player can see and
   // reopen the children they've raised, both in this browser and (when logged
@@ -49,16 +59,28 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   const [showAlbum, setShowAlbum] = useState(false);
   const savedKidRef = useRef<string | null>(null);
 
-  // On mount, if we have resume data in localStorage, connect the socket
-  // to trigger auto-rejoin (the connect handler in useMultiplayer does the rest).
+  // On mount: redeem a device-handoff link if we arrived on one, otherwise
+  // resume from localStorage (the connect handler in useMultiplayer does the rest).
   useEffect(() => {
     if (autoResumeAttempted.current) return;
     autoResumeAttempted.current = true;
+
+    // Reads the code and erases it from the address bar in one step. A handoff
+    // link outranks whatever this device had stored: on a phone that's usually
+    // nothing, but on a laptop it may be a *different* game, and the code is
+    // single-use so it has to be spent on the intent the player just expressed.
+    const code = takeHandoffCodeFromUrl();
+    if (code && joinGameId) {
+      setRedeemingHandoff(true);
+      mp.redeemHandoff(joinGameId, code);
+      return;
+    }
+
     const raw = localStorage.getItem("ri_resume");
     if (raw) {
       mp.ensureSocket();
     }
-  }, [mp]);
+  }, [mp, joinGameId]);
 
   const syncOnLogin = useCallback(async (userId: string) => {
     setMatrixUser(userId);
@@ -142,6 +164,46 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   const partnerName =
     mp.players.find((p) => p.slot !== mySlot)?.displayName?.trim() || "your partner";
 
+  /**
+   * The unobtrusive "continue on another device" affordance, mounted on the
+   * in-play screens. Deliberately a plain utility control rather than a story
+   * beat — it should be findable when you need it and invisible when you don't.
+   *
+   * Not offered in the lobby: before the game starts, a second device following
+   * the ?game= link would be assigned the *other* parent's slot, which is a
+   * different problem (and there the invite link is what you want anyway).
+   */
+  const handoffUi = (
+    <HandoffControl
+      handoff={mp.handoff}
+      onRequest={mp.requestHandoff}
+      onDismiss={mp.dismissHandoff}
+    />
+  );
+
+  // ---- Superseded: this game is being played on another device now ----
+  // Never a frozen screen. STATE keeps arriving here, so the view behind this
+  // notice stays current — but ready is bound to the slot's live connection, so
+  // this device genuinely cannot advance the game, and saying so is the whole
+  // point. One press takes it back, which hands the same notice to the device
+  // that has it now.
+  if (mp.superseded) {
+    return (
+      <div className="app fade-in">
+        <div className="superseded-screen" role="status" aria-live="polite">
+          <p className="superseded-title">you picked this up somewhere else</p>
+          <p className="dim superseded-body">
+            {state?.childName ? `${state.childName}'s story` : "this story"} is being played
+            on another device. nothing was lost — it's still exactly where you left it.
+          </p>
+          <button className="btn" onClick={mp.reclaimHere}>
+            play here instead
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // ---- Family album (logged-in): browse previously-raised children ----
   if (showAlbum && matrixUser) {
     return (
@@ -154,6 +216,24 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   // Previous kids to offer on the setup screen: server-backed when signed in,
   // otherwise this browser's local history.
   const galleryKids = cloudKids.length > 0 ? cloudKids : getSavedKids();
+
+  // ---- Picking up a handoff link, before the slot comes back ----
+  // Held until JOINED (which sets mp.gameId and moves us on) or until the
+  // server refuses the code, at which point mp.error explains why on the
+  // ordinary setup screen below.
+  if (!mp.gameId && redeemingHandoff && !mp.error) {
+    return (
+      <div className="app fade-in">
+        <div className="start-screen">
+          <div className="start-glow" aria-hidden="true" />
+          <h1>raising intelligences</h1>
+          <p className="dim" role="status" aria-live="polite">
+            picking up where you left off…
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // ---- Setup: create or join ----
   if (!mp.gameId) {
@@ -326,6 +406,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
             </>
           )}
         </div>
+        {handoffUi}
       </div>
     );
   }
@@ -408,6 +489,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
             )}
           </div>
         </div>
+        {handoffUi}
       </div>
     );
   }
@@ -416,6 +498,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     return (
       <div className="app">
         <ProcessingScreen childName={state.childName} age={state.currentEvent?.age} gameId={mp.gameId} streamingText={mp.streamingDocText} />
+        {handoffUi}
       </div>
     );
   }
@@ -445,6 +528,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
           onContinue={() => mp.ready(true)}
         />
         <ReadyStrip ready={meReady} onCancel={() => mp.ready(false)} players={mp.players} />
+        {handoffUi}
       </div>
     );
   }
@@ -457,6 +541,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
           onContinue={() => mp.ready(true)}
         />
         <ReadyStrip ready={meReady} onCancel={() => mp.ready(false)} players={mp.players} />
+        {handoffUi}
       </div>
     );
   }
@@ -480,6 +565,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
           onConclude={() => mp.ready(true)}
         />
         <ReadyStrip ready={meReady} onCancel={() => mp.ready(false)} players={mp.players} />
+        {handoffUi}
       </div>
     );
   }
@@ -538,6 +624,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
             players={mp.players}
           />
         </div>
+        {handoffUi}
       </div>
     );
   }
@@ -561,6 +648,95 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   return (
     <div className="app">
       <p>{state.phase}</p>
+    </div>
+  );
+}
+
+/**
+ * "continue on another device" — request a single-use link and show it.
+ *
+ * The link is shown, copied, and forgotten: nothing here stores it, and the
+ * panel closes rather than lingering on screen with a live credential in it.
+ * The code inside is bound to this game and this parent's slot, dies on first
+ * use, and expires on its own regardless.
+ */
+function HandoffControl({
+  handoff,
+  onRequest,
+  onDismiss,
+}: {
+  handoff: { url: string; expiresAt: number } | null;
+  onRequest: () => void;
+  onDismiss: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const close = () => {
+    setOpen(false);
+    setCopied(false);
+    onDismiss();
+  };
+
+  const copy = async () => {
+    if (!handoff) return;
+    try {
+      await navigator.clipboard.writeText(handoff.url);
+      setCopied(true);
+    } catch {
+      // Clipboard blocked (insecure origin, permissions, older mobile Safari).
+      // The field below is selectable, so there is always a manual path.
+      setCopied(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button
+        className="btn-plain handoff-open"
+        onClick={() => {
+          setOpen(true);
+          onRequest();
+        }}
+      >
+        continue on another device
+      </button>
+    );
+  }
+
+  const minutesLeft = handoff
+    ? Math.max(1, Math.round((handoff.expiresAt - Date.now()) / 60000))
+    : 0;
+
+  return (
+    <div className="handoff-panel">
+      {handoff ? (
+        <>
+          <p className="dim handoff-hint">
+            open this on your phone. it works once, and stops working in about{" "}
+            {minutesLeft} minute{minutesLeft === 1 ? "" : "s"}.
+          </p>
+          <div className="handoff-row">
+            <input
+              className="handoff-url"
+              value={handoff.url}
+              readOnly
+              onFocus={(e) => e.currentTarget.select()}
+              aria-label="one-time link to continue on another device"
+            />
+            <button className="btn btn-secondary handoff-copy" onClick={copy}>
+              {copied ? "copied" : "copy"}
+            </button>
+          </div>
+        </>
+      ) : (
+        <p className="dim handoff-hint" role="status" aria-live="polite">
+          making you a link…
+        </p>
+      )}
+      <button className="btn-plain handoff-close" onClick={close}>
+        done
+      </button>
     </div>
   );
 }

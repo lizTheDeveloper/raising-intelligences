@@ -16,8 +16,10 @@ import {
 } from "../game/state-machine.js";
 import { generateFirstPortrait, generateNextPortrait } from "../portrait-gen.js";
 import { withGameLock } from "../lib/game-lock.js";
+import { randomBytes } from "crypto";
 import {
   type Session,
+  type Player,
   type PlayerSlot,
   createSession,
   addPlayer,
@@ -25,6 +27,7 @@ import {
   allReady,
   resetReady,
   getPlayer,
+  getPlayerBySlot,
   getPlayerByToken,
   reconnectPlayer,
   disconnectPlayer,
@@ -59,7 +62,34 @@ export interface SocketDeps {
   endgameEngine: EndgameEngine;
   repo: GameRepository;
   gameLocks?: Map<string, Promise<void>>;
+  /** Lifetime of a device-handoff code. Injectable so tests can expire one
+   * without waiting; production always takes the default. */
+  handoffTtlMs?: number;
 }
+
+/**
+ * How long a device-handoff code stays redeemable.
+ *
+ * Long enough to walk outside and find the message you sent yourself; short
+ * enough that a link left in a chat history is inert by the time anyone else
+ * reads it. Single-use is the stronger of the two guarantees — this is the
+ * backstop for a code that is minted and then never used.
+ */
+const HANDOFF_TTL_MS = 10 * 60 * 1000;
+
+/** A minted, not-yet-redeemed handoff code's binding. */
+interface HandoffClaim {
+  gameId: string;
+  slot: PlayerSlot;
+  expiresAt: number;
+}
+
+/**
+ * Deliberately identical for every rejection reason — expired, already
+ * redeemed, never existed, or minted for a different game. Distinguishing them
+ * would turn the JOIN handler into an oracle for probing codes.
+ */
+const HANDOFF_REJECTED = "That link has expired or was already used. Ask for a new one from the device you were playing on.";
 
 interface SocketData {
   gameId?: string;
@@ -193,7 +223,8 @@ function lobbyState(session: Session): LobbyState {
 
 export function registerSocketHandlers(deps: SocketDeps): void {
   const { io, games, sessions, conversationEngine, endgameEngine, repo,
-          gameLocks = new Map<string, Promise<void>>() } = deps;
+          gameLocks = new Map<string, Promise<void>>(),
+          handoffTtlMs = HANDOFF_TTL_MS } = deps;
 
   const lock = <T>(gameId: string, fn: () => Promise<T>) => withGameLock(gameLocks, gameId, fn);
 
@@ -217,6 +248,82 @@ export function registerSocketHandlers(deps: SocketDeps): void {
   // (game abandoned, provider error) must be inert, never an unhandled
   // rejection, and a null simply falls back to the synchronous loadEvent path.
   const prefetchedEvents = new Map<string, Promise<GameEvent | null>>();
+
+  /**
+   * Live device-handoff codes, keyed by the code itself.
+   *
+   * In memory only, and never written to the database or a log line. That is a
+   * deliberate limit as much as a precaution: a code is redeemable only against
+   * the process that minted it, and a restart invalidates every outstanding one
+   * (the player simply asks for another). Sessions themselves are already
+   * process-local — a restart rebuilds them from `repo.loadPlayers` — so this
+   * adds no new failure mode, and it keeps a slot-granting credential out of
+   * every durable store we operate.
+   *
+   * Bounded without a sweeper: minting drops the previous code for the same
+   * {gameId, slot} and clears anything expired, so a client hammering
+   * REQUEST_HANDOFF holds at most one live entry per slot it occupies.
+   */
+  const handoffCodes = new Map<string, HandoffClaim>();
+
+  function mintHandoffCode(gameId: string, slot: PlayerSlot): HandoffClaim & { code: string } {
+    const now = Date.now();
+    for (const [existing, claim] of handoffCodes) {
+      // Expired, or superseded by the code we're about to mint. Asking again
+      // must invalidate the answer you were given before — otherwise every
+      // press of the button leaves another live credential behind.
+      if (claim.expiresAt <= now || (claim.gameId === gameId && claim.slot === slot)) {
+        handoffCodes.delete(existing);
+      }
+    }
+    // 128 bits of CSPRNG entropy, url-safe: 22 characters, no escaping, short
+    // enough to text yourself, far too large to guess or enumerate.
+    const code = randomBytes(16).toString("base64url");
+    const claim: HandoffClaim = { gameId, slot, expiresAt: now + handoffTtlMs };
+    handoffCodes.set(code, claim);
+    return { ...claim, code };
+  }
+
+  /**
+   * Validate and burn a handoff code. Returns null for every failure mode; the
+   * caller reports them all identically (see HANDOFF_REJECTED).
+   *
+   * The delete happens before the expiry and game checks on purpose: a code is
+   * spent the moment it is presented, whatever the outcome. A rejected attempt
+   * that left the code alive would let an interceptor retry it against every
+   * game id they know.
+   */
+  function consumeHandoffCode(code: string, gameId: string): HandoffClaim | null {
+    const claim = handoffCodes.get(code);
+    if (!claim) return null;
+    handoffCodes.delete(code);
+    if (claim.expiresAt <= Date.now()) return null;
+    if (claim.gameId !== gameId) return null;
+    return claim;
+  }
+
+  /**
+   * Tell the socket that was holding this slot that a different live socket has
+   * taken over, so the device the player walked away from says so instead of
+   * leaving a ready button that silently does nothing.
+   *
+   * What this deliberately does NOT do is evict that socket: it stays in the
+   * game and slot rooms and keeps receiving STATE, which is a supported and
+   * tested state ("STATE reaches every socket a player has open"). The superseded
+   * device therefore stays in sync and can take the game back in one press.
+   *
+   * Gated on the previous socket being live in this process. A page reload or a
+   * dropped-and-redialled socket has already gone, so neither produces a
+   * takeover notice — only a genuinely concurrent second device (or second tab)
+   * does. Re-binding the same socket id (the ordinary auto-rejoin on reconnect)
+   * is a no-op.
+   */
+  function supersedeActiveSocket(player: Player, newConnectionId: string): void {
+    if (!player.connectionId || player.connectionId === newConnectionId) return;
+    const previous = io.sockets.sockets.get(player.connectionId);
+    if (!previous?.connected) return;
+    previous.emit(E.SUPERSEDED, { slot: player.slot });
+  }
 
   function startPrefetch(state: GameState): void {
     if (state.currentEventNumber >= state.totalEvents) return;
@@ -407,6 +514,19 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       const gameId = payload?.gameId;
       if (!gameId) return fail("gameId is required");
 
+      // Redeem a device-handoff code FIRST, and synchronously — before the
+      // first await in this handler. Single-use has to mean single-use under
+      // concurrency: two sockets presenting the same code (the player's phone
+      // and a chat app's link prefetcher, say) must not both get past this
+      // point, and anything after an await could interleave. The claim is
+      // burned here; the slot is bound below, once the session is resolved.
+      let handoff: HandoffClaim | null = null;
+      if (typeof payload?.handoffCode === "string" && payload.handoffCode.length > 0) {
+        handoff = consumeHandoffCode(payload.handoffCode, gameId);
+        // Never echo the code back — not in this message, not anywhere.
+        if (!handoff) return fail(HANDOFF_REJECTED);
+      }
+
       // Load game state if not in memory
       let state = games.get(gameId);
       if (!state) {
@@ -453,10 +573,47 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         sessions.set(gameId, session);
       }
 
+      // ---- Device handoff: this socket takes over the slot the code was
+      // minted for. Deliberately routed through the very same reconnect path a
+      // returning player uses — the handoff's only job is to establish *which*
+      // slot, after which this is an ordinary reconnect and inherits all of its
+      // behaviour, including preserving the player's ready flag.
+      if (handoff) {
+        const player = getPlayerBySlot(session, handoff.slot);
+        // The slot has no player record at all: the game was reset or the
+        // players row is gone. Nothing to hand off to.
+        if (!player) return fail(HANDOFF_REJECTED);
+
+        supersedeActiveSocket(player, socket.id);
+        const moved = reconnectPlayer(session, player.token, socket.id);
+        session = moved.session;
+        sessions.set(gameId, session);
+        data.gameId = gameId;
+        data.slot = moved.player.slot;
+        await socket.join(gameId);
+        await socket.join(slotRoom(gameId, moved.player.slot));
+        // The new device gets the ordinary long-lived credential, which it
+        // stores exactly as a first join would. From here it is indistinguishable
+        // from the device that started the session.
+        socket.emit(E.JOINED, { gameId, slot: moved.player.slot, playerToken: moved.player.token });
+        broadcastLobby(gameId);
+        socket.emit(
+          E.STATE,
+          viewerState(state, moved.player.slot, generatingGames.has(gameId))
+        );
+        return;
+      }
+
       // Token-based reconnect: returning player reclaims their slot
       if (payload.playerToken) {
         const existing = getPlayerByToken(session, payload.playerToken);
         if (existing) {
+          // Symmetry with the handoff path: if a *live* socket currently holds
+          // this slot, it is being taken over and must be told. This is what
+          // makes the reverse direction (taking the game back on the device you
+          // handed off from) non-silent — without it the phone would keep a
+          // ready button that no longer reaches the server.
+          supersedeActiveSocket(existing, socket.id);
           const reconnected = reconnectPlayer(session, payload.playerToken, socket.id);
           session = reconnected.session;
           sessions.set(gameId, session);
@@ -499,6 +656,26 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         E.STATE,
         viewerState(state, added.player.slot, generatingGames.has(gameId))
       );
+    });
+
+    // ---- REQUEST_HANDOFF ----
+    // "Can I keep playing from my phone?" Answers with a code, to this socket
+    // alone, that another device can exchange for this slot.
+    //
+    // Authorisation is the socket binding itself: `data.slot` was set by a
+    // CREATE/JOIN this connection already completed, so a socket can only ever
+    // mint for the slot it is playing. There is deliberately no REST equivalent
+    // — see REQUEST_HANDOFF in protocol.ts.
+    //
+    // The code is emitted and then forgotten. It is never logged (not here, not
+    // on redemption, not on failure), never broadcast to the room, and never
+    // persisted; the co-parent has no way to observe that it happened.
+    socket.on(E.REQUEST_HANDOFF, () => {
+      const gameId = data.gameId;
+      const slot = data.slot;
+      if (!gameId || !slot || slot === "kid") return fail("Not in a game");
+      const minted = mintHandoffCode(gameId, slot);
+      socket.emit(E.HANDOFF_CODE, { code: minted.code, expiresAt: minted.expiresAt });
     });
 
     // ---- READY ----
