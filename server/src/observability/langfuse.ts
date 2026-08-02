@@ -34,15 +34,27 @@ let initialized = false;
  * this module has no side effects.
  *
  * Required env: LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY.
- * Optional env: LANGFUSE_BASEURL (defaults to Langfuse cloud).
+ * Optional env: LANGFUSE_BASEURL / LANGFUSE_HOST. Traces contain prompts
+ * seeded with parents' confessional free-text (see personality.ts), so
+ * unlike a typical "optional tracing" default we do NOT fall back to
+ * Langfuse Cloud when unset — that would send intimate user text to a
+ * third party with no documented retention or DPA (#140). Instead we
+ * default to our own self-hosted instance (see langfuse/docker-compose.yml).
  */
+const SELF_HOSTED_LANGFUSE_BASE_URL = "https://langfuse.multiversegames.ai";
+
+/** Exported for tests: the same fallback chain `getLangfuseClient` uses. */
+export function resolveLangfuseBaseUrl(): string {
+  return process.env.LANGFUSE_BASEURL ?? process.env.LANGFUSE_HOST ?? SELF_HOSTED_LANGFUSE_BASE_URL;
+}
+
 export function getLangfuseClient(): Langfuse | null {
   if (initialized) return cachedClient;
   initialized = true;
 
   const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
   const secretKey = process.env.LANGFUSE_SECRET_KEY;
-  const baseUrl = process.env.LANGFUSE_BASEURL ?? process.env.LANGFUSE_HOST;
+  const baseUrl = resolveLangfuseBaseUrl();
 
   if (!publicKey || !secretKey) {
     cachedClient = null;
@@ -52,7 +64,7 @@ export function getLangfuseClient(): Langfuse | null {
   cachedClient = new Langfuse({
     publicKey,
     secretKey,
-    ...(baseUrl ? { baseUrl } : {}),
+    baseUrl,
   });
   return cachedClient;
 }
@@ -85,6 +97,19 @@ function buildTags(metadata: TraceMetadata): string[] {
   if (metadata.eventNumber !== undefined) tags.push(`event_number:${metadata.eventNumber}`);
   if (metadata.role) tags.push(`llm_role:${metadata.role}`);
   return tags;
+}
+
+/**
+ * Roles whose prompt embeds parents' confessional free-text verbatim (see
+ * game/personality.ts: generatePersonalitySeed). Traced input for these
+ * roles is redacted to length-only so intimate disclosures never sit in
+ * Langfuse's stored payload, even on the self-hosted instance (#140).
+ */
+const CONFESSIONAL_ROLES = new Set<LLMRole>(["personality_seed"]);
+
+/** Exported for tests. */
+export function redactText(role: LLMRole | undefined, text: string): string {
+  return role && CONFESSIONAL_ROLES.has(role) ? `[redacted: ${text.length} chars]` : text;
 }
 
 /**
@@ -136,7 +161,10 @@ export class TracedLLMClient implements LLMClient {
       });
       generation = trace.generation({
         name: metadata.role ?? "llm",
-        input: { system, messages },
+        input: {
+          system,
+          messages: messages.map((m) => ({ ...m, content: redactText(role, m.content) })),
+        },
         ...(model ? { model } : {}),
         metadata: { ...metadata },
       });
@@ -178,7 +206,7 @@ export class TracedLLMClient implements LLMClient {
       });
       generation = trace.generation({
         name: metadata.role ?? "llm",
-        input: { system, userMessage },
+        input: { system, userMessage: redactText(role, userMessage) },
         ...(model ? { model } : {}),
         metadata: { ...metadata, maxTokens },
       });
@@ -214,7 +242,7 @@ export class TracedLLMClient implements LLMClient {
       });
       generation = trace.generation({
         name: metadata.role ?? "llm",
-        input: { system, userMessage },
+        input: { system, userMessage: redactText(role, userMessage) },
         ...(model ? { model } : {}),
         metadata: { ...metadata },
       });

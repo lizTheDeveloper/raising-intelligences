@@ -3,6 +3,8 @@ import {
   TracedLLMClient,
   isLangfuseEnabled,
   getLangfuseClient,
+  resolveLangfuseBaseUrl,
+  redactText,
   __resetLangfuseClientForTests,
 } from "../src/observability/langfuse.js";
 import { MockLLMClient } from "../src/llm/mock.js";
@@ -138,5 +140,62 @@ describe("TracedLLMClient (Langfuse unconfigured)", () => {
     expect(await derived2.completeResponse("s", "u")).toBe("doc2");
 
     expect(derived).not.toBe(base);
+  });
+});
+
+// #140 — when Langfuse is configured but no baseUrl is given, the SDK's own
+// default is Langfuse Cloud, which would ship parents' confessional text off
+// our infrastructure with no documented retention. We must default to the
+// self-hosted instance instead, and let an explicit env var still override it.
+describe("resolveLangfuseBaseUrl (#140 — never silently falls back to Langfuse Cloud)", () => {
+  const savedEnv: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const key of ["LANGFUSE_BASEURL", "LANGFUSE_HOST"]) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it("defaults to the self-hosted instance when neither env var is set", () => {
+    const baseUrl = resolveLangfuseBaseUrl();
+    expect(baseUrl).not.toBe("https://cloud.langfuse.com");
+    expect(baseUrl).toContain("multiversegames.ai");
+  });
+
+  it("honors an explicit LANGFUSE_BASEURL override", () => {
+    process.env.LANGFUSE_BASEURL = "https://custom.example.com";
+    expect(resolveLangfuseBaseUrl()).toBe("https://custom.example.com");
+  });
+
+  it("honors LANGFUSE_HOST when LANGFUSE_BASEURL is absent", () => {
+    process.env.LANGFUSE_HOST = "https://host.example.com";
+    expect(resolveLangfuseBaseUrl()).toBe("https://host.example.com");
+  });
+});
+
+// #140 — the personality-seed prompt embeds both parents' confessional
+// free-text verbatim (game/personality.ts). Its traced input must be
+// redacted to length-only; every other role's input must pass through
+// unchanged so debugging value isn't lost where there's nothing sensitive.
+describe("redactText (#140 — confessional-bearing prompts never reach the trace payload)", () => {
+  it("redacts personality_seed input to a length marker", () => {
+    const confessional = "The most evil thing I did as a kid was...";
+    const redacted = redactText("personality_seed", confessional);
+    expect(redacted).not.toContain("evil thing I did as a kid");
+    expect(redacted).toBe(`[redacted: ${confessional.length} chars]`);
+  });
+
+  it("passes through non-confessional roles unchanged", () => {
+    expect(redactText("kid", "hello there")).toBe("hello there");
+    expect(redactText("world_manager", "scene description")).toBe("scene description");
+    expect(redactText(undefined, "no role")).toBe("no role");
   });
 });

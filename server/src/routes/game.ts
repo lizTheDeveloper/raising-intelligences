@@ -111,8 +111,10 @@ export function createGameRoutes(
     // silent accumulator — spec §5 requires it stay invisible in-play;
     // concerningStreak/pendingGuidance are World-Manager internals).
     // highestRungFired/cpsOutcome are Dark Play Plan 3's ladder-gating
-    // internals — server-only for the same reason. interventionText and
-    // therapyMessages are the human-facing generated beat texts the
+    // internals — server-only for the same reason. parentPersonalities holds
+    // both parents' raw OCEAN scores and confessional text, which is
+    // seed-only input never rendered to either parent (see #139). interventionText
+    // and therapyMessages are the human-facing generated beat texts the
     // consult/therapy/cps_review screens render, so they are deliberately
     // KEPT in the response. The client reads none of the stripped fields.
     const {
@@ -123,6 +125,7 @@ export function createGameRoutes(
       pendingGuidance,
       highestRungFired,
       cpsOutcome,
+      parentPersonalities,
       ...publicState
     } = state;
     res.json({
