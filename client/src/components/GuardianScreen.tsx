@@ -162,6 +162,18 @@ const STEPS: Step[] = [
   { kind: "waiting" },
 ];
 
+/**
+ * The closing beat, and the last index that exists.
+ *
+ * Load-bearing, not decorative: `handleConfessionalSubmit` ends by advancing a
+ * step, and the retry calls it *from* the waiting step — so an unclamped
+ * advance puts `stepIndex` off the end of STEPS, and `displayAge` walks
+ * `STEPS[i]` backwards from `stepIndex`. That is a render crash, not a no-op,
+ * which is why the retry button that already shipped on the solo path has never
+ * worked.
+ */
+const LAST_STEP = STEPS.length - 1;
+
 // ---------- Props ----------
 interface Props {
   childName: string;
@@ -192,6 +204,20 @@ interface Props {
    * Multiplayer does the equivalent server-side, off SUBMIT_PERSONALITY.
    */
   onSeedReady?: () => void;
+  /**
+   * Multiplayer: the server's player-facing account of why the opening failed,
+   * broadcast to BOTH parents (handlers.ts, the SUBMIT_PERSONALITY catch).
+   *
+   * The opening is two model calls — the personality seed, then scene 1 — and
+   * either can time out at 90s. Both parents are on this screen's closing beat
+   * when it happens, so both are told, and either can retry.
+   */
+  error?: string | null;
+  /**
+   * Multiplayer: drop that error. Called as a submit goes out, so the surface
+   * below can only ever be describing *this* attempt.
+   */
+  onClearError?: () => void;
 }
 
 function pickVariant(): number {
@@ -199,7 +225,7 @@ function pickVariant(): number {
 }
 
 // ---------- Component ----------
-export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmitPersonality, seedReadyProp, partnerSubmitted, partnerName, onSeedReady }: Props) {
+export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmitPersonality, seedReadyProp, partnerSubmitted, partnerName, onSeedReady, error, onClearError }: Props) {
   const [stepIndex, setStepIndex] = useState(0);
   const [narrativeLines, setNarrativeLines] = useState<string[]>([]);
   const [oceanAnswers, setOceanAnswers] = useState<number[]>([]);
@@ -273,7 +299,10 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
   const displayAge = useMemo(() => {
     // Walk backwards from current step to find the most recent age
     for (let i = stepIndex; i >= 0; i--) {
-      if (STEPS[i].age !== undefined) return STEPS[i].age!;
+      // Optional chaining, not tidiness: `stepIndex` can legitimately sit at
+      // LAST_STEP while a clamped advance is requested, and any future off-end
+      // index must degrade to the last known age rather than throw mid-render.
+      if (STEPS[i]?.age !== undefined) return STEPS[i]!.age!;
     }
     return 0;
   }, [stepIndex]);
@@ -384,10 +413,17 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
 
     // Multiplayer path: emit via socket, seed arrives via PERSONALITY_SEED_READY event
     if (onSubmitPersonality) {
+      // Anything already on `error` belongs to something else — a refused
+      // handoff code back in the lobby, say — and would otherwise be rendered
+      // by the waiting step below under a "try again" that has nothing to do
+      // with it. Clearing as the submit goes out means the surface can only
+      // ever show a failure of this attempt, and makes a repeat of the same
+      // message visibly land instead of being a no-op re-render.
+      onClearError?.();
       onSubmitPersonality({ ocean: oceanAnswers, confessional1, confessional2 });
       setSeedSubmitting(false);
       track("personality_submitted", { mode: "multiplayer" });
-      setStepIndex((i) => i + 1);
+      setStepIndex((i) => Math.min(i + 1, LAST_STEP));
       return;
     }
 
@@ -425,11 +461,18 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
       setSeedSubmitting(false);
     }
 
-    // Advance to waiting step
-    setStepIndex((i) => i + 1);
-  }, [gameId, oceanAnswers, confessional1, confessional2, base, onSubmitPersonality, onSeedReady]);
+    // Advance to waiting step — clamped, because the retry below re-enters this
+    // function from the waiting step and must not walk off the end of STEPS.
+    setStepIndex((i) => Math.min(i + 1, LAST_STEP));
+  }, [gameId, oceanAnswers, confessional1, confessional2, base, onSubmitPersonality, onSeedReady, onClearError]);
 
-  // ---------- Retry personality on error ----------
+  // ---------- Retry the opening ----------
+  // The recovery is literally "submit the personality again", on both paths:
+  // solo re-POSTs, multiplayer re-emits SUBMIT_PERSONALITY. Server-side that
+  // re-runs the seed and (because startFirstScene deletes its own guard on
+  // failure) scene 1, from personalities that are still in state. Nothing here
+  // is a placeholder — the answers this resubmits are the ones held in this
+  // component, and reaching the waiting step is what proves they are complete.
   const handleRetry = useCallback(() => {
     setSeedError(null);
     personalitySubmitted.current = false;
@@ -455,10 +498,25 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
    * portrait reveal and the "I'm ready" / "most people aren't" exchange play
    * over the call rather than after it.
    *
-   * There is an exit if generation fails: the server clears the ready flags,
-   * which drops both clients back to the lobby with the error.
+   * There is an exit if generation fails, and it is on this screen: see
+   * `failure` below. It used to be the server clearing the ready flags, which
+   * dropped both clients back to the lobby — losing the quiz — and that is
+   * exactly what the fix removed.
    */
   const canBegin = effectiveSeedReady && portraitRevealed && eventReady;
+
+  /**
+   * The one failure surface, fed by whichever path this screen is on.
+   *
+   * Solo's `seedError` holds the raw fetch failure and is deliberately not
+   * shown — the player gets a written line instead. Multiplayer's `error` is
+   * already written for a player when it leaves the server, so it is shown as
+   * sent; the two never both apply, because `seedError` is only ever set on the
+   * solo branch of the submit.
+   */
+  const failure = seedError
+    ? "something went wrong generating their personality."
+    : error ?? null;
 
   // ---------- Render ----------
   return (
@@ -590,13 +648,25 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
           </div>
         )}
 
-      {/* Waiting state — sticky footer so loading + readiness are always in view */}
+      {/* Waiting state — sticky footer so loading + readiness are always in view.
+
+          The error surface lives here, on the closing beat, and nowhere else on
+          this screen. That is not a layout preference: the waiting step is the
+          only one reachable by submitting, so it is the only one where "try
+          again" has answers to resubmit. It is also the only step with no skip
+          overlay mounted (`isSkippable` excludes it), so the button below can
+          never be swallowed by one — and no error can ever put a control under
+          a stray click that would answer a quiz question or jump the co-parent
+          handshake. `.guardian-footer` is z-index 5, above both the overlay's 2
+          and the floated handoff control's 3, so the stacking holds even if a
+          future step mounts the overlay here — and the handoff control is
+          anchored top-right, clear of this footer either way. */}
       {currentStep.kind === "waiting" && (
         <div className="guardian-footer">
-          {seedError ? (
-            <div className="guardian-seed-error">
-              <p className="dim">something went wrong generating their personality.</p>
-              <button className="btn dim" onClick={handleRetry}>
+          {failure ? (
+            <div className="guardian-seed-error" role="alert">
+              <p className="dim">{failure}</p>
+              <button className="btn dim" data-testid="btn-guardian-retry" onClick={handleRetry}>
                 try again
               </button>
             </div>

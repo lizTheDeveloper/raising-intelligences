@@ -167,11 +167,14 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
    * a bare "building the next scene…" spinner for the whole call, which is the
    * exact thing this reorder exists to delete.
    *
-   * If scene generation fails, the server clears the ready flags and both
-   * clients fall back to the lobby with the error; readying again regenerates
-   * the scene through the ordinary needsFreshScene path (the seed is already
-   * persisted, so the retry is still personality-informed) and this screen
-   * replays over it.
+   * If the opening fails — the personality seed or scene 1, both 90s model
+   * calls — this window STAYS OPEN, and that is deliberate. The server used to
+   * clear the ready flags on failure, which made `preGame && !meReady` true and
+   * therefore `inLobbyView` true, and `inLobbyView` is checked before this: both
+   * parents were silently returned to the lobby with every quiz answer and
+   * confessional they had typed thrown away, one of them reading raw exception
+   * text and the other reading nothing. The flags now survive a failed opening,
+   * so both stay here and GuardianScreen's own error surface offers the retry.
    *
    * It's a local, per-player overlay — dismissing it doesn't touch shared state.
    */
@@ -413,6 +416,12 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
           seedReadyProp={mp.seedReady}
           partnerSubmitted={state.partnerPersonalitySubmitted}
           partnerName={partnerName}
+          // Broadcast room-wide by the SUBMIT_PERSONALITY catch, so this is the
+          // same string on both parents' screens — including the one whose
+          // submit did not happen to be the second of the pair, who under
+          // `failWithError` was told nothing at all.
+          error={mp.error}
+          onClearError={mp.clearError}
         />
         {/* The quiz is long, typed and confessional — the likeliest moment in
             the whole game for someone to get up and walk outside. It had no

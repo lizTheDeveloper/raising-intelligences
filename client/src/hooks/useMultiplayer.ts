@@ -706,6 +706,19 @@ export function useMultiplayer() {
     socketRef.current?.emit(E.SUBMIT_PERSONALITY, payload);
   }, []);
 
+  /**
+   * Drop the current error.
+   *
+   * The listeners above clear it on their own for every case they can see —
+   * a real phase change, a generation starting — but a screen that *offers a
+   * retry* knows something they don't: that the failure being described is
+   * about to be attempted again. Without this the guardian screen would leave
+   * its own error standing over the spinner for the retry's full 90s, and a
+   * second failure with the identical message would produce no visible change
+   * at all.
+   */
+  const clearError = useCallback(() => setError(null), []);
+
   const leaveGame = useCallback(() => {
     clearResume();
     setGameId(null);
@@ -758,6 +771,7 @@ export function useMultiplayer() {
     sendTherapyMessage,
     setTyping,
     submitPersonality,
+    clearError,
     startSidebar,
     endSidebar,
     endChat,

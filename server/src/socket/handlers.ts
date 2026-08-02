@@ -390,6 +390,15 @@ export function registerSocketHandlers(deps: SocketDeps): void {
    * Ready flags deliberately survive the opening gate (they are what holds each
    * player on the guardian screen — see the READY handler) and are cleared here,
    * once there is a scene to clear them into.
+   *
+   * On failure there is no scene to clear them into, so they are NOT cleared —
+   * and that is the whole recovery. Clearing them unconditionally (the old
+   * `finally`) made `preGame && !meReady` true on both clients, which is
+   * `inLobbyView`, which is evaluated before `showGuardian` — so a failed
+   * opening silently evicted both parents from the guardian screen back to the
+   * lobby, discarding every quiz answer and confessional they had just typed,
+   * with the raw exception text shown to at most one of them. Holding the flags
+   * keeps both of them on the screen that has the error surface and the retry.
    */
   async function startFirstScene(gameId: string, seeded: GameState): Promise<void> {
     if (firstSceneStarted.has(gameId)) return;
@@ -398,6 +407,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     generatingGames.add(gameId);
     io.to(gameId).emit(E.GENERATING, { generating: true });
     broadcastState(gameId);
+    let failed = false;
     try {
       const next = conversationEngine.beginChat(await conversationEngine.loadEvent(seeded));
       // Same crash-safe save order as the READY path: the event row lands
@@ -407,9 +417,10 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       await repo.saveGame(next);
       generateNextPortrait(gameId).catch(() => {});
     } catch (err) {
-      // Let a retry through: the seed is already persisted, so re-readying from
-      // the lobby (see the `finally`) takes the normal needsFreshScene path and
-      // regenerates the scene still personality-informed.
+      // Let a retry through: the seed is already persisted, so re-submitting the
+      // personality from the guardian screen re-enters here and regenerates the
+      // scene still personality-informed.
+      failed = true;
       firstSceneStarted.delete(gameId);
       throw err;
     } finally {
@@ -417,12 +428,17 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       // STATE first, then LOBBY. A LOBBY carrying ready=false that arrives
       // before the STATE carrying currentEventNumber === 1 reads, on the
       // client, as "pre-game and not readied" — i.e. a flash of the lobby on
-      // top of a scene that already exists.
+      // top of a scene that already exists. Which is also why the reset stays
+      // inside the `finally` rather than moving to the end of the `try`: the
+      // `finally` runs after the `try` body, so ordering it any other way
+      // inverts exactly the sequence this note is about.
       broadcastState(gameId);
       io.to(gameId).emit(E.GENERATING, { generating: false });
-      const session = sessions.get(gameId);
-      if (session) sessions.set(gameId, resetReady(session));
-      broadcastLobby(gameId);
+      if (!failed) {
+        const session = sessions.get(gameId);
+        if (session) sessions.set(gameId, resetReady(session));
+        broadcastLobby(gameId);
+      }
     }
   }
 
@@ -1501,6 +1517,16 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         confessional2: confessional2 ?? "",
       };
 
+      /**
+       * Which of the opening's two model calls we are inside, for the catch
+       * below. Deliberately a closure variable rather than something inferred
+       * from state afterwards: the obvious inference — "a personality seed
+       * exists, so the seed call succeeded and this must be the scene" — is
+       * wrong on the second attempt, where the seed from the first attempt is
+       * already persisted while it is the seed *regeneration* that just failed.
+       */
+      let stage: "seed" | "scene" = "seed";
+
       lock(gameId, async () => {
         const state = currentState();
         if (!state) { fail("Not in a game"); return; }
@@ -1552,12 +1578,49 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           // Only for the opening — a co-parent submitting late (routes/game.ts
           // allows it) must never regenerate the scene that is already running.
           if (withSeed.phase === "event_intro" && withSeed.currentEventNumber === 0) {
+            stage = "scene";
             await startFirstScene(gameId, withSeed);
           }
         } else {
           await repo.saveGame(updatedState);
         }
-      }).catch((err) => failWithError(err, "SUBMIT_PERSONALITY"));
+      }).catch((err) => {
+        /**
+         * The opening's failure has to be *said*, to both parents, in words a
+         * player can act on — the same requirements the READY catch above
+         * is written to, for the same reason.
+         *
+         * This used to be `failWithError(err, "SUBMIT_PERSONALITY")`, which is
+         * wrong the same two ways. It emits to `socket` alone, and the submit
+         * that reaches this code is whichever one completed the pair — so the
+         * other parent, sitting on the identical screen, was told nothing at
+         * all. And what it emitted was `String(err)`: for the failure seen in
+         * the wild, "TimeoutError: The operation was aborted due to timeout"
+         * (both calls above route through llm/routing-client.ts, whose
+         * AbortSignal.timeout(90_000) is the whole budget — withRetry
+         * deliberately does not retry timeouts). Nothing rendered it either
+         * way.
+         *
+         * The retry needs no new protocol: SUBMIT_PERSONALITY is re-emittable
+         * by design, both personalities are still in `games`, and
+         * startFirstScene deletes its own guard on the way out. Either parent
+         * pressing "try again" re-runs the whole opening. What made that
+         * unreachable was the ready flags being cleared out from under the
+         * guardian screen — see startFirstScene's `finally`.
+         */
+        captureException(err, { tags: { component: "socket", event: "SUBMIT_PERSONALITY" } });
+        logger.error("opening_generation_failed", {
+          gameId,
+          stage,
+          error: err instanceof Error ? err.stack : String(err),
+        });
+        io.to(gameId).emit(E.ERROR, {
+          error:
+            stage === "scene"
+              ? "the first scene didn't finish building. try again."
+              : "their personality didn't finish forming. try again.",
+        });
+      });
     });
 
     // ---- DISCONNECT: mark disconnected, don't remove ----
