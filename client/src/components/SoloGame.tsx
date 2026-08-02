@@ -353,8 +353,13 @@ export function SoloGame() {
         {error && <p className="error-banner">{error}</p>}
         <Debrief
           onContinue={handleDebrief}
+          // Deliberate early exit — KEPT. A parent may end childhood before the
+          // arc runs out, and the auto-advance in useGame's nextEvent does not
+          // replace it. Wrapped in an arrow rather than passed directly:
+          // generateEpilogue now takes an optional game id, so a bare
+          // `onClick={generateEpilogue}` would hand it the click event.
           extraButton={
-            <button onClick={generateEpilogue} className="btn btn-secondary" data-testid="btn-epilogue">
+            <button onClick={() => generateEpilogue()} className="btn btn-secondary" data-testid="btn-epilogue">
               end childhood → epilogue
             </button>
           }

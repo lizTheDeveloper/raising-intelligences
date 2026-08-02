@@ -209,6 +209,52 @@ export function useGame() {
     []
   );
 
+  // Defined ABOVE nextEvent on purpose: nextEvent auto-advances into the
+  // epilogue at the end of the arc, so it names this callback in its own
+  // dependency array. A `const` referenced in a dep array is evaluated at
+  // render time — declaring this below nextEvent would throw
+  // "Cannot access 'generateEpilogue' before initialization" on the first
+  // render, which neither `tsc` nor the (nonexistent) client test runner
+  // would catch.
+  const generateEpilogue = useCallback(async (id?: string) => {
+    const gid = id ?? gameId;
+    if (!gid) return;
+    setPhase("processing");
+    setStreamingDocText("");
+    setError(null);
+    try {
+      const res = await fetch(`${API}/game/${gid}/epilogue`, { method: "POST" });
+      if (!res.ok || !res.body) {
+        const body = await res.text().catch(() => "");
+        setTrackedError(`Failed to generate epilogue: ${res.status}${body ? ` — ${body}` : ""}`, "epilogue");
+        setStreamingDocText("");
+        // Reconcile with the server rather than assuming `debrief`, exactly as
+        // endChat does below and for the same reason. This used to hardcode
+        // setPhase("debrief"), which was survivable while the only caller was
+        // the manual "end childhood" button on the debrief screen. It is not
+        // survivable now: nextEvent auto-advances into the epilogue from
+        // `event_intro`, so a failed call would have parked the client on a
+        // Debrief screen whose "continue" POSTs /end-debrief, which 409s from
+        // event_intro — a second brick behind a different door.
+        if (!(await loadGame(gid))) setPhase("debrief");
+        return;
+      }
+      let docText = "";
+      const data = await consumeSSE<{ phase: string; epilogue: string }>(res, (text) => {
+        docText += text;
+        setStreamingDocText(docText);
+      });
+      setEpilogue(data.epilogue);
+      setStreamingDocText("");
+      setPhase(data.phase);
+      track("epilogue_reached");
+    } catch (err) {
+      setTrackedError(`Failed to generate epilogue: ${err instanceof Error ? err.message : String(err)}`, "epilogue");
+      setStreamingDocText("");
+      if (!(await loadGame(gid))) setPhase("debrief");
+    }
+  }, [gameId, loadGame, setTrackedError]);
+
   const nextEvent = useCallback(async (id?: string) => {
     const gid = id ?? gameId;
     if (!gid) return;
@@ -222,6 +268,31 @@ export function useGame() {
       return;
     }
     const data = await res.json();
+
+    // End of the arc. The server refuses to author a scene past `totalEvents`
+    // and says so with `storyComplete` (routes/game.ts /next-event) — this is
+    // the client half of that contract, and the reason a solo game now ends on
+    // its own instead of running until the world manager ages the child past
+    // 30 and every call starts throwing.
+    //
+    // Handled HERE rather than in SoloGame because all six of SoloGame's
+    // advance paths (opening seed, event-intro retry, debrief, and the three
+    // Dark Play intervention continuations) funnel through this one function.
+    // One check covers them all, and the comparison itself stays server-side
+    // so there is no client-held copy of the arc length to drift.
+    //
+    // The manual "end childhood → epilogue" button on the debrief screen is a
+    // separate, deliberate early exit and is untouched — it calls
+    // generateEpilogue directly.
+    //
+    // Returns before the setState block below on purpose: falling through
+    // would flash `event_intro` with a null event and fire a bogus
+    // event_intro_viewed a beat before the epilogue sets `processing`.
+    if (data.storyComplete) {
+      await generateEpilogue(gid);
+      return;
+    }
+
     setCurrentEvent(data.event);
     setPhase("event_intro");
     setMessages([]);
@@ -229,7 +300,7 @@ export function useGame() {
     if (data.event) {
       track("event_intro_viewed", { age: data.event.age, eventNumber: data.event.eventNumber });
     }
-  }, [gameId]);
+  }, [gameId, generateEpilogue, setTrackedError]);
 
   const beginChat = useCallback(() => {
     setPhase("family_chat");
@@ -530,36 +601,6 @@ export function useGame() {
     setInterventionText(null);
     return data.phase;
   }, [gameId, setTrackedError]);
-
-  const generateEpilogue = useCallback(async () => {
-    if (!gameId) return;
-    setPhase("processing");
-    setStreamingDocText("");
-    setError(null);
-    try {
-      const res = await fetch(`${API}/game/${gameId}/epilogue`, { method: "POST" });
-      if (!res.ok || !res.body) {
-        const body = await res.text().catch(() => "");
-        setTrackedError(`Failed to generate epilogue: ${res.status}${body ? ` — ${body}` : ""}`, "epilogue");
-        setPhase("debrief");
-        setStreamingDocText("");
-        return;
-      }
-      let docText = "";
-      const data = await consumeSSE<{ phase: string; epilogue: string }>(res, (text) => {
-        docText += text;
-        setStreamingDocText(docText);
-      });
-      setEpilogue(data.epilogue);
-      setStreamingDocText("");
-      setPhase(data.phase);
-      track("epilogue_reached");
-    } catch (err) {
-      setTrackedError(`Failed to generate epilogue: ${err instanceof Error ? err.message : String(err)}`, "epilogue");
-      setPhase("debrief");
-      setStreamingDocText("");
-    }
-  }, [gameId]);
 
   const generateReportCard = useCallback(async (userId?: string) => {
     if (!gameId) return;
