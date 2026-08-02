@@ -55,7 +55,7 @@ LANGFUSE_SECRET_KEY=sk-lf-...
 LANGFUSE_HOST=https://langfuse.multiversegames.ai   # self-hosted instance
 ```
 
-If either key is missing, `TracedLLMClient` becomes a transparent pass-through — no network calls, no errors. Local dev works without any Langfuse config.
+If either key **or** `LANGFUSE_HOST`/`LANGFUSE_BASEURL` is missing, `TracedLLMClient` becomes a transparent pass-through — no network calls, no errors. Local dev works without any Langfuse config. The host is deliberately required (not optional): the Langfuse SDK defaults to Langfuse Cloud when no host is given, and this project only ever wants traces going to the self-hosted instance above (see issue #140).
 
 ### What gets traced
 
@@ -64,6 +64,8 @@ Each LLM call produces one **trace** (tagged with `game_id`, `event_number`, `ll
 - the raw text response
 - token usage and cost (from OpenRouter's response)
 - error level if the call threw
+
+**Exception:** the `personality_seed` role's prompt embeds both parents' raw confessional text (see `game/personality.ts`). That role's traced input has the confessional quotes redacted to a length-only placeholder before being sent to Langfuse — see `redactConfessionalText` in `observability/langfuse.ts`.
 
 The `llm_role` tag maps to the roles in `model-config.ts`: `kid_family_chat`, `kid_sidebar`, `kid_adult_chat`, `world_manager`, `psychologist`, `epilogue`, `report_card`. Filter by role in the Langfuse UI to compare quality across roles or spot regressions after a model swap.
 

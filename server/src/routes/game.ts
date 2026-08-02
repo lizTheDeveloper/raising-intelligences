@@ -114,7 +114,11 @@ export function createGameRoutes(
     // internals — server-only for the same reason. interventionText and
     // therapyMessages are the human-facing generated beat texts the
     // consult/therapy/cps_review screens render, so they are deliberately
-    // KEPT in the response. The client reads none of the stripped fields.
+    // KEPT in the response. parentPersonalities carries each parent's raw
+    // OCEAN scores and confessional free-text (issue #139) — seeded into the
+    // child's personality server-side but never rendered by the client, so
+    // it must not leak to either parent (or anyone with the gameId) here.
+    // The client reads none of the stripped fields.
     const {
       identityDocument,
       identitySnapshots,
@@ -123,6 +127,7 @@ export function createGameRoutes(
       pendingGuidance,
       highestRungFired,
       cpsOutcome,
+      parentPersonalities,
       ...publicState
     } = state;
     res.json({

@@ -184,7 +184,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
 
   app.use("/api", createGameRoutes(conversationEngine, endgameEngine, games, repo, { llmRateLimit, gameCreateLimit, gameLocks }));
   app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit, gameLocks }));
-  app.use("/api", createUserRoutes());
+  app.use("/api", createUserRoutes(repo, games));
   app.use("/api", createAlbumRoutes(repo));
   app.use("/api", supportCheckoutLimit, createSupportRoutes());
   if (adminQueries) {
