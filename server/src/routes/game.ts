@@ -114,7 +114,10 @@ export function createGameRoutes(
     // internals — server-only for the same reason. interventionText and
     // therapyMessages are the human-facing generated beat texts the
     // consult/therapy/cps_review screens render, so they are deliberately
-    // KEPT in the response. The client reads none of the stripped fields.
+    // KEPT in the response. parentPersonalities holds each parent's OCEAN
+    // scores and free-text confessionals, seeded to shape the child LLM —
+    // never meant to be readable by the other parent or an anonymous caller
+    // (see #139). The client reads none of the stripped fields.
     const {
       identityDocument,
       identitySnapshots,
@@ -123,6 +126,7 @@ export function createGameRoutes(
       pendingGuidance,
       highestRungFired,
       cpsOutcome,
+      parentPersonalities,
       ...publicState
     } = state;
     res.json({

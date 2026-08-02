@@ -140,3 +140,49 @@ describe("TracedLLMClient (Langfuse unconfigured)", () => {
     expect(derived).not.toBe(base);
   });
 });
+
+describe("getLangfuseClient (baseUrl fail-closed)", () => {
+  const savedEnv: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const key of ["LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_BASEURL", "LANGFUSE_HOST"]) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+    __resetLangfuseClientForTests();
+  });
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    __resetLangfuseClientForTests();
+  });
+
+  it("stays disabled when keys are set but no base URL is configured, instead of defaulting to Langfuse Cloud", () => {
+    process.env.LANGFUSE_PUBLIC_KEY = "pk-test";
+    process.env.LANGFUSE_SECRET_KEY = "sk-test";
+
+    expect(getLangfuseClient()).toBeNull();
+    expect(isLangfuseEnabled()).toBe(false);
+  });
+
+  it("constructs a client when both keys and LANGFUSE_BASEURL are configured", () => {
+    process.env.LANGFUSE_PUBLIC_KEY = "pk-test";
+    process.env.LANGFUSE_SECRET_KEY = "sk-test";
+    process.env.LANGFUSE_BASEURL = "http://localhost:3030";
+
+    expect(getLangfuseClient()).not.toBeNull();
+    expect(isLangfuseEnabled()).toBe(true);
+  });
+
+  it("also accepts LANGFUSE_HOST as the base URL", () => {
+    process.env.LANGFUSE_PUBLIC_KEY = "pk-test";
+    process.env.LANGFUSE_SECRET_KEY = "sk-test";
+    process.env.LANGFUSE_HOST = "http://localhost:3030";
+
+    expect(getLangfuseClient()).not.toBeNull();
+    expect(isLangfuseEnabled()).toBe(true);
+  });
+});

@@ -126,6 +126,32 @@ describe("concern accumulator — accrual through the real REST scene-end route"
     expect(body).not.toHaveProperty("cpsOutcome");
   });
 
+  it("GET /state never leaks parentPersonalities — OCEAN scores + confessionals are server-only (#139)", async () => {
+    const ip = "62.62.62.4";
+    const gameId = await createGameAndReachFamilyChat(ip);
+
+    await fetch(`${baseUrl}/api/game/${gameId}/personality`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Forwarded-For": ip },
+      body: JSON.stringify({
+        ocean: [1, 2, 3, 4, 1],
+        confessional1: "the most evil thing I did as a kid",
+        confessional2: "one thing I never told my parents",
+        slot: "parent1",
+      }),
+    });
+    // Sanity: it really was persisted server-side.
+    const loaded = await repo.loadGame(gameId);
+    expect(loaded?.parentPersonalities?.parent1?.confessional1).toBe(
+      "the most evil thing I did as a kid"
+    );
+
+    const stateRes = await fetch(`${baseUrl}/api/game/${gameId}/state`);
+    const body = (await stateRes.json()) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("parentPersonalities");
+    expect(JSON.stringify(body)).not.toContain("the most evil thing I did as a kid");
+  });
+
   it("a clean 'none' scene does not raise concernLevel (floored at 0)", async () => {
     mock.groomingResult = { tier: "none", reason: "" };
     const ip = "62.62.62.2";

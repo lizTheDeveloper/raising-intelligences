@@ -13,6 +13,7 @@
 import { Langfuse } from "langfuse";
 import type { LLMClient } from "../llm/client.js";
 import { type LLMRole, type ModelTier, selectModel } from "../llm/model-config.js";
+import { logger } from "../logger.js";
 
 /**
  * Metadata carried by a traced client. Used both for trace tags
@@ -33,8 +34,17 @@ let initialized = false;
  * are absent. Initialization happens lazily on first call so that importing
  * this module has no side effects.
  *
- * Required env: LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY.
- * Optional env: LANGFUSE_BASEURL (defaults to Langfuse cloud).
+ * Required env: LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and one of
+ * LANGFUSE_BASEURL / LANGFUSE_HOST.
+ *
+ * The base URL is required, not optional: traced generations carry the full
+ * LLM prompt, and the personality-seed / world-manager prompts embed parents'
+ * free-text confessionals verbatim (#140). Without an explicit self-hosted
+ * `baseUrl` (see `langfuse/docker-compose.yml`), the Langfuse SDK would
+ * default to Langfuse Cloud — sending that intimate text to a third party
+ * with no retention policy or DPA expressed in this codebase. So when keys
+ * are configured but no base URL is, tracing fails closed (disabled) instead
+ * of silently going to the cloud.
  */
 export function getLangfuseClient(): Langfuse | null {
   if (initialized) return cachedClient;
@@ -49,10 +59,20 @@ export function getLangfuseClient(): Langfuse | null {
     return cachedClient;
   }
 
+  if (!baseUrl) {
+    logger.warn("langfuse_baseurl_missing", {
+      message:
+        "LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY are set but LANGFUSE_BASEURL/LANGFUSE_HOST is not; " +
+        "tracing disabled rather than defaulting to Langfuse Cloud, since traces can include parent confessionals",
+    });
+    cachedClient = null;
+    return cachedClient;
+  }
+
   cachedClient = new Langfuse({
     publicKey,
     secretKey,
-    ...(baseUrl ? { baseUrl } : {}),
+    baseUrl,
   });
   return cachedClient;
 }
