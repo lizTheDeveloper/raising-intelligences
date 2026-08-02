@@ -16,8 +16,28 @@ import {
   captureException,
   sentryExpressErrorHandler,
   flushSentry,
+  isBenignDisconnect,
   __resetSentryForTests,
 } from "../src/observability/sentry.js";
+
+describe("isBenignDisconnect", () => {
+  it("drops AbortError (client aborted an SSE/fetch mid-flight)", () => {
+    expect(isBenignDisconnect({ name: "AbortError", message: "This operation was aborted" })).toBe(true);
+  });
+  it("drops mid-write client-disconnect codes", () => {
+    expect(isBenignDisconnect({ code: "ECONNRESET" })).toBe(true);
+    expect(isBenignDisconnect({ code: "EPIPE" })).toBe(true);
+    expect(isBenignDisconnect({ code: "ERR_STREAM_DESTROYED" })).toBe(true);
+  });
+  it("drops on an 'aborted' message even without a name/code", () => {
+    expect(isBenignDisconnect({ message: "Request aborted" })).toBe(true);
+  });
+  it("KEEPS real server errors", () => {
+    expect(isBenignDisconnect({ name: "TypeError", message: "Cannot read properties of undefined" })).toBe(false);
+    expect(isBenignDisconnect({ name: "Error", message: "Invalid transition: PARENT_MESSAGE from phase debrief" })).toBe(false);
+    expect(isBenignDisconnect({})).toBe(false);
+  });
+});
 
 const initSpy = vi.mocked(Sentry.init);
 const captureSpy = vi.mocked(Sentry.captureException);

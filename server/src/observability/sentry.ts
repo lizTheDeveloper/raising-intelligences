@@ -26,6 +26,24 @@ let enabled = false;
 let initialized = false;
 
 /**
+ * True for benign client-disconnect noise, NOT a server bug: a browser aborting
+ * an in-flight SSE stream or fetch (navigation, tab close, a superseded request)
+ * surfaces server-side as an AbortError, or a mid-write ECONNRESET/EPIPE. There
+ * is nothing the server can do about it, and left unfiltered it buries real
+ * errors in GlitchTip (mirrors the client's beforeSend in client/src/main.tsx).
+ */
+export function isBenignDisconnect(params: {
+  name?: string;
+  message?: string;
+  code?: string;
+}): boolean {
+  const { name = "", message = "", code = "" } = params;
+  if (name === "AbortError") return true;
+  if (code === "ECONNRESET" || code === "EPIPE" || code === "ERR_STREAM_DESTROYED") return true;
+  return /operation was aborted|request aborted|\baborted\b/i.test(message);
+}
+
+/**
  * Initializes Sentry when `SENTRY_DSN` is set. Idempotent: safe to call more
  * than once (subsequent calls are no-ops). Returns whether reporting is active.
  *
@@ -49,6 +67,17 @@ export function initSentry(): boolean {
     // Error reporting only — no performance/trace sampling. GlitchTip is an
     // error tracker; tracing spans are unnecessary overhead here.
     tracesSampleRate: 0,
+    // Drop benign client-disconnect noise (aborted SSE/fetch) so it doesn't
+    // bury real server errors. See isBenignDisconnect.
+    beforeSend(event, hint) {
+      const err = hint?.originalException as
+        | { name?: string; message?: string; code?: string }
+        | undefined;
+      const name = event.exception?.values?.[0]?.type ?? err?.name;
+      const message = event.exception?.values?.[0]?.value ?? err?.message;
+      const code = err?.code;
+      return isBenignDisconnect({ name, message, code }) ? null : event;
+    },
   });
   enabled = true;
   return enabled;
