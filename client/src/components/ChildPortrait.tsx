@@ -74,7 +74,15 @@ export function ChildPortrait({ age, size = 180, gameId, gender = "nonbinary", o
         img.onload = () => {
           if (mounted) {
             setSrc(url);
-            track("portrait_loaded", { ageBucket: slug, attempts: 0 });
+            // `attempts` is gone: it was hardcoded 0 here and read 0 in all
+            // 2151 rows in 30d, so it carried no information at all.
+            //
+            // Volume is contained in analytics.ts (once per ageBucket per
+            // session), not here — this component mounts on every chat header
+            // and every processing screen, which made this the highest-volume
+            // event in the title and the LAST custom event in 139 of 335
+            // sessions, burying whatever the player actually did last.
+            track("portrait_loaded", { ageBucket: slug });
           }
           onLoad?.();
         };

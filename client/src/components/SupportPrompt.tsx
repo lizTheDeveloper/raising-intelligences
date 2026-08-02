@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { track } from "../analytics";
 
 const API = import.meta.env.BASE_URL + "api";
 
@@ -25,6 +26,20 @@ export function SupportPrompt({ sourcePage, style }: Props) {
   const [loadingCents, setLoadingCents] = useState<number | null>(null);
   const [error, setError] = useState(false);
 
+  /**
+   * Stage 1 of the canonical revenue funnel. This component had no analytics
+   * at all — the flagship title, 335 visitors, contributing zero rows to the
+   * studio's money path — while already receiving a `sourcePage` prop built
+   * for exactly this attribution and throwing it away.
+   *
+   * In an effect so it means "the ask was rendered", and deduped per
+   * sourcePage per session inside analytics.ts so a re-render or a second look
+   * at the epilogue cannot inflate the impression count.
+   */
+  useEffect(() => {
+    track("support_prompt_shown", { sourcePage, reachedEnding: sourcePage === "epilogue" });
+  }, [sourcePage]);
+
   async function support(cents: number) {
     setLoadingCents(cents);
     setError(false);
@@ -36,11 +51,17 @@ export function SupportPrompt({ sourcePage, style }: Props) {
       });
       const data = (await res.json()) as { url?: string };
       if (res.ok && data.url) {
+        // Stage 5 — the last client-side event before Stripe takes the page.
+        // Fired before the redirect, because after it there is no page left.
+        track("checkout_started", { amount: cents, sourcePage });
         window.location.href = data.url;
         return;
       }
       throw new Error("checkout failed");
     } catch {
+      // The catch used to swallow the failure into a UI string and nothing
+      // else, so a broken money path looked exactly like nobody paying.
+      track("error_occurred", { step: "support_checkout", amount: cents, sourcePage });
       setError(true);
       setLoadingCents(null);
     }
@@ -53,7 +74,16 @@ export function SupportPrompt({ sourcePage, style }: Props) {
         you're welcome to leave a little for the people who made it.
       </p>
       {!expanded ? (
-        <button className="btn-link" onClick={() => setExpanded(true)} data-testid="btn-support-expand">
+        <button
+          className="btn-link"
+          onClick={() => {
+            // Stage 2 — intent. Isolates "the ask was never seen" from
+            // "the ask was seen and declined".
+            track("support_clicked", { sourcePage });
+            setExpanded(true);
+          }}
+          data-testid="btn-support-expand"
+        >
           leave something
         </button>
       ) : (

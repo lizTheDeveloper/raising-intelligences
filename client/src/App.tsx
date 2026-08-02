@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { SoloGame } from "./components/SoloGame";
 import { MultiplayerGame } from "./components/MultiplayerGame";
 import { AdminApp } from "./components/admin/AdminApp";
 import { clearResume } from "./hooks/useMultiplayer";
+import { getSavedKids } from "./hooks/useGame";
 import { track } from "./analytics";
 import { useMatrixAuth } from "./hooks/useMatrixAuth";
 import { Credits } from "./components/Credits";
@@ -192,11 +193,39 @@ export function App() {
   const [mode, setMode] = useState<Mode>(isSoloResume ? "solo" : joinGameId ? "multiplayer" : "choose");
   const [theme, setTheme] = useState<Theme>("theme-ocean-grunge");
   const auth = useMatrixAuth();
+  const titleSeenRef = useRef(false);
 
   // Apply theme to body so it persists across all game screens
   useEffect(() => {
     document.body.className = theme;
   }, [theme]);
+
+  /**
+   * The front door — the largest absolute loss in the title and, until now,
+   * measured only by subtraction: 99 of 322 pageview sessions never pressed a
+   * mode button and 57 fired no custom event at all. `mode_selected` proves a
+   * press; nothing proved a *render*, so "saw the screen and declined" and
+   * "the bundle/CSP/first paint failed" were indistinguishable.
+   *
+   * In an effect, not the render body: an effect only runs if React actually
+   * committed the screen, which is the whole point. Gated on `mode === "choose"`
+   * so a ?game= deep link (which returns SoloGame/MultiplayerGame above and
+   * never paints this) cannot claim it, and ref-guarded so it stays one per
+   * mount.
+   */
+  useEffect(() => {
+    if (mode !== "choose" || titleSeenRef.current) return;
+    titleSeenRef.current = true;
+    const savedKids = getSavedKids();
+    track("title_screen_viewed", {
+      resumeAvailable: savedKids.length > 0,
+      savedKidCount: savedKids.length,
+      // Mobile is 116 of 188 depth-measurable sessions and converts to depth at
+      // 24.1% vs laptop's 33.3% — a mobile-hostile title screen is a live
+      // hypothesis and this is the property that tests it.
+      viewport: window.innerWidth < 700 ? "narrow" : "wide",
+    });
+  }, [mode]);
 
   // Clear resume data on the main page so players aren't trapped in a stale game
   useEffect(() => {

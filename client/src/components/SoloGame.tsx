@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { track, mark, secondsSince, bucketSeconds } from "../analytics";
 import {
   useGame,
   getSavedKids,
@@ -20,6 +21,15 @@ import { ReportCard } from "./ReportCard";
 import { ProcessingScreen } from "./ProcessingScreen";
 import { ChildPortrait } from "./ChildPortrait";
 import { FamilyAlbum } from "./FamilyAlbum";
+
+/** Dark Play intervention ladder — structural rung numbers only, never plot
+ *  nouns, so the analytics payload stays free of story content. */
+const RUNG_BY_PHASE: Record<string, number> = { consult: 1, therapy: 2, cps_review: 3 };
+
+/** Where the saved-kids picker parks its intent across the reload it triggers.
+ *  `handleResume` navigates rather than loading in place, so the resume lands
+ *  on the `?game=` path and would otherwise be indistinguishable from a link. */
+const RESUME_SOURCE_KEY = "ri_resume_source";
 
 export function SoloGame() {
   const {
@@ -62,13 +72,73 @@ export function SoloGame() {
   const [cloudKids, setCloudKids] = useState<SavedKid[]>([]);
   const [showAlbum, setShowAlbum] = useState(false);
 
+  /** eventNumbers whose debrief screen has already been counted. A Set, not a
+   *  boolean: the debrief is a per-scene screen and a re-render must not
+   *  re-fire it, but scene 4's debrief is genuinely a different view from
+   *  scene 3's. */
+  const debriefSeenRef = useRef<Set<number>>(new Set());
+  /** Same idea for the intervention rungs, keyed `phase:eventNumber`. */
+  const interventionSeenRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const existingId = params.get("game");
     if (existingId && !gameId) {
-      loadGame(existingId);
+      // The picker below hands off through sessionStorage because it resumes by
+      // navigating; anything else arriving with a ?game= is a link.
+      let source: "url" | "saved_list" = "url";
+      try {
+        if (sessionStorage.getItem(RESUME_SOURCE_KEY) === "saved_list") source = "saved_list";
+        sessionStorage.removeItem(RESUME_SOURCE_KEY);
+      } catch {
+        /* storage disabled — a resume is still a resume, just an unattributed one */
+      }
+      loadGame(existingId, source);
     }
   }, []);
+
+  // Time on the naming screen, for setup_submitted's secondsOnSetup. Marked
+  // when the screen becomes current rather than at mount, so a game that
+  // returns to `start` measures the second visit and not the first.
+  useEffect(() => {
+    if (phase === "start") mark("setup");
+  }, [phase]);
+
+  /**
+   * The debrief screen — the single most important missing event in the game.
+   * Ref-guarded per eventNumber so React re-renders cannot inflate it, and
+   * paired with useGame's `processing_started` mark so the ~68s LLM wait and
+   * the decision that follows it stop being the same undifferentiated gap.
+   */
+  useEffect(() => {
+    if (phase !== "debrief") return;
+    const eventNumber = currentEvent?.eventNumber ?? 0;
+    if (debriefSeenRef.current.has(eventNumber)) return;
+    debriefSeenRef.current.add(eventNumber);
+    const waited = secondsSince("processing");
+    track("debrief_viewed", {
+      eventNumber,
+      age: currentEvent?.age ?? 0,
+      mode: "solo",
+      ...(waited !== null ? { waitSeconds: bucketSeconds(waited) } : {}),
+    });
+  }, [phase, currentEvent]);
+
+  /** The Dark Play ladder: a whole shipped subsystem that emitted nothing. */
+  useEffect(() => {
+    const rung = RUNG_BY_PHASE[phase];
+    if (!rung) return;
+    const eventNumber = currentEvent?.eventNumber ?? 0;
+    const key = `${phase}:${eventNumber}`;
+    if (interventionSeenRef.current.has(key)) return;
+    interventionSeenRef.current.add(key);
+    track("intervention_started", {
+      rung,
+      eventNumber,
+      age: currentEvent?.age ?? 0,
+      mode: "solo",
+    });
+  }, [phase, currentEvent]);
 
   const syncOnLogin = useCallback(async (userId: string) => {
     setMatrixUser(userId);
@@ -97,6 +167,17 @@ export function SoloGame() {
 
   const handleStart = async () => {
     if (!nameInput.trim()) return;
+    // Emitted BEFORE the POST, deliberately: it is the numerator for the
+    // mode_selected → game_started loss, and a create that fails server-side
+    // must still count as an attempt. Without it, "abandoned the form" and
+    // "the request failed" were the same shape — and
+    // error_occurred{step:create_game} has never once appeared in 30d.
+    const setupSeconds = secondsSince("setup");
+    track("setup_submitted", {
+      mode: "solo",
+      nameProvided: true,
+      ...(setupSeconds !== null ? { secondsOnSetup: bucketSeconds(setupSeconds) } : {}),
+    });
     setShowGuardian(true);
     const id = await createGame(nameInput.trim());
     if (!id) {
@@ -137,11 +218,40 @@ export function SoloGame() {
   // dispatch below render the intervention screen.
   const handleDebrief = async () => {
     setLoadingEvent(true);
+    // Captured before the call: endDebrief clears currentEvent on the
+    // non-intervention path, so reading it afterwards would report zeroes.
+    const eventNumber = currentEvent?.eventNumber ?? 0;
+    const age = currentEvent?.age ?? 0;
+    const messagesSentThisScene = 12 - messagesRemaining;
     const resultPhase = await endDebrief();
+    track("debrief_completed", {
+      eventNumber,
+      age,
+      exit: "continue",
+      messagesSentThisScene,
+      interventionQueued:
+        resultPhase === "consult" || resultPhase === "therapy" || resultPhase === "cps_review",
+      mode: "solo",
+    });
     if (resultPhase === "event_intro") {
       await nextEvent();
     }
     setLoadingEvent(false);
+  };
+
+  /** The other way off the debrief screen: ending childhood on purpose. This is
+   *  a choice, not churn, and it is why more sessions reach an epilogue than
+   *  ever reach the last scene. */
+  const handleEndStoryEarly = () => {
+    track("debrief_completed", {
+      eventNumber: currentEvent?.eventNumber ?? 0,
+      age: currentEvent?.age ?? 0,
+      exit: "end_story_early",
+      messagesSentThisScene: 12 - messagesRemaining,
+      interventionQueued: false,
+      mode: "solo",
+    });
+    generateEpilogue(undefined, "ended_early");
   };
 
   // Dark Play Plan 3 — consult/therapy always route back to event_intro
@@ -186,6 +296,13 @@ export function SoloGame() {
   if (phase === "start") {
     const savedKids = cloudKids.length > 0 ? cloudKids : getSavedKids();
     const handleResume = (kid: { gameId: string; childName: string }) => {
+      // Survives the navigation below so the mount effect can tell a picker
+      // resume from a pasted/bookmarked link.
+      try {
+        sessionStorage.setItem(RESUME_SOURCE_KEY, "saved_list");
+      } catch {
+        /* non-fatal: the resume still works, it just reports as "url" */
+      }
       const url = new URL(window.location.href);
       url.searchParams.set("game", kid.gameId);
       url.searchParams.set("mode", "solo");
@@ -359,7 +476,7 @@ export function SoloGame() {
           // generateEpilogue now takes an optional game id, so a bare
           // `onClick={generateEpilogue}` would hand it the click event.
           extraButton={
-            <button onClick={() => generateEpilogue()} className="btn btn-secondary" data-testid="btn-epilogue">
+            <button onClick={handleEndStoryEarly} className="btn btn-secondary" data-testid="btn-epilogue">
               end childhood → epilogue
             </button>
           }
@@ -434,7 +551,22 @@ export function SoloGame() {
           messagesRemaining={messagesRemaining}
           isStreaming={isStreaming}
           onSend={sendMessage}
-          onEndChat={generateReportCard}
+          // NOT `onEndChat={generateReportCard}`. Chat calls this as
+          // `onClick={onEndChat}`, so the bare reference handed React's
+          // MouseEvent to `generateReportCard(userId?)` — which meant the
+          // album-generation query string became `?userId=[object Object]`,
+          // filing the family album under a garbage user and never under the
+          // signed-in one. Same class of bug as the Debrief button's arrow
+          // wrapper, in the one place it wasn't wrapped.
+          onEndChat={() => {
+            track("endgame_conversation_ended", {
+              messagesSent: 12 - messagesRemaining,
+              hitCap: messagesRemaining === 0,
+              abandoned: false,
+              mode: "solo",
+            });
+            generateReportCard(matrixUser ?? undefined);
+          }}
         />
       </div>
     );
