@@ -559,10 +559,15 @@ export function SoloGame() {
           // signed-in one. Same class of bug as the Debrief button's arrow
           // wrapper, in the one place it wasn't wrapped.
           onEndChat={() => {
+            // No `abandoned` property. It could only ever be false here — this
+            // is the finish handler — and there is no abandon path to set it
+            // from, so it would be a second dead property of exactly the kind
+            // portrait_loaded.attempts just got removed for being. Leaving the
+            // phase without finishing shows up as this event's ABSENCE against
+            // the epilogue_reached that precedes it.
             track("endgame_conversation_ended", {
               messagesSent: 12 - messagesRemaining,
               hitCap: messagesRemaining === 0,
-              abandoned: false,
               mode: "solo",
             });
             generateReportCard(matrixUser ?? undefined);

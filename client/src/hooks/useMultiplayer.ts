@@ -427,7 +427,8 @@ export function useMultiplayer() {
           track("conversation_ended", { age, eventNumber: prev.eventNumber, mode: "multiplayer" });
         }
         if (prev.phase === "adult_chat") {
-          track("endgame_conversation_ended", { abandoned: false, mode: "multiplayer" });
+          // No `abandoned` — see the solo emit. Absence is the signal.
+          track("endgame_conversation_ended", { mode: "multiplayer" });
         }
         mark("processing");
         track("processing_started", { kind, eventNumber: cur.eventNumber, age });
