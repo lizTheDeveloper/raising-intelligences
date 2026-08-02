@@ -140,6 +140,46 @@ export function createGameRoutes(
       return;
     }
 
+    // ARC BACKSTOP — the story is over; refuse to author another scene.
+    //
+    // The solo/REST path used to generate unconditionally and trust the client
+    // to stop, per the contract described at the /end-debrief comment below
+    // ("a separate /epilogue route, called by the client once
+    // currentEventNumber >= totalEvents"). SoloGame never honoured it, so games
+    // ran past their arc — one live game reached event 28 of 10, at which point
+    // the world manager's faithful one-year-per-scene aging produced age 31 and
+    // validateGameEvent (conversation-engine.ts, rejects age > 30) threw on
+    // every call. A permanent brick with no way forward.
+    //
+    // This is the same rule the multiplayer socket path already enforces in the
+    // `debrief` branch of the READY handler (handlers.ts: `state.currentEventNumber
+    // >= state.totalEvents` -> generateEpilogue) and the same one /end-chat
+    // already uses to decide whether to prefetch — solo simply had no door.
+    //
+    // Deliberately a 200, not a 409/500: an error leaves the player stuck, and
+    // the whole point is that they must be able to finish their story. The
+    // response tells the client where the game actually is and that the arc is
+    // complete; useGame's nextEvent turns `storyComplete` into the epilogue.
+    //
+    // Termination does not depend on the client honouring it: a client that
+    // ignores the flag and re-POSTs forever gets 200 + storyComplete forever.
+    // No generation, no aging, no error — a safe fixed point.
+    //
+    // `>=`, not `===`, so the games already past the cap in production recover
+    // through this same door rather than needing a data fix.
+    if (state.currentEventNumber >= state.totalEvents) {
+      // Drop any prefetch queued before the cap was reached so a late rejection
+      // can't surface as an unhandled promise. (/end-chat only prefetches while
+      // under the cap, so there is rarely one — cheap insurance.)
+      const stale = prefetchedEvents.get(gameId);
+      if (stale) {
+        prefetchedEvents.delete(gameId);
+        stale.catch(() => {});
+      }
+      res.json({ event: null, phase: state.phase, storyComplete: true });
+      return;
+    }
+
     const prefetched = prefetchedEvents.get(gameId);
     prefetchedEvents.delete(gameId);
 
