@@ -12,6 +12,13 @@ export class MockLLMClient implements LLMClient {
   /** Result returned for the scene-level safety check (role "safety_check"). */
   public groomingResult: { tier: "block" | "concern" | "none"; reason: string } = { tier: "none", reason: "" };
   public throwOnSafetyCheck = false;
+  /**
+   * Fail the personality-seed call (role "personality_seed"). The opening has
+   * two model calls in sequence and only the second one — the world manager —
+   * can be failed by emptying `events`; without this the seed branch of the
+   * opening's failure handling is unreachable from a test.
+   */
+  public throwOnPersonalitySeed = false;
   /** Result returned for the CPS deliberation (role "cps_caseworker"). */
   public cpsResult: { outcome: string; determination: string } = {
     outcome: "stay",
@@ -45,6 +52,9 @@ export class MockLLMClient implements LLMClient {
     onChunk?: (chunk: string) => void
   ): Promise<string> {
     this.roleCalls.push(role);
+    if (role === "personality_seed" && this.throwOnPersonalitySeed) {
+      throw new Error("mock personality_seed failure");
+    }
     const response =
       this.identityUpdates[this.identityCallCount % this.identityUpdates.length];
     this.identityCallCount++;

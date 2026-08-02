@@ -269,13 +269,15 @@ export function SoloGame() {
           // in `event_intro` from creation onward, so without it this would
           // read "ready" before scene 1 had even been requested.
           //
-          // `|| error` is the escape hatch. A failed load leaves currentEvent
-          // null forever, and this screen has no error banner and no retry — so
-          // without it a dead /next-event is a spinner with no way out.
-          // Releasing on the error hands the player to EventIntro, whose
+          // `|| error` is the escape hatch for a failed /next-event, which
+          // leaves currentEvent null forever. Releasing on the error hands the
+          // player to EventIntro, whose
           // `onReady={currentEvent ? beginChat : handleNextEvent}` is the retry.
-          // (Multiplayer's equivalent hatch is the server clearing the ready
-          // flags, which drops both clients back to the lobby.)
+          // The screen's own error surface covers the other failure — a failed
+          // personality POST — with a "try again" that resubmits.
+          // (Multiplayer's hatch is now that same surface, fed by the server's
+          // room-wide error; it used to be the server clearing the ready flags,
+          // which dropped both clients back to the lobby and lost the quiz.)
           eventReady={
             phase === "event_intro" && !loadingEvent && (currentEvent !== null || error !== null)
           }
