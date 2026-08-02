@@ -11,8 +11,14 @@ import {
 } from "./context-assembler.js";
 import type { LLMClient } from "../llm/client.js";
 import { classifyScene, detectConcerningTrajectory } from "../safety/pattern-detection.js";
+import {
+  reviewSceneDraft,
+  sceneRedraftNote,
+  shouldReviewSceneDrafts,
+} from "../safety/scene-draft-review.js";
 import type { SceneSafetyResult } from "../safety/moderation.js";
 import type { TrajectoryResult } from "../safety/pattern-detection.js";
+import { logger } from "../logger.js";
 
 /**
  * How often, in parent messages, to run the mid-scene abuse check within a
@@ -21,6 +27,17 @@ import type { TrajectoryResult } from "../safety/pattern-detection.js";
  * (PARENT_MESSAGE_CAP). See handleParentMessage.
  */
 const MID_SCENE_ABUSE_CHECK_EVERY = 4;
+
+/**
+ * How many times the World Manager may be asked for a scene before the game
+ * takes whatever it last produced. This is the whole of the "cannot loop
+ * forever" property: a fixed count, checked by
+ * `scene-draft-review.test.ts`. A generator that is persistently over the
+ * floor costs one extra draft and then the story continues — a scene that is
+ * too dark is a craft failure, a game that cannot produce a scene at all is a
+ * dead game, and the second is worse.
+ */
+const MAX_SCENE_DRAFTS = 2;
 
 /**
  * Validate and coerce raw JSON from the world-manager LLM into a GameEvent.
@@ -68,17 +85,68 @@ function kidRoleForPhase(phase: GamePhase): LLMRole {
 export class ConversationEngine {
   constructor(public readonly llm: LLMClient) {}
 
-  async startEvent(state: GameState): Promise<GameState> {
+  /**
+   * The single path to a generated scene — `startEvent`, `loadEvent` and
+   * `prefetchNextEvent` all come through here, so the floor is enforced
+   * wherever a scene is authored rather than at two of the three doors.
+   *
+   * On a game that has never gone dark this is exactly what it always was: one
+   * world-manager call, validated, returned. On a game carrying concern it
+   * reads its own draft first (safety/scene-draft-review.ts) and, at most once,
+   * asks for another one.
+   *
+   * `validateGameEvent` still throws straight out of the loop. A malformed
+   * response is a generation *failure* and the callers already surface it as
+   * one; only a well-formed scene that crosses the floor is worth a redraft.
+   */
+  private async generateEvent(state: GameState): Promise<GameEvent> {
     const ctx = buildWorldManagerContext(state);
-    const raw = await this.llm.completeJson<unknown>(ctx.system, ctx.userMessage, "world_manager");
-    const event = validateGameEvent(raw);
+
+    if (!shouldReviewSceneDrafts(state)) {
+      return validateGameEvent(
+        await this.llm.completeJson<unknown>(ctx.system, ctx.userMessage, "world_manager")
+      );
+    }
+
+    let lastDraft: GameEvent | null = null;
+    let note = "";
+    for (let draft = 1; draft <= MAX_SCENE_DRAFTS; draft++) {
+      const raw = await this.llm.completeJson<unknown>(
+        ctx.system,
+        note ? `${ctx.userMessage}\n\n${note}` : ctx.userMessage,
+        "world_manager"
+      );
+      lastDraft = validateGameEvent(raw);
+
+      const review = await reviewSceneDraft(this.llm, lastDraft);
+      if (review.ok) return lastDraft;
+
+      logger.warn("scene_draft_rejected", {
+        gameId: state.id,
+        eventNumber: state.currentEventNumber + 1,
+        draft,
+        reason: review.reason,
+      });
+      note = sceneRedraftNote(review.reason);
+    }
+
+    // Bounded, so this is reachable. Ship the last draft and say so loudly —
+    // see MAX_SCENE_DRAFTS for why this is not a throw.
+    logger.error("scene_draft_review_exhausted", {
+      gameId: state.id,
+      eventNumber: state.currentEventNumber + 1,
+      drafts: MAX_SCENE_DRAFTS,
+    });
+    return lastDraft!;
+  }
+
+  async startEvent(state: GameState): Promise<GameState> {
+    const event = await this.generateEvent(state);
     return transition(state, { type: "START_EVENT", event });
   }
 
   async loadEvent(state: GameState): Promise<GameState> {
-    const ctx = buildWorldManagerContext(state);
-    const raw = await this.llm.completeJson<unknown>(ctx.system, ctx.userMessage, "world_manager");
-    const event = validateGameEvent(raw);
+    const event = await this.generateEvent(state);
     return transition(state, { type: "LOAD_EVENT", event });
   }
 
@@ -217,9 +285,7 @@ export class ConversationEngine {
 
   /** Generate the next event without transitioning phase — called in background during debrief. */
   async prefetchNextEvent(state: GameState): Promise<GameEvent> {
-    const ctx = buildWorldManagerContext(state);
-    const raw = await this.llm.completeJson<unknown>(ctx.system, ctx.userMessage, "world_manager");
-    return validateGameEvent(raw);
+    return this.generateEvent(state);
   }
 
   /** Apply a pre-fetched event to the current state — skips the LLM call. */
