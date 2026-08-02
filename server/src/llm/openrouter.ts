@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { LLMClient, LLMUsage, UsageSink } from "./client.js";
+import { REQUEST_TIMEOUT_MS, type LLMClient, type LLMUsage, type UsageSink } from "./client.js";
 import {
   type LLMRole,
   type ModelTier,
@@ -109,7 +109,7 @@ export class OpenRouterLLMClient implements LLMClient {
         stream_options: { include_usage: true },
         ...(this.seed !== undefined ? { seed: this.seed } : {}),
         messages: msgs,
-      }, { signal: AbortSignal.timeout(120_000) });
+      }, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
 
       let fullResponse = "";
       let usage: OpenAIUsage | undefined;
@@ -131,7 +131,7 @@ export class OpenRouterLLMClient implements LLMClient {
       max_tokens: maxTokens,
       ...(this.seed !== undefined ? { seed: this.seed } : {}),
       messages: msgs,
-    }, { signal: AbortSignal.timeout(90_000) });
+    }, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
 
     this.report(resolvedRole, model, response.usage as OpenAIUsage | undefined);
 
