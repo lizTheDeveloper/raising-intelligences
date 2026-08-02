@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
-import { track } from "../analytics";
+import { track, mark, secondsSince, bucketSeconds } from "../analytics";
 
 const E = {
   CREATE_GAME: "create_game",
@@ -300,6 +300,34 @@ export function useMultiplayer() {
    */
   const handoffWantedRef = useRef(false);
 
+  /**
+   * The last `{phase, eventNumber}` this client has already counted.
+   *
+   * Multiplayer was 100% dark after mode selection: MultiplayerGame.tsx had
+   * zero track() calls and this file had exactly one. The 13 sessions that
+   * chose multiplayer and produced no game_started, no conversation_started and
+   * no epilogue were an instrumentation void, not a result — no event existed
+   * to fire.
+   *
+   * The fix is one chokepoint rather than ~40 call sites: this hook is driven
+   * by server STATE broadcasts, so every phase the player reaches is already
+   * observable in one place. STATE arrives many times per phase (presence,
+   * typing, generating flags), so emission is keyed on an actual CHANGE of
+   * phase-or-scene and is therefore bounded by the arc — never per-tick.
+   *
+   * Null until the first STATE, which is deliberately not treated as a
+   * transition: joins, reconnects and device handoffs all begin with a STATE
+   * describing wherever the game already is, and counting that as an arrival
+   * would report a player who joined at age 7 as having viewed scene 7's
+   * intro — contaminating the same denominators solo's game_resumed exists to
+   * clean.
+   */
+  const lastCountedRef = useRef<{ phase: string; eventNumber: number } | null>(null);
+  /** This device pressed "create game" — so the first STATE is a new game
+   *  rather than a rejoin. JOINED fires on every reconnect, so game_started
+   *  cannot be hung off that. */
+  const createdHereRef = useRef(false);
+
   const clearPartnerTyping = useCallback(() => {
     if (partnerTypingTimer.current) {
       clearTimeout(partnerTypingTimer.current);
@@ -310,6 +338,135 @@ export function useMultiplayer() {
 
   const ensureSocket = useCallback((): Socket => {
     if (socketRef.current) return socketRef.current;
+
+    /** Dark Play ladder rungs, structural numbers only — no plot nouns. */
+    const RUNGS: Record<string, number> = { consult: 1, therapy: 2, cps_review: 3 };
+
+    /**
+     * Emit the canonical funnel events for a multiplayer client, from the one
+     * place that can see every phase it reaches. Names are the SAME canonical
+     * names solo emits, with `mode: "multiplayer"`, so the two funnels can
+     * finally be compared — but note these are per-PLAYER, since each parent is
+     * their own Umami session, and must not be summed against solo rows.
+     */
+    const countState = (s: ViewerState) => {
+      const prev = lastCountedRef.current;
+      const cur = { phase: s.phase, eventNumber: s.currentEventNumber };
+      const age = s.currentEvent?.age ?? 0;
+
+      if (!prev) {
+        lastCountedRef.current = cur;
+        if (createdHereRef.current) {
+          createdHereRef.current = false;
+          track("game_started", { relationshipType: s.relationshipType, mode: "multiplayer" });
+        } else if (!(s.phase === "event_intro" && s.currentEventNumber === 0)) {
+          // Arrived into a game already underway — a rejoin, a partner joining
+          // late, or a device handoff.
+          track("game_resumed", {
+            source: "multiplayer_join",
+            phase: s.phase,
+            eventNumber: s.currentEventNumber,
+            age,
+            mode: "multiplayer",
+          });
+        }
+        return;
+      }
+      if (prev.phase === cur.phase && prev.eventNumber === cur.eventNumber) return;
+      lastCountedRef.current = cur;
+
+      // --- leaving a screen ---
+      if (prev.phase === "debrief") {
+        track("debrief_completed", {
+          eventNumber: prev.eventNumber,
+          exit:
+            cur.phase !== "epilogue"
+              ? "continue"
+              : s.currentEventNumber >= s.totalEvents
+                ? "arc_complete"
+                : "end_story_early",
+          interventionQueued: RUNGS[cur.phase] !== undefined,
+          mode: "multiplayer",
+        });
+      }
+      if (RUNGS[prev.phase] !== undefined) {
+        track("intervention_completed", {
+          rung: RUNGS[prev.phase]!,
+          outcome: cur.phase === "epilogue" ? "terminal" : "returned_to_story",
+          turnsTaken: prev.phase === "therapy" ? s.therapyMessages.filter((m) => m.speaker === "parent").length : 0,
+          eventNumber: prev.eventNumber,
+          mode: "multiplayer",
+        });
+      }
+
+      // --- arriving at one ---
+      if (cur.phase === "event_intro") {
+        if (cur.eventNumber !== prev.eventNumber && cur.eventNumber > 0) {
+          track("event_intro_viewed", { age, eventNumber: cur.eventNumber, mode: "multiplayer" });
+        }
+      } else if (cur.phase === "family_chat") {
+        // Coming back from a private sidebar is not a new conversation.
+        if (prev.phase !== "sidebar") {
+          track("conversation_started", { age, eventNumber: cur.eventNumber, mode: "multiplayer" });
+        }
+      } else if (cur.phase === "adult_chat") {
+        track("conversation_started", {
+          age,
+          eventNumber: cur.eventNumber,
+          mode: "multiplayer",
+          endgame: true,
+        });
+      } else if (cur.phase === "processing") {
+        const fromScene = prev.phase === "family_chat" || prev.phase === "sidebar";
+        const kind = fromScene
+          ? "scene_debrief"
+          : prev.phase === "adult_chat" || prev.phase === "epilogue"
+            ? "report_card"
+            : "ending";
+        if (fromScene) {
+          track("conversation_ended", { age, eventNumber: prev.eventNumber, mode: "multiplayer" });
+        }
+        if (prev.phase === "adult_chat") {
+          track("endgame_conversation_ended", { abandoned: false, mode: "multiplayer" });
+        }
+        mark("processing");
+        track("processing_started", { kind, eventNumber: cur.eventNumber, age });
+      } else if (cur.phase === "debrief") {
+        const waited = secondsSince("processing");
+        track("debrief_viewed", {
+          eventNumber: cur.eventNumber,
+          age,
+          mode: "multiplayer",
+          ...(waited !== null ? { waitSeconds: bucketSeconds(waited) } : {}),
+        });
+      } else if (RUNGS[cur.phase] !== undefined) {
+        track("intervention_started", {
+          rung: RUNGS[cur.phase]!,
+          eventNumber: cur.eventNumber,
+          age,
+          mode: "multiplayer",
+        });
+      } else if (cur.phase === "epilogue") {
+        track("epilogue_reached", {
+          // The server owns this decision in multiplayer, so the route is
+          // derived rather than passed: a removal ending comes out of the CPS
+          // rung, and otherwise the arc's own length says whether the story
+          // finished or was stopped.
+          route:
+            prev.phase === "cps_review"
+              ? "intervention_terminal"
+              : s.currentEventNumber >= s.totalEvents
+                ? "arc_complete"
+                : "ended_early",
+          eventNumber: cur.eventNumber,
+          age,
+          scenesPlayed: cur.eventNumber,
+          mode: "multiplayer",
+        });
+      } else if (cur.phase === "report_card") {
+        track("game_completed", { scenesPlayed: cur.eventNumber, mode: "multiplayer" });
+      }
+    };
     const socketPath = import.meta.env.PROD ? "/raising-intelligences/socket.io" : "/socket.io";
     const socket = io({ autoConnect: true, path: socketPath });
 
@@ -365,7 +522,7 @@ export function useMultiplayer() {
       // threw away. Without this the panel sat on "making you a link…"
       // indefinitely after a reconnect (a 502 is enough to trigger it).
       if (handoffWantedRef.current) socket.emit(E.REQUEST_HANDOFF);
-      track("player_joined", { game_id: d.gameId });
+      track("player_joined", { game_id: d.gameId, slot: d.slot, mode: "multiplayer" });
       if (d.playerToken) {
         playerTokenRef.current = d.playerToken;
         saveResume(d.gameId, d.playerToken);
@@ -391,6 +548,9 @@ export function useMultiplayer() {
       }
     });
     socket.on(E.STATE, (s: ViewerState) => {
+      // First, and outside the render path: this is the only place a
+      // multiplayer client can see every phase it reaches.
+      countState(s);
       setState(s);
       if (s.phase !== "event_intro") setInLobby(false);
       if (s.phase !== "family_chat" && s.phase !== "sidebar") setSceneEnding(false);
@@ -520,6 +680,11 @@ export function useMultiplayer() {
   const createGame = useCallback(
     (childName: string, relationshipType: string, displayName: string) => {
       const userId = window.matrixAuth?.getUserId() ?? undefined;
+      // Spent on the first STATE, not here: a create can fail, and JOINED fires
+      // again on every reconnect, so neither is a safe place to say "a game
+      // began". See lastCountedRef.
+      createdHereRef.current = true;
+      track("setup_submitted", { mode: "multiplayer", nameProvided: !!childName.trim() });
       ensureSocket().emit(E.CREATE_GAME, { childName, relationshipType, displayName, userId });
     },
     [ensureSocket]
@@ -736,6 +901,9 @@ export function useMultiplayer() {
     setError(null);
     clearPartnerTyping();
     phaseRef.current = null;
+    // A different game started from the same page is a different funnel.
+    lastCountedRef.current = null;
+    createdHereRef.current = false;
     socketRef.current?.close();
     socketRef.current = null;
   }, [clearPartnerTyping]);

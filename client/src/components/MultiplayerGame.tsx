@@ -142,6 +142,26 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   const inLobbyView = !state || (preGame && !meReady);
 
   /**
+   * The lobby wait — the one genuinely new multiplayer event, as opposed to the
+   * canonical names now emitted from useMultiplayer's STATE chokepoint.
+   *
+   * This is where a two-parent game either becomes a game or quietly doesn't:
+   * one person sits here holding an invite link. Ref-guarded per gameId so a
+   * re-render, a presence update or a reconnect cannot re-fire it, and gated on
+   * a live gameId so the pre-join name form isn't counted as waiting.
+   */
+  const lobbyTrackedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!inLobbyView || !mp.gameId || lobbyTrackedRef.current === mp.gameId) return;
+    lobbyTrackedRef.current = mp.gameId;
+    track("partner_wait_started", {
+      role: mySlot === "parent2" ? "guest" : "host",
+      hasHandoffCode: redeemingHandoff,
+      mode: "multiplayer",
+    });
+  }, [inLobbyView, mp.gameId, mySlot, redeemingHandoff]);
+
+  /**
    * The guardian quiz — the OCEAN questions, the confessionals, the portrait
    * reveal.
    *
