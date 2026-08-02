@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { LLMClient, LLMUsage, UsageSink } from "./client.js";
+import { REQUEST_TIMEOUT_MS, type LLMClient, type LLMUsage, type UsageSink } from "./client.js";
 import { type LLMRole, type ModelTier, estimateCostUsd, selectModel, STANDARD_MODELS } from "./model-config.js";
 
 function isRateLimitError(e: unknown): boolean {
@@ -123,8 +123,8 @@ export class RoutingLLMClient implements LLMClient {
       ? messages
       : [{ role: "user" as const, content: "(The child looks at their parents, waiting.)" }];
 
-    // 120s matches the completeResponse streaming path; Cerebras can be slow under load
-    const STREAM_TIMEOUT_MS = Number(process.env.STREAM_TIMEOUT_MS ?? 120_000);
+    // Cerebras can be slow under load; STREAM_TIMEOUT_MS stays overridable on its own.
+    const STREAM_TIMEOUT_MS = Number(process.env.STREAM_TIMEOUT_MS ?? REQUEST_TIMEOUT_MS);
 
     const openStream = async (c: OpenAI, m: string) => {
       const effectiveSystem = this.enforceEnglish(system, slug);
@@ -194,7 +194,7 @@ export class RoutingLLMClient implements LLMClient {
           stream_options: { include_usage: true },
           ...(this.seed !== undefined ? { seed: this.seed } : {}),
           messages: msgs,
-        }, { signal: AbortSignal.timeout(120_000) });
+        }, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
 
       let stream: Awaited<ReturnType<typeof createStream>>;
       let actualProviderKey = providerKey;
@@ -231,7 +231,7 @@ export class RoutingLLMClient implements LLMClient {
           max_tokens: maxTokens,
           ...(this.seed !== undefined ? { seed: this.seed } : {}),
           messages: msgs,
-        }, { signal: AbortSignal.timeout(90_000) });
+        }, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
         this.report(resolvedRole, pk, m, response.usage as OpenAIUsage | undefined);
         const content = response.choices[0]?.message?.content;
         if (typeof content === "string") return content;

@@ -1,6 +1,23 @@
 import type { LLMRole } from "./model-config.js";
 
 /**
+ * Wall-clock ceiling for a single LLM request, streaming or not.
+ *
+ * These used to differ: 120s streaming, 90s non-streaming. That was backwards.
+ * A streaming call delivers tokens progressively, so its budget covers
+ * time-to-*last*-token while the player watches text arrive; a non-streaming
+ * call must finish entirely within its budget with nothing on screen. The path
+ * that needs more headroom had less.
+ *
+ * It is not theoretical: `world_manager` (scene generation) runs non-streaming
+ * via `completeJson`, and a production call was measured at 74.9s emitting 4023
+ * output tokens — 83% of the old 90s ceiling. `withRetry` deliberately does not
+ * retry timeouts (see `withRetry` in routing-client.ts), so one slow response was a total
+ * failure, surfaced to both players as a dead scene.
+ */
+export const REQUEST_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 120_000);
+
+/**
  * Token + cost accounting for a single LLM call. OpenRouter returns token
  * counts and (usually) a USD cost in the response body; the cost tracker logs
  * one of these per call. See docs/monetization-strategy.md §3.2.
