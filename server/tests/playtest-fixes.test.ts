@@ -318,7 +318,11 @@ describe("Playtest fixes (server)", () => {
 
     it("reports false on a fresh join when nothing is generating", async () => {
       const p = await pair("Tam");
-      const s = p.p2.lastState!;
+      // `pair` awaits the JOINED ack; the joining player's first STATE
+      // broadcast lands on a later tick. Reading `lastState` synchronously
+      // raced that broadcast and failed intermittently under load — take
+      // whichever has already arrived, otherwise wait for it.
+      const s = p.p2.lastState ?? (await p.p2.waitFor<ViewerState>(E.STATE));
       expect(s.generating).toBe(false);
     });
   });
