@@ -22,6 +22,17 @@ if (import.meta.env.VITE_SENTRY_DSN) {
     // crash report carry user identity or the conversation itself.
     beforeSend(event) {
       delete event.user;
+      // Drop benign network/abort noise — a dropped connection or a fetch/SSE
+      // aborted on unmount is a browser network-layer failure ("Load failed",
+      // "Failed to fetch", AbortError), NOT a code bug, and there's nothing the
+      // app can do but retry. These were the bulk of this project's GlitchTip
+      // volume. Filter in beforeSend (not ignoreErrors) because the handlers
+      // below capture manually, which bypasses ignoreErrors.
+      const msg =
+        event.exception?.values?.[0]?.value ?? (typeof event.message === "string" ? event.message : "");
+      if (/load failed|failed to fetch|networkerror|operation was aborted|aborterror/i.test(msg)) {
+        return null;
+      }
       return event;
     },
   });
