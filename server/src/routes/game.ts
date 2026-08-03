@@ -115,6 +115,13 @@ export function createGameRoutes(
     // therapyMessages are the human-facing generated beat texts the
     // consult/therapy/cps_review screens render, so they are deliberately
     // KEPT in the response. The client reads none of the stripped fields.
+    // parentPersonalities holds both parents' raw OCEAN scores and their
+    // intimate free-text confessionals; it is server-only (it seeds the
+    // child and drives context assembly). This unauthenticated endpoint must
+    // NOT echo it back — doing so leaked one parent's confessionals to the
+    // other (and to anyone holding the gameId). See #139. The socket
+    // viewerState() path already exposes only the derived
+    // partnerPersonalitySubmitted boolean.
     const {
       identityDocument,
       identitySnapshots,
@@ -123,6 +130,7 @@ export function createGameRoutes(
       pendingGuidance,
       highestRungFired,
       cpsOutcome,
+      parentPersonalities,
       ...publicState
     } = state;
     res.json({
