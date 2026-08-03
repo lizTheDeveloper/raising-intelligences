@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { createTestServer, type TestServer } from "./helpers/test-server.js";
+import { getCheckoutUrl } from "../src/routes/support.js";
 
-const UPSTREAM_URL = "https://multiversestudios.xyz/stripe/create-checkout-session";
+// Derive the stubbed URL from the route itself. Hardcoding it meant that when
+// the endpoint moved off a dead host, the stub silently stopped matching and
+// these tests hit the REAL Stripe endpoint — creating live checkout sessions
+// during a test run, and asserting against whatever production returned.
+const UPSTREAM_URL = getCheckoutUrl();
 
 describe("Support checkout route", () => {
   let server: TestServer;

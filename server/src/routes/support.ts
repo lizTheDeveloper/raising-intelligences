@@ -2,8 +2,31 @@ import { Router } from "express";
 import type { Request, Response } from "express";
 import { logger } from "../logger.js";
 
+/**
+ * Shared stripe-webhook checkout endpoint.
+ *
+ * This used to default to `https://multiversestudios.xyz/stripe/create-checkout-session`,
+ * which returns an nginx **404** — that host does not route the /stripe path at
+ * all. Every Support ("pay what you can") click therefore failed: the upstream
+ * 404 became a 502 to the player and a `support_checkout_upstream_error` in the
+ * log. Seen in production 2026-08-03 11:34:16Z, and the same dead URL is called
+ * out in docs/analytics/REVIEW-2026-08-02.md, where "0 checkouts in 30d" was
+ * shown to be an outage rather than a conversion result.
+ *
+ * pay.multiversegames.ai is the live endpoint. Verified from the games box with
+ * this app's own game key: `{"game":"raising_intelligences",...}` returns 200
+ * with a real Stripe checkout URL.
+ */
 const CHECKOUT_URL =
-  process.env.STRIPE_WEBHOOK_CHECKOUT_URL ?? "https://multiversestudios.xyz/stripe/create-checkout-session";
+  process.env.STRIPE_WEBHOOK_CHECKOUT_URL ?? "https://pay.multiversegames.ai/create-checkout-session";
+
+/** Hosts known not to serve the checkout path — guarded by a test. */
+export const DEAD_CHECKOUT_HOSTS = ["multiversestudios.xyz"];
+
+/** Exposed so a test can assert we never ship a default that 404s. */
+export function getCheckoutUrl(): string {
+  return CHECKOUT_URL;
+}
 
 const MIN_CENTS = 100; // $1
 const MAX_CENTS = 100_000; // $1,000
