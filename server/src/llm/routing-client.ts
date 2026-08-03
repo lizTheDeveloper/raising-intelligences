@@ -196,32 +196,74 @@ export class RoutingLLMClient implements LLMClient {
           messages: msgs,
         }, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
 
-      let stream: Awaited<ReturnType<typeof createStream>>;
-      let actualProviderKey = providerKey;
-      let actualModel = model;
-      try {
-        stream = await createStream(client, model);
-      } catch (e) {
-        if (isRateLimitError(e) && providerKey !== this.fallback) {
-          const fallbackSlug = STANDARD_MODELS[resolvedRole];
-          const { providerKey: fbKey, model: fbModel } = this.resolve(fallbackSlug);
-          stream = await createStream(this.getClient(fbKey), fbModel);
-          actualProviderKey = fbKey;
-          actualModel = fbModel;
-        } else {
-          throw e;
+      /**
+       * One attempt: open the stream (falling back on rate limit) and drain it.
+       * `emittedAny` is deliberately OUTSIDE this closure — see the retry loop.
+       */
+      const attemptStream = async (): Promise<string> => {
+        let stream: Awaited<ReturnType<typeof createStream>>;
+        let actualProviderKey = providerKey;
+        let actualModel = model;
+        try {
+          stream = await createStream(client, model);
+        } catch (e) {
+          if (isRateLimitError(e) && providerKey !== this.fallback) {
+            const fallbackSlug = STANDARD_MODELS[resolvedRole];
+            const { providerKey: fbKey, model: fbModel } = this.resolve(fallbackSlug);
+            stream = await createStream(this.getClient(fbKey), fbModel);
+            actualProviderKey = fbKey;
+            actualModel = fbModel;
+          } else {
+            throw e;
+          }
+        }
+
+        let fullResponse = "";
+        let usage: OpenAIUsage | undefined;
+        for await (const chunk of stream) {
+          const delta = chunk.choices[0]?.delta?.content;
+          if (delta) {
+            fullResponse += delta;
+            emittedAny = true;
+            onChunk(delta);
+          }
+          if (chunk.usage) usage = chunk.usage as OpenAIUsage;
+        }
+        this.report(resolvedRole, actualProviderKey, actualModel, usage);
+        return fullResponse;
+      };
+
+      /**
+       * Retry a stream that died BEFORE the player saw anything.
+       *
+       * The non-streaming path has always retried via withRetry; the streaming
+       * path had no retry at all, so a single upstream hiccup mid-iteration went
+       * straight to the player as a failed message. Seen in production twice:
+       * "Upstream error from Alibaba: Output data may contain inappropriate
+       * content" (2026-08-03 11:51:15Z) and "JSON error injected into SSE
+       * stream" (17:50:59Z), both thrown out of the OpenAI SDK's stream
+       * iterator during handleParentMessage.
+       *
+       * The `emittedAny` guard is the whole safety property: once a single token
+       * has reached the player, replaying the call would duplicate visible text
+       * mid-sentence, so we surface the error instead. Timeouts are not retried,
+       * matching withRetry — a slow response would only be slow again.
+       */
+      let emittedAny = false;
+      const MAX_STREAM_ATTEMPTS = 3;
+      let lastStreamError: unknown;
+      for (let attempt = 0; attempt < MAX_STREAM_ATTEMPTS; attempt++) {
+        try {
+          return await attemptStream();
+        } catch (e) {
+          lastStreamError = e;
+          const isTimeout =
+            e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
+          if (emittedAny || isTimeout || attempt === MAX_STREAM_ATTEMPTS - 1) throw e;
+          await new Promise<void>((r) => setTimeout(r, 1_000 * 2 ** attempt));
         }
       }
-
-      let fullResponse = "";
-      let usage: OpenAIUsage | undefined;
-      for await (const chunk of stream) {
-        const delta = chunk.choices[0]?.delta?.content;
-        if (delta) { fullResponse += delta; onChunk(delta); }
-        if (chunk.usage) usage = chunk.usage as OpenAIUsage;
-      }
-      this.report(resolvedRole, actualProviderKey, actualModel, usage);
-      return fullResponse;
+      throw lastStreamError;
     }
 
     const callProvider = (c: OpenAI, m: string, pk: string) =>
