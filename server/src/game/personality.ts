@@ -106,6 +106,22 @@ Generate the personality seed document for ${childName}.`;
 }
 
 /**
+ * Budget for the gender call.
+ *
+ * This was 10, which reasoning-capable models spend entirely on reasoning
+ * tokens before emitting any content — the provider then returns
+ * `content: null` with finish_reason "length", which the routing client
+ * raises as "Unexpected response from <provider>". Because that is not a
+ * timeout, withRetry burned all three attempts on it and every one failed
+ * identically, so the name silently fell through to "nonbinary" for the
+ * whole playthrough. Observed in production on deepseek-v4-flash for the
+ * name "Theo": three attempts, outputTokens 11/10/10, all pinned at the cap.
+ *
+ * One call per game, so headroom is effectively free.
+ */
+const GENDER_INFERENCE_MAX_TOKENS = 256;
+
+/**
  * Infer a child's likely gender presentation from their name.
  * Returns "nonbinary" for ambiguous names, errors, or timeouts.
  */
@@ -118,11 +134,15 @@ export async function inferGender(
     const raw = await llm.completeResponse(
       system,
       `Name: ${childName}`,
-      10,
+      GENDER_INFERENCE_MAX_TOKENS,
       "gender_inference",
     );
-    const word = raw.trim().toLowerCase().replace(/[^a-z]/g, "");
-    if (word === "boy" || word === "girl") return word;
+    // With real headroom a model may reason aloud before answering, so take
+    // the last verdict word rather than requiring the whole reply to be one
+    // word. Anything else — including an empty reply — stays "nonbinary".
+    const matches = raw.toLowerCase().match(/\b(boy|girl|non-?binary)\b/g);
+    const verdict = matches?.[matches.length - 1]?.replace("-", "");
+    if (verdict === "boy" || verdict === "girl") return verdict;
     return "nonbinary";
   } catch (e) {
     logger.warn("gender_inference_failed", { childName, error: (e as Error).message });
