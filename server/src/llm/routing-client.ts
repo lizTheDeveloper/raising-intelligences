@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { REQUEST_TIMEOUT_MS, type LLMClient, type LLMUsage, type UsageSink } from "./client.js";
-import { type LLMRole, type ModelTier, estimateCostUsd, selectModel, STANDARD_MODELS } from "./model-config.js";
+import { type LLMRole, type ModelTier, budgetFor, estimateCostUsd, selectModel, STANDARD_MODELS } from "./model-config.js";
 import { logger } from "../logger.js";
 
 function isRateLimitError(e: unknown): boolean {
@@ -28,6 +28,10 @@ function isTimeoutError(e: unknown): boolean {
  * Retry a non-streaming LLM call up to maxAttempts times with exponential
  * backoff. Timeouts (AbortError / TimeoutError) are not retried — a call that
  * already spent 60-90s waiting is not a transient failure worth repeating.
+ * Empty-content responses are not retried either, for the same reason: the
+ * fault is deterministic, so all three attempts come back equally empty while
+ * the player waits. Both cases are surfaced immediately so completeResponse can
+ * fail over to a different model family.
  * Rate limit errors (429) use a longer base delay (10s) to escape the quota
  * window. Streaming calls are intentionally excluded: retrying after chunks
  * have already been sent to the client would produce duplicate output.
@@ -39,9 +43,11 @@ async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
       return await fn();
     } catch (e) {
       last = e;
-      const isTimeout =
-        e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
-      if (isTimeout || i === maxAttempts - 1) throw e;
+      // A model that answered 200 with no content will answer the same way
+      // again — retrying only makes the player wait through it and bills us for
+      // another empty response. Same reasoning as timeouts: surface it
+      // immediately so the caller can fail over to a different model family.
+      if (isTimeoutError(e) || isEmptyContentError(e) || i === maxAttempts - 1) throw e;
       // Rate limit errors need much longer backoff to escape the quota window
       const delayMs = isRateLimitError(e) ? 10_000 * (i + 1) : 1_000 * 2 ** i;
       await new Promise<void>((r) => setTimeout(r, delayMs));
@@ -203,7 +209,7 @@ export class RoutingLLMClient implements LLMClient {
       const createStream = (c: OpenAI, m: string) =>
         c.chat.completions.create({
           model: m,
-          max_tokens: maxTokens,
+          max_tokens: budgetFor(m, maxTokens),
           stream: true,
           stream_options: { include_usage: true },
           ...(this.seed !== undefined ? { seed: this.seed } : {}),
@@ -214,14 +220,14 @@ export class RoutingLLMClient implements LLMClient {
        * One attempt: open the stream (falling back on rate limit) and drain it.
        * `emittedAny` is deliberately OUTSIDE this closure — see the retry loop.
        */
-      const attemptStream = async (): Promise<string> => {
+      const attemptStream = async (c: OpenAI, m: string, pk: string): Promise<string> => {
         let stream: Awaited<ReturnType<typeof createStream>>;
-        let actualProviderKey = providerKey;
-        let actualModel = model;
+        let actualProviderKey = pk;
+        let actualModel = m;
         try {
-          stream = await createStream(client, model);
+          stream = await createStream(c, m);
         } catch (e) {
-          if (isRateLimitError(e) && providerKey !== this.fallback) {
+          if (isRateLimitError(e) && pk !== this.fallback) {
             const fallbackSlug = STANDARD_MODELS[resolvedRole];
             const { providerKey: fbKey, model: fbModel } = this.resolve(fallbackSlug);
             stream = await createStream(this.getClient(fbKey), fbModel);
@@ -244,6 +250,15 @@ export class RoutingLLMClient implements LLMClient {
           if (chunk.usage) usage = chunk.usage as OpenAIUsage;
         }
         this.report(resolvedRole, actualProviderKey, actualModel, usage);
+        /**
+         * A stream that carried no content at all is the streaming form of
+         * `content: null` — a reasoning model that spent its entire budget
+         * thinking emits zero content deltas. Returning "" here handed the
+         * player silence with no error and no log line, which is why the
+         * production logs showed empty responses only for the roles that happen
+         * not to stream. Raise it so the empty-content failover can catch it.
+         */
+        if (fullResponse === "") throw new Error(`Unexpected response from ${actualProviderKey}`);
         return fullResponse;
       };
 
@@ -265,26 +280,56 @@ export class RoutingLLMClient implements LLMClient {
        */
       let emittedAny = false;
       const MAX_STREAM_ATTEMPTS = 3;
-      let lastStreamError: unknown;
-      for (let attempt = 0; attempt < MAX_STREAM_ATTEMPTS; attempt++) {
-        try {
-          return await attemptStream();
-        } catch (e) {
-          lastStreamError = e;
-          const isTimeout =
-            e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
-          if (emittedAny || isTimeout || attempt === MAX_STREAM_ATTEMPTS - 1) throw e;
-          await new Promise<void>((r) => setTimeout(r, 1_000 * 2 ** attempt));
+      const streamWithRetries = async (c: OpenAI, m: string, pk: string): Promise<string> => {
+        let lastStreamError: unknown;
+        for (let attempt = 0; attempt < MAX_STREAM_ATTEMPTS; attempt++) {
+          try {
+            return await attemptStream(c, m, pk);
+          } catch (e) {
+            lastStreamError = e;
+            // Empty content joins timeouts as non-retryable: the same model will
+            // reason its budget away again. Fail over instead.
+            if (
+              emittedAny ||
+              isTimeoutError(e) ||
+              isEmptyContentError(e) ||
+              attempt === MAX_STREAM_ATTEMPTS - 1
+            ) {
+              throw e;
+            }
+            await new Promise<void>((r) => setTimeout(r, 1_000 * 2 ** attempt));
+          }
         }
+        throw lastStreamError;
+      };
+
+      try {
+        return await streamWithRetries(client, model, providerKey);
+      } catch (e) {
+        /**
+         * `!emittedAny` is what makes re-running legal: no token has reached the
+         * player, so there is no visible text to duplicate. Once the player has
+         * seen anything, we surface the error instead.
+         */
+        if (isEmptyContentError(e) && !emittedAny && model !== EMPTY_CONTENT_FAILOVER_MODEL) {
+          const { providerKey: fbKey, model: fbModel } = this.resolve(EMPTY_CONTENT_FAILOVER_MODEL);
+          logger.warn("llm_empty_content_failover", {
+            role: resolvedRole,
+            from: model,
+            to: fbModel,
+            streaming: true,
+          });
+          return streamWithRetries(this.getClient(fbKey), fbModel, fbKey);
+        }
+        throw e;
       }
-      throw lastStreamError;
     }
 
     const callProvider = (c: OpenAI, m: string, pk: string) =>
       withRetry(async () => {
         const response = await c.chat.completions.create({
           model: m,
-          max_tokens: maxTokens,
+          max_tokens: budgetFor(m, maxTokens),
           ...(this.seed !== undefined ? { seed: this.seed } : {}),
           messages: msgs,
         }, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
