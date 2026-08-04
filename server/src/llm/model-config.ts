@@ -123,6 +123,45 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
   "anthropic/claude-haiku-4-5": { input: 1.0, output: 5.0 },
 };
 
+/**
+ * Models that emit reasoning tokens before their answer, where the provider
+ * counts those tokens against `max_tokens`.
+ *
+ * Getting this list wrong is not cosmetic: a reasoning model listed here that
+ * is not one merely costs a little headroom, but one MISSING from the list
+ * returns `content: null` on every prompt long enough to make it think.
+ */
+const REASONING_MODELS = new Set(["qwen/qwen3.7-plus", "qwen/qwen3.7-max"]);
+
+export function isReasoningModel(model: string): boolean {
+  return REASONING_MODELS.has(model);
+}
+
+/**
+ * Extra `max_tokens` granted to a reasoning model, on top of the content budget
+ * the caller asked for.
+ *
+ * Measured against OpenRouter on 2026-08-04 with a game-sized psychologist
+ * prompt: qwen3.7-max spent 2788 reasoning tokens and qwen3.7-plus 2189 before
+ * either produced a character of content. At the old flat 1500 both burned
+ * exactly 1500 and returned nothing at all. 2500 clears the observed burn and
+ * puts the default request at 4000 — the budget both models completed at, with
+ * `finish_reason: "stop"` rather than `"length"`.
+ *
+ * Reasoning tokens are billed, so this is not free — but the alternative was
+ * paying for three 1502-token responses that contained no text and then paying
+ * a second model to do the work anyway.
+ */
+export const REASONING_TOKEN_ALLOWANCE = 2500;
+
+/**
+ * The budget to send upstream so a model can reason AND still answer.
+ * `requested` keeps its meaning of "content tokens the caller wants back".
+ */
+export function budgetFor(model: string, requested: number): number {
+  return isReasoningModel(model) ? requested + REASONING_TOKEN_ALLOWANCE : requested;
+}
+
 /** The model that serves a given role at a given tier. Defaults to standard. */
 export function selectModel(role: LLMRole, tier: ModelTier = "standard"): string {
   return MODELS_BY_TIER[tier][role];

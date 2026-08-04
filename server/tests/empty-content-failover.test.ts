@@ -74,6 +74,36 @@ describe("empty-content failover", () => {
     ).toBe(false);
   }, 30_000);
 
+  it("does not burn retry attempts on the primary before failing over", async () => {
+    /**
+     * An empty content response is deterministic — the model will produce the
+     * same nothing on attempt 2 and 3. withRetry already refuses to retry
+     * timeouts for exactly this reason; empty content belongs in the same
+     * category. Leaving it retryable cost a player 136 seconds of waiting on a
+     * single end-chat in production (three qwen calls plus 1s+2s backoff before
+     * the failover was even attempted), and billed us for three 1502-token
+     * responses that contained no text.
+     *
+     * This intentionally applies to the failover model too: if deepseek also
+     * answers empty, retrying it twice more is the same waste. Do not "fix"
+     * this back into withRetry.
+     */
+    const seen: string[] = [];
+    createMock.mockImplementation(async (args?: { model?: string }) => {
+      seen.push(args?.model ?? "MISSING");
+      return args?.model === EMPTY_CONTENT_FAILOVER_MODEL ? says("answered") : empty();
+    });
+
+    const client = new RoutingLLMClient();
+    await client.completeResponse("sys", "user", 100, "psychologist");
+
+    const primaryCalls = seen.filter((m) => m !== EMPTY_CONTENT_FAILOVER_MODEL).length;
+    expect(
+      primaryCalls,
+      "the primary was retried on a deterministic fault — the player waits through every attempt",
+    ).toBe(1);
+  }, 30_000);
+
   it("still throws when the failover model is also empty", async () => {
     createMock.mockImplementation(async () => empty());
     const client = new RoutingLLMClient();
