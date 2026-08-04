@@ -25,6 +25,14 @@ function isTimeoutError(e: unknown): boolean {
 }
 
 /**
+ * How many times to ask again with a doubled budget when the model was cut off.
+ * Two means one retry at double the room, which covers every truncation
+ * observed in production; the bound exists so a prompt that genuinely cannot fit
+ * degrades to truncated text instead of an unbounded, billable escalation.
+ */
+const TRUNCATION_ESCALATION_ATTEMPTS = 2;
+
+/**
  * Retry a non-streaming LLM call up to maxAttempts times with exponential
  * backoff. Timeouts (AbortError / TimeoutError) are not retried — a call that
  * already spent 60-90s waiting is not a transient failure worth repeating.
@@ -328,20 +336,50 @@ export class RoutingLLMClient implements LLMClient {
       }
     }
 
-    const callProvider = (c: OpenAI, m: string, pk: string) =>
+    const callOnce = (c: OpenAI, m: string, pk: string, budget: number) =>
       withRetry(async () => {
         const response = await c.chat.completions.create({
           model: m,
-          max_tokens: budgetFor(m, maxTokens),
+          max_tokens: budget,
           ...(this.seed !== undefined ? { seed: this.seed } : {}),
           messages: msgs,
         }, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-        this.report(resolvedRole, pk, m, response.usage as OpenAIUsage | undefined);
-        this.reportTruncation(resolvedRole, m, response.choices[0]?.finish_reason, response.usage as OpenAIUsage | undefined);
+        const usage = response.usage as OpenAIUsage | undefined;
+        const finishReason = response.choices[0]?.finish_reason;
+        this.report(resolvedRole, pk, m, usage);
+        this.reportTruncation(resolvedRole, m, finishReason, usage);
         const content = response.choices[0]?.message?.content;
-        if (typeof content === "string") return content;
-        throw new Error(`Unexpected response from ${pk}`);
+        if (typeof content !== "string") throw new Error(`Unexpected response from ${pk}`);
+        return { content, truncated: finishReason === "length" };
       });
+
+    /**
+     * Ask again with more room when the model was cut off mid-answer.
+     *
+     * A constant allowance cannot solve this. Production truncated at the
+     * ceiling itself (outputTokens 4002 of a 4002 budget), so we never learn
+     * what the call actually wanted — raising the number just moves the cliff to
+     * a longer prompt. Escalating off the evidence of a real truncation is
+     * self-correcting, and it is close to free: max_tokens is a ceiling, not a
+     * target, so a bigger budget bills nothing extra when the model does not use
+     * it (measured: qwen3.7-max reasoned 2788 tokens at a 4000 budget and 1360
+     * at 8000 — reasoning does not expand to fill the room).
+     *
+     * Bounded, because some prompts genuinely will not fit: after the last
+     * attempt we hand back the truncated text rather than hang the player
+     * behind an unbounded escalation. `llm_truncated` still records every one.
+     */
+    const callProvider = async (c: OpenAI, m: string, pk: string): Promise<string> => {
+      let budget = budgetFor(m, maxTokens);
+      let last = "";
+      for (let attempt = 0; attempt < TRUNCATION_ESCALATION_ATTEMPTS; attempt++) {
+        const { content, truncated } = await callOnce(c, m, pk, budget);
+        if (!truncated) return content;
+        last = content;
+        budget *= 2;
+      }
+      return last;
+    };
 
     try {
       return await callProvider(client, model, providerKey);

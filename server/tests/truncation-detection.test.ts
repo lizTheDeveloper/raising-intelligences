@@ -61,11 +61,16 @@ describe("truncated responses are logged", () => {
     expect(out, "truncated text should still be returned, not thrown away").toBe(
       "The scene begins and then just st",
     );
+    // Every truncated call is logged, not just the first. This mock truncates
+    // unconditionally, so the budget escalation in callProvider retries and
+    // truncates again — both attempts must leave a trace, otherwise an
+    // escalation that never succeeds would under-report how bad the fit is.
     const warnings = truncationWarnings();
     expect(
       warnings.length,
       "a cut-off response looks like a random parse error with nothing in the logs",
-    ).toBe(1);
+    ).toBe(createMock.mock.calls.length);
+    expect(warnings.length).toBeGreaterThan(0);
     expect(warnings[0]?.[1]).toMatchObject({ role: "psychologist", model: "qwen/qwen3.7-max" });
   }, 30_000);
 
