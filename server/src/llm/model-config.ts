@@ -141,18 +141,33 @@ export function isReasoningModel(model: string): boolean {
  * Extra `max_tokens` granted to a reasoning model, on top of the content budget
  * the caller asked for.
  *
- * Measured against OpenRouter on 2026-08-04 with a game-sized psychologist
- * prompt: qwen3.7-max spent 2788 reasoning tokens and qwen3.7-plus 2189 before
- * either produced a character of content. At the old flat 1500 both burned
- * exactly 1500 and returned nothing at all. 2500 clears the observed burn and
- * puts the default request at 4000 — the budget both models completed at, with
- * `finish_reason: "stop"` rather than `"length"`.
+ * Every reasoning burn observed in production or direct probing, in tokens:
+ *   2189, 2788, 2869, 3859, 3861
  *
- * Reasoning tokens are billed, so this is not free — but the alternative was
- * paying for three 1502-token responses that contained no text and then paying
- * a second model to do the work anyway.
+ * 2500 was set from the first two and proved too small within a day: on
+ * 2026-08-04 world_manager (3859), report_card (2869) and personality_seed
+ * (3861) all hit the ceiling. personality_seed is the worst case — it finished
+ * reasoning and was cut off with ~141 tokens left to answer, on a game's
+ * opening call, and the escalation retry that rescued it landed 22 seconds
+ * after the player had already given up (499 at 95.9s).
+ *
+ * 6000 clears the worst observed burn and still leaves room to write.
+ *
+ * This is NOT free, and the earlier claim in this comment that it was has been
+ * withdrawn. max_tokens is a ceiling rather than a target, but a reasoning model
+ * given more room does tend to use some of it. Paired measurements on the same
+ * prompt disagree on how much — qwen3.7-max reasoned 2788 at a 4000 budget and
+ * 1360 at 8000 on one prompt, but 2315 at 4000 and 3074 at 7500 on another
+ * (55.6s -> 70.6s, $0.0133 -> $0.0174) — so treat a modest rise in latency and
+ * cost as the expected price, not a regression.
+ *
+ * It is still the right trade: a truncation costs a whole extra round-trip
+ * through the escalation in routing-client.ts, on top of a wasted call that
+ * produced unusable text. That escalation remains the backstop for prompts that
+ * overrun anyway; this constant exists so the backstop is rarely reached,
+ * because reaching it is what made a player wait 95 seconds and leave.
  */
-export const REASONING_TOKEN_ALLOWANCE = 2500;
+export const REASONING_TOKEN_ALLOWANCE = 6000;
 
 /**
  * The budget to send upstream so a model can reason AND still answer.
