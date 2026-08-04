@@ -240,6 +240,7 @@ export class RoutingLLMClient implements LLMClient {
 
         let fullResponse = "";
         let usage: OpenAIUsage | undefined;
+        let finishReason: string | null | undefined;
         for await (const chunk of stream) {
           const delta = chunk.choices[0]?.delta?.content;
           if (delta) {
@@ -247,9 +248,11 @@ export class RoutingLLMClient implements LLMClient {
             emittedAny = true;
             onChunk(delta);
           }
+          if (chunk.choices[0]?.finish_reason) finishReason = chunk.choices[0].finish_reason;
           if (chunk.usage) usage = chunk.usage as OpenAIUsage;
         }
         this.report(resolvedRole, actualProviderKey, actualModel, usage);
+        this.reportTruncation(resolvedRole, actualModel, finishReason, usage);
         /**
          * A stream that carried no content at all is the streaming form of
          * `content: null` — a reasoning model that spent its entire budget
@@ -334,6 +337,7 @@ export class RoutingLLMClient implements LLMClient {
           messages: msgs,
         }, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
         this.report(resolvedRole, pk, m, response.usage as OpenAIUsage | undefined);
+        this.reportTruncation(resolvedRole, m, response.choices[0]?.finish_reason, response.usage as OpenAIUsage | undefined);
         const content = response.choices[0]?.message?.content;
         if (typeof content === "string") return content;
         throw new Error(`Unexpected response from ${pk}`);
@@ -386,6 +390,29 @@ export class RoutingLLMClient implements LLMClient {
     });
   }
 
+  /**
+   * `finish_reason: "length"` means the model was cut off, not that it finished.
+   * The text that comes back is real but partial, so nothing downstream can tell
+   * the difference — a JSON role fails to parse for no visible reason and a
+   * prose role ships a mid-sentence cutoff to the player. Log it so the next
+   * occurrence is diagnosable and REASONING_TOKEN_ALLOWANCE can be tuned against
+   * evidence rather than guessed at again.
+   */
+  private reportTruncation(
+    role: LLMRole,
+    model: string,
+    finishReason: string | null | undefined,
+    usage: OpenAIUsage | undefined
+  ): void {
+    if (finishReason !== "length") return;
+    logger.warn("llm_truncated", {
+      role,
+      model,
+      outputTokens: usage?.completion_tokens ?? null,
+      reasoningTokens: usage?.completion_tokens_details?.reasoning_tokens ?? null,
+    });
+  }
+
   private report(role: LLMRole, providerKey: string, model: string, usage: OpenAIUsage | undefined): void {
     if (!this.onUsage || !usage) return;
     const inputTokens = usage.prompt_tokens ?? 0;
@@ -408,4 +435,6 @@ type OpenAIUsage = {
   prompt_tokens?: number;
   completion_tokens?: number;
   cost?: number;
+  /** Present on reasoning models; the share of completion_tokens spent thinking. */
+  completion_tokens_details?: { reasoning_tokens?: number };
 };
