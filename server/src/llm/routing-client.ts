@@ -1,9 +1,23 @@
 import OpenAI from "openai";
 import { REQUEST_TIMEOUT_MS, type LLMClient, type LLMUsage, type UsageSink } from "./client.js";
 import { type LLMRole, type ModelTier, estimateCostUsd, selectModel, STANDARD_MODELS } from "./model-config.js";
+import { logger } from "../logger.js";
 
 function isRateLimitError(e: unknown): boolean {
   return e instanceof OpenAI.RateLimitError;
+}
+
+/**
+ * Model family used when the primary answers HTTP 200 with no content.
+ * Must be a DIFFERENT family from the qwen models most roles use — falling back
+ * to STANDARD_MODELS is useless here, since for these roles that is the same
+ * qwen model that just returned nothing.
+ */
+export const EMPTY_CONTENT_FAILOVER_MODEL = "deepseek/deepseek-v4-flash";
+
+/** The error callProvider throws when a provider returns a non-string content. */
+function isEmptyContentError(e: unknown): boolean {
+  return e instanceof Error && /^Unexpected response from /.test(e.message);
 }
 
 function isTimeoutError(e: unknown): boolean {
@@ -289,6 +303,29 @@ export class RoutingLLMClient implements LLMClient {
       if (isRateLimitError(e) && providerKey !== this.fallback) {
         const fallbackSlug = STANDARD_MODELS[resolvedRole];
         const { providerKey: fbKey, model: fbModel } = this.resolve(fallbackSlug);
+        return callProvider(this.getClient(fbKey), fbModel, fbKey);
+      }
+      // A model answering HTTP 200 with `content: null` is a provider-side
+      // fault, not a transient one — withRetry burns all three attempts and
+      // every one comes back empty. Reproduced against OpenRouter on
+      // 2026-08-04 with a 32-token "Say OK.": qwen3.7-max and qwen3.7-plus both
+      // returned 200 / content null while deepseek answered normally. Eleven of
+      // this game's roles sit on those two models, so new games could not seed
+      // a child, scenes could not end, and no epilogue could be written.
+      //
+      // Fail over to a different model FAMILY, which is the only thing that
+      // helps here (STANDARD_MODELS for these roles is the same qwen model).
+      // This is a circuit breaker, not a downgrade: it engages only when the
+      // primary has produced nothing at all, and stops engaging the moment the
+      // primary recovers — a degraded scene beats an error where the scene
+      // should have been.
+      if (isEmptyContentError(e) && model !== EMPTY_CONTENT_FAILOVER_MODEL) {
+        const { providerKey: fbKey, model: fbModel } = this.resolve(EMPTY_CONTENT_FAILOVER_MODEL);
+        logger.warn("llm_empty_content_failover", {
+          role: resolvedRole,
+          from: model,
+          to: fbModel,
+        });
         return callProvider(this.getClient(fbKey), fbModel, fbKey);
       }
       throw e;
