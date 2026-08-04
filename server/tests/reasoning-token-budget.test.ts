@@ -73,9 +73,19 @@ describe("reasoning models get budget for reasoning on top of content", () => {
   });
 
   it("sends a budget that measurably clears the observed reasoning burn", async () => {
-    // Production burned exactly 1500 reasoning tokens; the probe needed 2788.
+    /**
+     * Every reasoning burn seen in production or probing, in tokens:
+     *   2189, 2788, 2869, 3859, 3861
+     * The 3861 was personality_seed on 2026-08-04 — it finished reasoning and
+     * was then cut off with only ~141 tokens left for the answer, on a game's
+     * opening call while the player waited. The budget therefore has to clear
+     * the worst observed burn AND still leave room to write, not merely exceed
+     * it. This costs nothing when unused: max_tokens is a ceiling, and the model
+     * bills only what it generates.
+     */
     await new RoutingLLMClient().completeResponse("sys", "user", 1500, "psychologist");
-    expect(sentMaxTokens()).toBeGreaterThanOrEqual(4000);
+    const WORST_OBSERVED_REASONING_BURN = 3861;
+    expect(sentMaxTokens()).toBeGreaterThan(WORST_OBSERVED_REASONING_BURN + 1500);
   });
 
   it("does not inflate the budget for a non-reasoning model", async () => {
