@@ -62,6 +62,34 @@ export class EndgameEngine {
     state: GameState,
     onChunk?: (chunk: string) => void
   ): Promise<{ state: GameState; epilogue: string }> {
+    /**
+     * There is exactly one epilogue per childhood, so a repeat request replays
+     * it rather than writing a new one.
+     *
+     * Seen in production 2026-08-05 01:11:10Z: a game that had already reached
+     * its epilogue and report card received a second POST /epilogue. It ran the
+     * LLM for 52.9 seconds, produced a whole new ending, then lost it to
+     * "Invalid transition: START_EPILOGUE from phase report_card" — the player
+     * got an error where their ending should have been, and we paid for the
+     * generation. Duplicate requests are ordinary here: the client can reach
+     * this call from the manual "end childhood" button, the `arc_complete`
+     * route, and nextEvent auto-advancing out of `event_intro`, so a refresh or
+     * two triggers racing is enough.
+     *
+     * Widening the START_EPILOGUE guard to accept report_card would be worse
+     * than the error it removes: the report card is generated FROM the
+     * epilogue, so a second, different ending would leave the player holding a
+     * report card describing an ending they never read.
+     *
+     * The stored text is still pushed through onChunk — a client that
+     * reconnected and subscribed to the stream must render something rather
+     * than sit on a blank ending screen.
+     */
+    if (state.epilogue) {
+      onChunk?.(state.epilogue);
+      return { state, epilogue: state.epilogue };
+    }
+
     const ctx = buildEpilogueContext(state);
     const epilogue = await this.llm.completeResponse(
       ctx.system,
