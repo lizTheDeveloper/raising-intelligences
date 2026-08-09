@@ -20,7 +20,15 @@ COPY client/ ./client/
 # into the bundle, so a runtime env var would arrive too late to have any effect.
 ARG VITE_SENTRY_DSN
 ENV VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
-RUN npm run build -w client
+ARG VITE_SENTRY_RELEASE
+ENV VITE_SENTRY_RELEASE=${VITE_SENTRY_RELEASE}
+# Sourcemap upload auth token is passed as a BuildKit secret (not ARG/ENV) so
+# it never persists in an image layer or is visible via `docker history`. It
+# is exported into the environment only for the duration of this RUN, where
+# the Sentry Vite plugin (client/vite.config.ts) reads it to authenticate the
+# upload, then deletes the local .map files afterward.
+RUN --mount=type=secret,id=sentry_auth_token \
+    SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token 2>/dev/null)" npm run build -w client
 
 # ── Stage 3: build server ─────────────────────────────────────────────────────
 FROM node:20-alpine AS build-server

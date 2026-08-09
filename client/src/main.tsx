@@ -17,6 +17,7 @@ if (import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({
     dsn: import.meta.env.VITE_SENTRY_DSN,
     environment: import.meta.env.MODE,
+    release: import.meta.env.VITE_SENTRY_RELEASE,
     sendDefaultPii: false,
     sampleRate: 1.0,
     // This game's transcripts are intimate parent/child roleplay. Never let a
