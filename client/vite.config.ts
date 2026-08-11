@@ -47,6 +47,17 @@ export default defineConfig({
           });
         },
       },
+      // The multiplayer socket. In production Traefik has a dedicated router
+      // for /raising-intelligences/socket.io; in dev the client asks for
+      // plain /socket.io on the vite origin, so without this every socket
+      // connection fails against vite itself and nothing multiplayer works
+      // locally at all — create, join and the invite-link e2e spec included.
+      // `ws: true` because socket.io upgrades off HTTP.
+      "/socket.io": {
+        target: `http://localhost:${process.env.PORT ?? 3000}`,
+        ws: true,
+        changeOrigin: true,
+      },
       // Generated portraits live on the Express server, not in client/public.
       // Only needed for dev — in production the Express server handles /portraits directly.
       "/portraits": {

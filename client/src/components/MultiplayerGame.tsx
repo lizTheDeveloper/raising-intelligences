@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useMultiplayer, clearResume, takeHandoffCodeFromUrl } from "../hooks/useMultiplayer";
+import { useMultiplayer, clearResume, loadResume, takeHandoffCodeFromUrl } from "../hooks/useMultiplayer";
 import { getSavedKids, saveKid, syncKidsToServer, fetchServerKids, mergeKids, THERAPY_TURN_CAP } from "../hooks/useGame";
 import type { SavedKid } from "../hooks/useGame";
 import { track } from "../analytics";
@@ -76,8 +76,15 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
       return;
     }
 
-    const raw = localStorage.getItem("ri_resume");
-    if (raw) {
+    // Resume from localStorage (the connect handler in useMultiplayer does the
+    // rest) — but only when this device isn't being pointed somewhere else. An
+    // invite to a *different* game outranks the stored credential; opening the
+    // socket here would have the connect handler rejoin the old game and rewrite
+    // the address bar to it, which is exactly how a co-parent's link got
+    // swallowed. The connect handler enforces the same rule, so this is belt and
+    // braces — but not opening the socket at all is the cheaper half.
+    const resume = loadResume();
+    if (resume && (!joinGameId || joinGameId === resume.gameId)) {
       mp.ensureSocket();
     }
   }, [mp, joinGameId]);

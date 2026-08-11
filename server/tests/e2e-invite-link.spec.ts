@@ -124,3 +124,81 @@ test("invite link includes base path in production build", async ({ browser }) =
 
   await context.close();
 });
+
+/**
+ * Regression: an invite to a *different* game must beat this device's stored
+ * resume credential.
+ *
+ * The bug this pins: a player who had already been in game A followed a new
+ * co-parent's `?game=B` link and got silently dragged back into A — the mount
+ * effect opened the socket because `ri_resume` existed at all, the connect
+ * handler auto-emitted JOIN_GAME for A, and JOINED then rewrote the address bar
+ * to A. The link looked like it had simply been ignored.
+ *
+ * Both games live in the same browser context on purpose: sharing localStorage
+ * is what makes the stored credential and the link disagree. The first spec in
+ * this file covers the other half of the rule — resume and link naming the SAME
+ * game, where auto-resume is the correct behaviour and must survive this fix.
+ */
+test("an invite to a different game outranks stored resume", async ({ browser }) => {
+  const context = await browser.newContext({
+    permissions: ["clipboard-read", "clipboard-write"],
+  });
+
+  // ── Game A: played on this device, leaves a resume credential behind ──
+  const a: Page = await context.newPage();
+  await a.goto(BASE);
+  await a.getByRole("button", { name: "play with a partner" }).click();
+  const aInputs = a.locator(".name-input");
+  await aInputs.nth(0).fill("Ziggy");
+  await aInputs.nth(1).fill("Parent A");
+  await a.getByRole("button", { name: "create game" }).click();
+  await a.getByText("send this link to your co-parent").waitFor({ timeout: 10000 });
+
+  const gameA = await a.evaluate(() => JSON.parse(localStorage.getItem("ri_resume")!).gameId);
+  expect(gameA).toBeTruthy();
+
+  // ── Game B: a different co-parent's game, created elsewhere ──
+  const otherContext = await browser.newContext({
+    permissions: ["clipboard-read", "clipboard-write"],
+  });
+  const host: Page = await otherContext.newPage();
+  await host.goto(BASE);
+  await host.getByRole("button", { name: "play with a partner" }).click();
+  const hostInputs = host.locator(".name-input");
+  await hostInputs.nth(0).fill("Wren");
+  await hostInputs.nth(1).fill("Parent C");
+  await host.getByRole("button", { name: "create game" }).click();
+  await host.getByText("send this link to your co-parent").waitFor({ timeout: 10000 });
+  await host.getByRole("button", { name: "copy invite link" }).click();
+  const inviteB = await host.evaluate(() => navigator.clipboard.readText());
+  const gameB = new URL(inviteB).searchParams.get("game");
+  expect(gameB).toBeTruthy();
+  expect(gameB).not.toBe(gameA);
+
+  // ── Follow B's invite on the device that still remembers A ──
+  const joiner: Page = await context.newPage();
+  await joiner.goto(inviteB);
+
+  // The join form, not a silent rejoin of A.
+  await joiner.locator(".name-input").waitFor({ timeout: 10000 });
+  await joiner.locator(".name-input").fill("Parent D");
+  await joiner.getByRole("button", { name: "join" }).click();
+
+  await joiner.locator(".lobby-player-name", { hasText: "Parent C" }).waitFor({ timeout: 10000 });
+  await joiner.locator(".lobby-player-name", { hasText: "Parent D" }).waitFor({ timeout: 5000 });
+
+  // The discriminating assertion: before the fix, JOINED for game A rewrote
+  // this to `game=<A>`.
+  expect(new URL(joiner.url()).searchParams.get("game")).toBe(gameB);
+
+  // And the host sees the partner who actually arrived.
+  await host.locator(".lobby-player-name", { hasText: "Parent D" }).waitFor({ timeout: 10000 });
+
+  // Game A's credential is untouched — declining the invite must not have cost
+  // the player the game they were already in.
+  expect(await a.evaluate(() => JSON.parse(localStorage.getItem("ri_resume")!).gameId)).toBeTruthy();
+
+  await context.close();
+  await otherContext.close();
+});

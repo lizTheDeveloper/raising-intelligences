@@ -64,7 +64,7 @@ interface ResumeData {
   playerToken: string;
 }
 
-function loadResume(): ResumeData | null {
+export function loadResume(): ResumeData | null {
   try {
     const raw = localStorage.getItem(RESUME_KEY);
     if (!raw) return null;
@@ -82,6 +82,43 @@ function saveResume(gameId: string, playerToken: string): void {
 
 export function clearResume(): void {
   localStorage.removeItem(RESUME_KEY);
+}
+
+/**
+ * The game id the *current URL* is asking for, or null if it isn't asking for
+ * one. Read fresh every time rather than captured once: `JOINED` rewrites the
+ * address bar to the game we actually landed in, so a value captured at socket
+ * creation would go stale and start suppressing legitimate reconnects.
+ */
+export function gameIdFromUrl(): string | null {
+  try {
+    return new URL(window.location.href).searchParams.get("game");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Should this device silently rejoin the game it has a credential for?
+ *
+ * Only when nothing more recent is being asked of it. A `?game=<id>` link is a
+ * more recent intent than whatever is in localStorage — a player who follows an
+ * invite from a *different* co-parent must land in that game, not get dragged
+ * back into the one they were last in. (The symptom was ugly and silent: the
+ * stored game won the race and then rewrote the address bar to its own id, so
+ * the invite looked like it had been ignored.)
+ *
+ * Same id on both sides is not a conflict, it's the good case: the link points
+ * at the game we already hold a slot in, and resuming with the token returns us
+ * to our own seat without re-asking for a name.
+ *
+ * Note what this deliberately does NOT do: it never clears the stored
+ * credential. A player who opens an invite and then changes their mind still
+ * has their other game to go back to.
+ */
+function shouldAutoResume(resume: ResumeData): boolean {
+  const urlGame = gameIdFromUrl();
+  return !urlGame || urlGame === resume.gameId;
 }
 
 /**
@@ -495,9 +532,13 @@ export function useMultiplayer() {
       // Don't crawl back into a game another device has taken over. Purely a
       // local decision — the credential is untouched, so a reload still can.
       if (supersededRef.current) return;
-      // Auto-rejoin on reconnect if we have resume data
+      // Auto-rejoin on reconnect if we have resume data — unless the URL is
+      // asking for a different game, in which case that link is the newer
+      // intent and this connection belongs to it. Checked here rather than only
+      // at mount so it holds on every reconnect too, and so it doesn't matter
+      // whether socket.io flushes a buffered join before or after this handler.
       const resume = loadResume();
-      if (resume) {
+      if (resume && shouldAutoResume(resume)) {
         socket.emit(E.JOIN_GAME, {
           gameId: resume.gameId,
           playerToken: resume.playerToken,
