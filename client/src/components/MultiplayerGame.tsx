@@ -61,6 +61,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
 
   // On mount: redeem a device-handoff link if we arrived on one, otherwise
   // resume from localStorage (the connect handler in useMultiplayer does the rest).
+  const { ensureSocket, redeemHandoff } = mp;
   useEffect(() => {
     if (autoResumeAttempted.current) return;
     autoResumeAttempted.current = true;
@@ -72,7 +73,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     const code = takeHandoffCodeFromUrl();
     if (code && joinGameId) {
       setRedeemingHandoff(true);
-      mp.redeemHandoff(joinGameId, code);
+      redeemHandoff(joinGameId, code);
       return;
     }
 
@@ -85,9 +86,40 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     // braces — but not opening the socket at all is the cheaper half.
     const resume = loadResume();
     if (resume && (!joinGameId || joinGameId === resume.gameId)) {
-      mp.ensureSocket();
+      ensureSocket();
     }
-  }, [mp, joinGameId]);
+
+    /**
+     * Release the once-guard when this effect is torn down, or StrictMode
+     * leaves the component with no socket at all.
+     *
+     * React double-invokes effects in development: mount, cleanup, mount. The
+     * cleanup in useMultiplayer closes the socket and nulls its ref, so pass
+     * one's socket dies before it ever fires `connect` — and a ref guard that
+     * survives the cleanup makes pass two an early `return`, so nothing
+     * reopens it. The player sits on the name form forever, holding a resume
+     * credential nobody is spending.
+     *
+     * Production never double-invokes, which is exactly why this hid: local
+     * multiplayer resume was broken while the deployed game was fine.
+     *
+     * Safe to re-run. `takeHandoffCodeFromUrl` erased the code from the URL on
+     * the first pass, so pass two reads null and cannot double-redeem; the
+     * claim itself is already parked in `pendingHandoffRef`, which outlives the
+     * socket and is spent by whichever connection comes up next. And
+     * `ensureSocket` returns the existing socket when there is one, so a re-run
+     * with a live socket is a no-op.
+     */
+    return () => {
+      autoResumeAttempted.current = false;
+    };
+    // The two socket entry points rather than `mp` itself: useMultiplayer
+    // returns a fresh object literal every render, so depending on it would
+    // re-run this effect — now that it has a cleanup, on EVERY render, reading
+    // localStorage and reparsing the URL once per streamed token. Both of these
+    // are useCallback-stable, so the effect fires once per mount, which is what
+    // it is for.
+  }, [ensureSocket, redeemHandoff, joinGameId]);
 
   const syncOnLogin = useCallback(async (userId: string) => {
     setMatrixUser(userId);
