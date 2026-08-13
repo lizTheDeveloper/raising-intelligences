@@ -29,5 +29,13 @@ ENTRYPOINT ["/usr/local/bin/webhook"]
 #     && docker run -d --name ri-webhook --restart unless-stopped --network coolify \
 #         -v /opt/raising-intelligences/webhook/hooks.json:/etc/webhook/hooks.json \
 #         -v /opt/raising-intelligences:/opt/raising-intelligences \
+#         -v /opt/glitchtip-defects/.env:/opt/glitchtip-defects/.env:ro \
 #         -v /var/run/docker.sock:/var/run/docker.sock \
 #         ri-webhook:latest -hooks /etc/webhook/hooks.json -verbose -port 9000'
+#
+# That glitchtip-defects mount is what lets deploy.sh read GLITCHTIP_TOKEN for
+# the sourcemap upload. The token was on the box all along — deploy.sh just runs
+# INSIDE this container, which mounted only /opt/raising-intelligences, so its
+# `grep` found nothing and it warned "GLITCHTIP_TOKEN not found" on every
+# deploy. Read-only, and no escalation: a container holding the docker socket is
+# already root on the host.
