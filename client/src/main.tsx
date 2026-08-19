@@ -35,6 +35,17 @@ if (import.meta.env.VITE_SENTRY_DSN) {
       if (/load failed|failed to fetch|networkerror|operation was aborted|aborterror/i.test(msg)) {
         return null;
       }
+      // Chrome/Firefox extensions (ad blockers, password managers, etc.) inject
+      // content scripts into every page, including this one. When their
+      // background script tries to message a tab that's already closed or
+      // navigated away, the extension throws inside our page context and the
+      // window "error"/"unhandledrejection" listeners below capture it as if
+      // it were our own crash (issue #151). It isn't reachable or fixable from
+      // application code, so drop it rather than let it page us every time a
+      // player has a stale extension installed.
+      if (/runtime\.sendMessage\(\)|extension context invalidated/i.test(msg)) {
+        return null;
+      }
       return event;
     },
   });
