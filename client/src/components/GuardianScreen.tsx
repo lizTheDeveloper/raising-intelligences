@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { ChildPortrait } from "./ChildPortrait";
-import { track } from "../analytics";
+import { track, mark, secondsSince, bucketSeconds } from "../analytics";
 import { getWeightedFragments } from "../data/child-fragments";
 
 const INTRO_VARIANTS = 6;
@@ -258,6 +258,28 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
   // Guard against double-firing the personality POST (React strict mode)
   const personalitySubmitted = useRef(false);
 
+  /**
+   * Opening this screen at all.
+   *
+   * Only the SUBMIT was ever tracked, which left the measured 151 → 115 loss
+   * (opening scene → first conversation) with no denominator: we could not say
+   * how many players opened this 4.3-minute form and quit versus never reached
+   * it. Ref-guarded so phase flicker and re-renders can't re-fire it; keyed to
+   * the mount because a second child raised in the same session is genuinely a
+   * second opening.
+   *
+   * `mode` is inferred from `onSubmitPersonality`, which is the multiplayer
+   * socket path and is undefined on the solo REST path — the same signal
+   * handleConfessionalSubmit itself branches on.
+   */
+  const openTracked = useRef(false);
+  useEffect(() => {
+    if (openTracked.current) return;
+    openTracked.current = true;
+    mark("guardian_open");
+    track("guardian_screen_opened", { mode: onSubmitPersonality ? "multiplayer" : "solo" });
+  }, [onSubmitPersonality]);
+
   const currentStep = STEPS[stepIndex] ?? STEPS[STEPS.length - 1];
 
   // ---------- Weighted fragment pool ----------
@@ -422,7 +444,17 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
       onClearError?.();
       onSubmitPersonality({ ocean: oceanAnswers, confessional1, confessional2 });
       setSeedSubmitting(false);
-      track("personality_submitted", { mode: "multiplayer" });
+      // Both keys from both call sites. These two emits used to carry mutually
+      // exclusive payloads — {mode} here, {seedReady} on the solo path below —
+      // with no field in common, so the 8 multiplayer rows and the 128 solo
+      // rows could not be compared to each other at all.
+      track("personality_submitted", {
+        mode: "multiplayer",
+        seedReady: false,
+        ...(secondsSince("guardian_open") !== null
+          ? { secondsOnForm: bucketSeconds(secondsSince("guardian_open")!) }
+          : {}),
+      });
       setStepIndex((i) => Math.min(i + 1, LAST_STEP));
       return;
     }
@@ -447,7 +479,13 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
       const data = await res.json();
       if (data.ready) {
         setSeedReady(true);
-        track("personality_submitted", { seedReady: true });
+        track("personality_submitted", {
+          mode: "solo",
+          seedReady: true,
+          ...(secondsSince("guardian_open") !== null
+            ? { secondsOnForm: bucketSeconds(secondsSince("guardian_open")!) }
+            : {}),
+        });
         // Scene 1 starts HERE, not at game creation — the world manager has to
         // see the seed. Multiplayer does the same thing server-side, off
         // SUBMIT_PERSONALITY.

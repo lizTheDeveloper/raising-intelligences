@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useMultiplayer, clearResume, takeHandoffCodeFromUrl } from "../hooks/useMultiplayer";
+import { useMultiplayer, clearResume, loadResume, takeHandoffCodeFromUrl } from "../hooks/useMultiplayer";
 import { getSavedKids, saveKid, syncKidsToServer, fetchServerKids, mergeKids, THERAPY_TURN_CAP } from "../hooks/useGame";
 import type { SavedKid } from "../hooks/useGame";
 import { track } from "../analytics";
@@ -61,6 +61,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
 
   // On mount: redeem a device-handoff link if we arrived on one, otherwise
   // resume from localStorage (the connect handler in useMultiplayer does the rest).
+  const { ensureSocket, redeemHandoff } = mp;
   useEffect(() => {
     if (autoResumeAttempted.current) return;
     autoResumeAttempted.current = true;
@@ -72,15 +73,53 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     const code = takeHandoffCodeFromUrl();
     if (code && joinGameId) {
       setRedeemingHandoff(true);
-      mp.redeemHandoff(joinGameId, code);
+      redeemHandoff(joinGameId, code);
       return;
     }
 
-    const raw = localStorage.getItem("ri_resume");
-    if (raw) {
-      mp.ensureSocket();
+    // Resume from localStorage (the connect handler in useMultiplayer does the
+    // rest) — but only when this device isn't being pointed somewhere else. An
+    // invite to a *different* game outranks the stored credential; opening the
+    // socket here would have the connect handler rejoin the old game and rewrite
+    // the address bar to it, which is exactly how a co-parent's link got
+    // swallowed. The connect handler enforces the same rule, so this is belt and
+    // braces — but not opening the socket at all is the cheaper half.
+    const resume = loadResume();
+    if (resume && (!joinGameId || joinGameId === resume.gameId)) {
+      ensureSocket();
     }
-  }, [mp, joinGameId]);
+
+    /**
+     * Release the once-guard when this effect is torn down, or StrictMode
+     * leaves the component with no socket at all.
+     *
+     * React double-invokes effects in development: mount, cleanup, mount. The
+     * cleanup in useMultiplayer closes the socket and nulls its ref, so pass
+     * one's socket dies before it ever fires `connect` — and a ref guard that
+     * survives the cleanup makes pass two an early `return`, so nothing
+     * reopens it. The player sits on the name form forever, holding a resume
+     * credential nobody is spending.
+     *
+     * Production never double-invokes, which is exactly why this hid: local
+     * multiplayer resume was broken while the deployed game was fine.
+     *
+     * Safe to re-run. `takeHandoffCodeFromUrl` erased the code from the URL on
+     * the first pass, so pass two reads null and cannot double-redeem; the
+     * claim itself is already parked in `pendingHandoffRef`, which outlives the
+     * socket and is spent by whichever connection comes up next. And
+     * `ensureSocket` returns the existing socket when there is one, so a re-run
+     * with a live socket is a no-op.
+     */
+    return () => {
+      autoResumeAttempted.current = false;
+    };
+    // The two socket entry points rather than `mp` itself: useMultiplayer
+    // returns a fresh object literal every render, so depending on it would
+    // re-run this effect — now that it has a cleanup, on EVERY render, reading
+    // localStorage and reparsing the URL once per streamed token. Both of these
+    // are useCallback-stable, so the effect fires once per mount, which is what
+    // it is for.
+  }, [ensureSocket, redeemHandoff, joinGameId]);
 
   const syncOnLogin = useCallback(async (userId: string) => {
     setMatrixUser(userId);
@@ -140,6 +179,26 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   const preGame = !!state && state.phase === "event_intro" && state.currentEventNumber === 0;
 
   const inLobbyView = !state || (preGame && !meReady);
+
+  /**
+   * The lobby wait — the one genuinely new multiplayer event, as opposed to the
+   * canonical names now emitted from useMultiplayer's STATE chokepoint.
+   *
+   * This is where a two-parent game either becomes a game or quietly doesn't:
+   * one person sits here holding an invite link. Ref-guarded per gameId so a
+   * re-render, a presence update or a reconnect cannot re-fire it, and gated on
+   * a live gameId so the pre-join name form isn't counted as waiting.
+   */
+  const lobbyTrackedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!inLobbyView || !mp.gameId || lobbyTrackedRef.current === mp.gameId) return;
+    lobbyTrackedRef.current = mp.gameId;
+    track("partner_wait_started", {
+      role: mySlot === "parent2" ? "guest" : "host",
+      hasHandoffCode: redeemingHandoff,
+      mode: "multiplayer",
+    });
+  }, [inLobbyView, mp.gameId, mySlot, redeemingHandoff]);
 
   /**
    * The guardian quiz — the OCEAN questions, the confessionals, the portrait

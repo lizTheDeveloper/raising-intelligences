@@ -13,3 +13,4 @@ client/public/portraits/starters/
 # Tool session artifacts
 .playwright-mcp/
 .qwen/
+server/test-results/

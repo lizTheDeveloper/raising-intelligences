@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import * as Sentry from "@sentry/browser";
 import { App } from "./App";
+import { startSessionTracking } from "./analytics";
 import "./global.css";
 
 /**
@@ -16,6 +17,7 @@ if (import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({
     dsn: import.meta.env.VITE_SENTRY_DSN,
     environment: import.meta.env.MODE,
+    release: import.meta.env.VITE_SENTRY_RELEASE,
     sendDefaultPii: false,
     sampleRate: 1.0,
     // This game's transcripts are intimate parent/child roleplay. Never let a
@@ -56,6 +58,12 @@ if (import.meta.env.PROD) {
   s.dataset.websiteId = "70687d81-c604-4643-a6b6-9d0bccdba970";
   document.head.appendChild(s);
 }
+
+// `return_visit` + the seven `session_milestone` beats. Safe to call before the
+// Umami script has landed: analytics.ts queues until the global appears (which
+// is the whole reason that queue exists — this script is inserted dynamically
+// and so resolves well after first render).
+startSessionTracking();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

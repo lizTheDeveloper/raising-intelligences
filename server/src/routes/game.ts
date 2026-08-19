@@ -114,11 +114,14 @@ export function createGameRoutes(
     // internals — server-only for the same reason. interventionText and
     // therapyMessages are the human-facing generated beat texts the
     // consult/therapy/cps_review screens render, so they are deliberately
-    // KEPT in the response. parentPersonalities carries each parent's raw
-    // OCEAN scores and confessional free-text (issue #139) — seeded into the
-    // child's personality server-side but never rendered by the client, so
-    // it must not leak to either parent (or anyone with the gameId) here.
-    // The client reads none of the stripped fields.
+    // KEPT in the response. The client reads none of the stripped fields.
+    // parentPersonalities holds both parents' raw OCEAN scores and their
+    // intimate free-text confessionals; it is server-only (it seeds the
+    // child and drives context assembly). This unauthenticated endpoint must
+    // NOT echo it back — doing so leaked one parent's confessionals to the
+    // other (and to anyone holding the gameId). See #139. The socket
+    // viewerState() path already exposes only the derived
+    // partnerPersonalitySubmitted boolean.
     const {
       identityDocument,
       identitySnapshots,
@@ -750,6 +753,28 @@ export function createGameRoutes(
         const parent2 = updatedState.parentPersonalities.parent2;
 
         const allReady = isSolo ? !!parent1 : !!(parent1 && parent2);
+
+        /**
+         * The child is built once. `personalitySeed` is their temperament — the
+         * thing every later scene is generated from — so rebuilding it silently
+         * replaces the child the player already met.
+         *
+         * Seen in production 2026-08-06: one game POSTed /personality three
+         * times and regenerated the seed on each, four minutes into play. That
+         * cost $0.048 instead of $0.016 and held the per-game lock for ~50s a
+         * time while the player waited. Duplicates are ordinary here — a
+         * refresh, a double-click, or a retry after a slow response all re-POST.
+         *
+         * Only an actual EDIT rebuilds: if this submission changes the stored
+         * personality for its slot, the child is regenerated as the player
+         * intended. An identical re-submission returns the child they have.
+         */
+        const previous = current.parentPersonalities?.[parentSlot];
+        const unchanged = JSON.stringify(previous) === JSON.stringify(personality);
+        if (allReady && current.personalitySeed && unchanged) {
+          res.json({ ready: true });
+          return;
+        }
 
         if (allReady && parent1) {
           let seed = "";

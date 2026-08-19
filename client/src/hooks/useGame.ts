@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { track } from "../analytics";
+import { useState, useCallback, useRef } from "react";
+import { track, mark, secondsSince, bucketSeconds, bucketHours } from "../analytics";
 
 export interface SavedKid {
   gameId: string;
@@ -148,6 +148,16 @@ export function useGame() {
   const [reportCard, setReportCard] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * How many scenes this session has actually seen, for the epilogue's
+   * `scenesPlayed`. A ref rather than state: nothing renders off it, and it
+   * must be readable from inside callbacks without re-creating them.
+   *
+   * Seeded by loadGame so a resumed game reports the arc's depth, not this
+   * sitting's.
+   */
+  const scenesPlayedRef = useRef(0);
+
   const setTrackedError = useCallback((msg: string | null, step?: string) => {
     if (msg) {
       // Capture the message + any HTTP status alongside the step so failures are
@@ -163,8 +173,16 @@ export function useGame() {
     setError(msg);
   }, []);
 
+  /**
+   * @param source Only the two genuine *resume* entry points pass this — the
+   *   `?game=` deep link and the saved-kids picker. Everything else that calls
+   *   loadGame is an error reconcile (a failed end-chat, a failed epilogue),
+   *   and firing `game_resumed` from those would invent resumes that never
+   *   happened. That is why the flag is a caller's argument and not something
+   *   this function infers.
+   */
   const loadGame = useCallback(
-    async (id: string) => {
+    async (id: string, source?: "url" | "saved_list") => {
       const res = await fetch(`${API}/game/${id}/state`);
       if (!res.ok) return false;
       const data = await res.json();
@@ -177,6 +195,25 @@ export function useGame() {
       setMessagesRemaining(data.messagesRemaining ?? 12 - (data.parentMessageCount ?? 0));
       setInterventionText(data.interventionText ?? null);
       setTherapyMessages(data.therapyMessages ?? []);
+      const restoredEventNumber = data.currentEvent?.eventNumber ?? data.currentEventNumber ?? 0;
+      if (restoredEventNumber > scenesPlayedRef.current) {
+        scenesPlayedRef.current = restoredEventNumber;
+      }
+      // A resume restores phase/age/eventNumber and, until now, emitted
+      // nothing — which is why every funnel denominator in this title was
+      // silently contaminated by games picked back up mid-arc.
+      if (source && data.phase !== "start") {
+        const saved = getSavedKids().find((k) => k.gameId === id);
+        track("game_resumed", {
+          source,
+          phase: data.phase,
+          eventNumber: restoredEventNumber,
+          age: data.currentEvent?.age ?? 0,
+          ...(saved
+            ? { hoursSinceCreated: bucketHours((Date.now() - saved.createdAt) / 3_600_000) }
+            : {}),
+        });
+      }
       return true;
     },
     []
@@ -199,7 +236,12 @@ export function useGame() {
       setChildName(name);
       setPhase("event_intro");
       saveKid(data.gameId, name);
-      track("game_started", { relationshipType });
+      scenesPlayedRef.current = 0;
+      // `mode` is the new field to cross-tab on. `relationshipType` is kept
+      // because existing reports read it, but it is NOT a mode split: this
+      // function is the solo hook and always passes its own default, which is
+      // why every row in 30d reads "solo parent".
+      track("game_started", { relationshipType, mode: "solo" });
       const url = new URL(window.location.href);
       url.searchParams.set("game", data.gameId);
       url.searchParams.set("mode", relationshipType === "solo parent" ? "solo" : "multi");
@@ -216,10 +258,23 @@ export function useGame() {
   // "Cannot access 'generateEpilogue' before initialization" on the first
   // render, which neither `tsc` nor the (nonexistent) client test runner
   // would catch.
-  const generateEpilogue = useCallback(async (id?: string) => {
+  /**
+   * @param route WHY this ending is happening. Passed explicitly at both call
+   *   sites (never defaulted at one of them) because the two mean completely
+   *   different things and collapsing them is exactly the ambiguity that made
+   *   "27 sessions reached an epilogue" unreadable against "10 sessions
+   *   reached the last scene".
+   */
+  const generateEpilogue = useCallback(async (id?: string, route: "arc_complete" | "ended_early" = "ended_early") => {
     const gid = id ?? gameId;
     if (!gid) return;
     setPhase("processing");
+    mark("processing");
+    track("processing_started", {
+      kind: "ending",
+      eventNumber: currentEvent?.eventNumber ?? scenesPlayedRef.current,
+      age: currentEvent?.age ?? 0,
+    });
     setStreamingDocText("");
     setError(null);
     try {
@@ -247,13 +302,19 @@ export function useGame() {
       setEpilogue(data.epilogue);
       setStreamingDocText("");
       setPhase(data.phase);
-      track("epilogue_reached");
+      track("epilogue_reached", {
+        route,
+        eventNumber: currentEvent?.eventNumber ?? scenesPlayedRef.current,
+        age: currentEvent?.age ?? 0,
+        scenesPlayed: scenesPlayedRef.current,
+        mode: "solo",
+      });
     } catch (err) {
       setTrackedError(`Failed to generate epilogue: ${err instanceof Error ? err.message : String(err)}`, "epilogue");
       setStreamingDocText("");
       if (!(await loadGame(gid))) setPhase("debrief");
     }
-  }, [gameId, loadGame, setTrackedError]);
+  }, [gameId, loadGame, setTrackedError, currentEvent]);
 
   const nextEvent = useCallback(async (id?: string) => {
     const gid = id ?? gameId;
@@ -289,7 +350,7 @@ export function useGame() {
     // would flash `event_intro` with a null event and fire a bogus
     // event_intro_viewed a beat before the epilogue sets `processing`.
     if (data.storyComplete) {
-      await generateEpilogue(gid);
+      await generateEpilogue(gid, "arc_complete");
       return;
     }
 
@@ -298,7 +359,10 @@ export function useGame() {
     setMessages([]);
     setMessagesRemaining(12);
     if (data.event) {
-      track("event_intro_viewed", { age: data.event.age, eventNumber: data.event.eventNumber });
+      if (data.event.eventNumber > scenesPlayedRef.current) {
+        scenesPlayedRef.current = data.event.eventNumber;
+      }
+      track("event_intro_viewed", { age: data.event.age, eventNumber: data.event.eventNumber, mode: "solo" });
     }
   }, [gameId, generateEpilogue, setTrackedError]);
 
@@ -307,7 +371,11 @@ export function useGame() {
     if (gameId) {
       fetch(`${API}/game/${gameId}/portraits/next`, { method: "POST" }).catch(() => {});
     }
-    track("conversation_started", { age: currentEvent?.age ?? 0 });
+    track("conversation_started", {
+      age: currentEvent?.age ?? 0,
+      eventNumber: currentEvent?.eventNumber ?? 0,
+      mode: "solo",
+    });
   }, [gameId, currentEvent]);
 
   // Fix for #20: buffer partial SSE lines across network reads and guard
@@ -401,10 +469,22 @@ export function useGame() {
     const messagesSent = 12 - messagesRemaining;
     track("conversation_ended", {
       age: currentEvent?.age ?? 0,
+      eventNumber: currentEvent?.eventNumber ?? 0,
       messagesSent,
       hitCap: messagesRemaining === 0,
+      mode: "solo",
     });
     setPhase("processing");
+    // The gap the whole investigation is about: a median 67.6s of LLM
+    // generation between here and the debrief, previously marked by nothing at
+    // all — so an abandoned wait, a hung stream and a deliberate quit were the
+    // same shape. `mark` is read by SoloGame's debrief_viewed.
+    mark("processing");
+    track("processing_started", {
+      kind: "scene_debrief",
+      eventNumber: currentEvent?.eventNumber ?? 0,
+      age: currentEvent?.age ?? 0,
+    });
     setStreamingDocText("");
     setError(null);
     try {
@@ -468,10 +548,19 @@ export function useGame() {
       return;
     }
     const data = await res.json();
+    // Rung 1 never terminates the game — END_INTERVENTION always routes back to
+    // event_intro — so the outcome is fixed rather than derived.
+    track("intervention_completed", {
+      rung: 1,
+      outcome: "returned_to_story",
+      turnsTaken: 0,
+      eventNumber: currentEvent?.eventNumber ?? scenesPlayedRef.current,
+      mode: "solo",
+    });
     setPhase(data.phase);
     setCurrentEvent(null);
     setInterventionText(null);
-  }, [gameId, setTrackedError]);
+  }, [gameId, setTrackedError, currentEvent]);
 
   // Dark Play Plan 3, Rung 2 — a parent's turn during a therapy session.
   // SSE, mirroring sendMessage exactly: optimistic parent turn appended
@@ -569,10 +658,17 @@ export function useGame() {
       return;
     }
     const data = await res.json();
+    track("intervention_completed", {
+      rung: 2,
+      outcome: "returned_to_story",
+      turnsTaken: therapyMessages.filter((m) => m.speaker === "parent").length,
+      eventNumber: currentEvent?.eventNumber ?? scenesPlayedRef.current,
+      mode: "solo",
+    });
     setPhase(data.phase);
     setCurrentEvent(null);
     setTherapyMessages([]);
-  }, [gameId, setTrackedError]);
+  }, [gameId, setTrackedError, therapyMessages, currentEvent]);
 
   // Dark Play Plan 3, Rung 3 — conclude the CPS review. Plain JSON. Unlike
   // consult/therapy this CAN be terminal: a "removal" determination makes
@@ -592,19 +688,43 @@ export function useGame() {
       return null;
     }
     const data = (await res.json()) as { phase: string; epilogue?: string };
+    const terminal = typeof data.epilogue === "string";
+    track("intervention_completed", {
+      rung: 3,
+      outcome: terminal ? "terminal" : "returned_to_story",
+      turnsTaken: 0,
+      eventNumber: currentEvent?.eventNumber ?? scenesPlayedRef.current,
+      mode: "solo",
+    });
     if (typeof data.epilogue === "string") {
       setEpilogue(data.epilogue);
-      track("epilogue_reached");
+      // The third route into an epilogue, and the reason `route` exists: a
+      // removal determination is not a completed arc and not an early exit.
+      track("epilogue_reached", {
+        route: "intervention_terminal",
+        eventNumber: currentEvent?.eventNumber ?? scenesPlayedRef.current,
+        age: currentEvent?.age ?? 0,
+        scenesPlayed: scenesPlayedRef.current,
+        mode: "solo",
+      });
     }
     setPhase(data.phase);
     setCurrentEvent(null);
     setInterventionText(null);
     return data.phase;
-  }, [gameId, setTrackedError]);
+  }, [gameId, setTrackedError, currentEvent]);
 
   const generateReportCard = useCallback(async (userId?: string) => {
     if (!gameId) return;
     setPhase("processing");
+    // The last wait in the game, and the one error_occurred{step:report_card}
+    // already clustered in without anything marking its start.
+    mark("processing");
+    track("processing_started", {
+      kind: "report_card",
+      eventNumber: scenesPlayedRef.current,
+      age: currentEvent?.age ?? 0,
+    });
     setStreamingDocText("");
     setError(null);
     try {
@@ -629,13 +749,18 @@ export function useGame() {
       setReportCard(data.reportCard);
       setStreamingDocText("");
       setPhase(data.phase);
-      track("game_completed");
+      const waited = secondsSince("processing");
+      track("game_completed", {
+        scenesPlayed: scenesPlayedRef.current,
+        mode: "solo",
+        ...(waited !== null ? { waitSeconds: bucketSeconds(waited) } : {}),
+      });
     } catch (err) {
       setTrackedError(`Failed to generate report card: ${err instanceof Error ? err.message : String(err)}`, "report_card");
       setPhase("epilogue");
       setStreamingDocText("");
     }
-  }, [gameId, epilogue]);
+  }, [gameId, epilogue, currentEvent]);
 
   return {
     gameId,

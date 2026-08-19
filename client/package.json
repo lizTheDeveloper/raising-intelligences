@@ -13,6 +13,7 @@
     "socket.io-client": "^4.8.0"
   },
   "devDependencies": {
+    "@sentry/vite-plugin": "^5.4.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.5.0",
