@@ -35,6 +35,17 @@ if (import.meta.env.VITE_SENTRY_DSN) {
       if (/load failed|failed to fetch|networkerror|operation was aborted|aborterror/i.test(msg)) {
         return null;
       }
+      // Same class of noise, different source: in-app browsers (Instagram/
+      // Facebook/TikTok webviews) inject their own JS bridge ("iabjs://...")
+      // to talk to the native host app. When that native side has already torn
+      // the bridge down — e.g. the user backgrounds the app mid-navigation —
+      // the bridge's own postMessage call throws inside our page's JS context,
+      // and our global handlers below capture it as if it were our crash.
+      // There is no code path in this app that touches that bridge.
+      const frames = event.exception?.values?.[0]?.stacktrace?.frames ?? [];
+      if (/postMessage: Java object is gone/i.test(msg) || frames.some((f) => f.filename?.startsWith("iabjs:"))) {
+        return null;
+      }
       return event;
     },
   });
