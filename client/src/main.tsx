@@ -35,6 +35,15 @@ if (import.meta.env.VITE_SENTRY_DSN) {
       if (/load failed|failed to fetch|networkerror|operation was aborted|aborterror/i.test(msg)) {
         return null;
       }
+      // Drop host-app/webview bridge noise: neither `runtime.sendMessage`
+      // (the Chrome extension messaging API) nor `postMessage`/`iabjs://`
+      // (an Android in-app-browser JS bridge) appear anywhere in this app's
+      // code — both are thrown by something injected around the page
+      // (a browser extension, or the native shell embedding this site),
+      // not by our own crash.
+      if (/runtime\.sendMessage|extension context invalidated|iabjs:\/\/|invoking postmessage/i.test(msg)) {
+        return null;
+      }
       return event;
     },
   });
