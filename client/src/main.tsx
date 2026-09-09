@@ -35,6 +35,18 @@ if (import.meta.env.VITE_SENTRY_DSN) {
       if (/load failed|failed to fetch|networkerror|operation was aborted|aborterror/i.test(msg)) {
         return null;
       }
+      // Android in-app browsers (Facebook/Instagram/TikTok's embedded WebView,
+      // etc.) inject a JS bridge under the `iabjs://` pseudo-scheme to report
+      // navigation performance back to the native shell. When the host app
+      // tears the WebView down mid-call (tab switch, app backgrounded), the
+      // bridge's own postMessage throws "Java object is gone" inside our page
+      // context — a host-shell failure with no code path in this app, same
+      // class of noise as the network filter above (issue #157).
+      const frames = event.exception?.values?.[0]?.stacktrace?.frames ?? [];
+      const fromInAppBrowserBridge = frames.some((f) => f.filename?.startsWith("iabjs://"));
+      if (fromInAppBrowserBridge || /invoking postMessage:.*java object is gone/i.test(msg)) {
+        return null;
+      }
       return event;
     },
   });
