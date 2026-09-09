@@ -1,8 +1,19 @@
 import { Router } from "express";
 import type { Request, Response, NextFunction } from "express";
+import { timingSafeEqual } from "node:crypto";
 import type { AdminQueries } from "../db/admin-queries.js";
 import type { GameRepository } from "../db/repository.js";
 import { logger } from "../logger.js";
+
+// Plain `!==` short-circuits at the first differing byte, leaking a
+// prefix-match timing oracle on the shared admin secret. Compare in
+// constant time instead.
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
+}
 
 export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
   const token = process.env.ADMIN_TOKEN;
@@ -11,11 +22,20 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
     return;
   }
   const header = req.headers.authorization;
-  if (!header || header !== `Bearer ${token}`) {
+  if (!header || !safeEqual(header, `Bearer ${token}`)) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
   next();
+}
+
+/** Parses a query-string bound, falling back to `def` for anything
+ * non-numeric or negative, and capping at `max` so a caller can't pull an
+ * unbounded result set into memory in one response. */
+function parseBound(v: unknown, def: number, max: number): number {
+  const n = parseInt(String(v), 10);
+  if (!Number.isFinite(n) || n < 0) return def;
+  return Math.min(n, max);
 }
 
 export function createAdminRoutes(adminQueries: AdminQueries, repo: GameRepository): Router {
@@ -35,8 +55,8 @@ export function createAdminRoutes(adminQueries: AdminQueries, repo: GameReposito
   router.get("/admin/games", async (req: Request, res: Response) => {
     try {
       const status = req.query.status as "active" | "completed" | "abandoned" | undefined;
-      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
-      const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : undefined;
+      const limit = parseBound(req.query.limit, 50, 200);
+      const offset = parseBound(req.query.offset, 0, Number.MAX_SAFE_INTEGER);
       const result = await adminQueries.listGames({ status, limit, offset });
       res.json(result);
     } catch (err) {
@@ -69,8 +89,8 @@ export function createAdminRoutes(adminQueries: AdminQueries, repo: GameReposito
   // can review and one-click ban/unban. See safety/moderation.ts.
   router.get("/admin/moderation-flags", async (req: Request, res: Response) => {
     try {
-      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
-      const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : undefined;
+      const limit = parseBound(req.query.limit, 100, 200);
+      const offset = parseBound(req.query.offset, 0, Number.MAX_SAFE_INTEGER);
       const { flags, total } = await adminQueries.listModerationFlags({ limit, offset });
 
       // Ban state lives in banned_ips (the repo), not the flags table — enrich
