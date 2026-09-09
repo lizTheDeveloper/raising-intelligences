@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { randomUUID, timingSafeEqual } from "crypto";
 import type { Sender } from "../types.js";
 
 /**
@@ -47,8 +47,17 @@ export function getPlayerBySlot(session: Session, slot: PlayerSlot): Player | un
   return session.players.find((p) => p.slot === slot);
 }
 
+// Reconnect tokens are the multiplayer session credential — compare in
+// constant time so response timing can't leak a prefix-match oracle.
+function tokensEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
+}
+
 export function getPlayerByToken(session: Session, token: string): Player | undefined {
-  return session.players.find((p) => p.token === token);
+  return session.players.find((p) => tokensEqual(p.token, token));
 }
 
 /**
