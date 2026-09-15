@@ -269,7 +269,7 @@ export class RoutingLLMClient implements LLMClient {
          * production logs showed empty responses only for the roles that happen
          * not to stream. Raise it so the empty-content failover can catch it.
          */
-        if (fullResponse === "") throw new Error(`Unexpected response from ${actualProviderKey}`);
+        if (fullResponse === "") throw new Error(`Unexpected response from ${actualProviderKey} (role=${resolvedRole}, model=${actualModel})`);
         return fullResponse;
       };
 
@@ -330,7 +330,33 @@ export class RoutingLLMClient implements LLMClient {
             to: fbModel,
             streaming: true,
           });
-          return streamWithRetries(this.getClient(fbKey), fbModel, fbKey);
+          try {
+            return await streamWithRetries(this.getClient(fbKey), fbModel, fbKey);
+          } catch (e2) {
+            // The failover model itself came back empty too — this is the case
+            // that used to reach GlitchTip as a bare "Unexpected response from
+            // openrouter" with no stack trace (GlitchTip prunes full events).
+            // Log full context here since it survives pruning.
+            if (isEmptyContentError(e2)) {
+              logger.error("llm_empty_content_exhausted", {
+                role: resolvedRole,
+                provider: fbKey,
+                model: fbModel,
+                streaming: true,
+              });
+            }
+            throw e2;
+          }
+        }
+        // Not eligible for failover at all (already on the failover model, or
+        // text already reached the player) — same diagnosability gap as above.
+        if (isEmptyContentError(e)) {
+          logger.error("llm_empty_content_exhausted", {
+            role: resolvedRole,
+            provider: providerKey,
+            model,
+            streaming: true,
+          });
         }
         throw e;
       }
@@ -349,7 +375,7 @@ export class RoutingLLMClient implements LLMClient {
         this.report(resolvedRole, pk, m, usage);
         this.reportTruncation(resolvedRole, m, finishReason, usage);
         const content = response.choices[0]?.message?.content;
-        if (typeof content !== "string") throw new Error(`Unexpected response from ${pk}`);
+        if (typeof content !== "string") throw new Error(`Unexpected response from ${pk} (role=${resolvedRole}, model=${m})`);
         return { content, truncated: finishReason === "length" };
       });
 
@@ -413,7 +439,31 @@ export class RoutingLLMClient implements LLMClient {
           from: model,
           to: fbModel,
         });
-        return callProvider(this.getClient(fbKey), fbModel, fbKey);
+        try {
+          return await callProvider(this.getClient(fbKey), fbModel, fbKey);
+        } catch (e2) {
+          // The failover model itself came back empty too — this is the case
+          // that used to surface to GlitchTip as a bare "Unexpected response
+          // from openrouter" with no stack trace (GlitchTip prunes full
+          // events). Log full context here since it survives pruning.
+          if (isEmptyContentError(e2)) {
+            logger.error("llm_empty_content_exhausted", {
+              role: resolvedRole,
+              provider: fbKey,
+              model: fbModel,
+            });
+          }
+          throw e2;
+        }
+      }
+      // Not eligible for failover at all (already on the failover model) —
+      // same diagnosability gap as above.
+      if (isEmptyContentError(e)) {
+        logger.error("llm_empty_content_exhausted", {
+          role: resolvedRole,
+          provider: providerKey,
+          model,
+        });
       }
       throw e;
     }
