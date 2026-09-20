@@ -72,12 +72,19 @@ async function pullPrompts(): Promise<CachedPrompt[]> {
   const targetAges = [3, 7, 12];
   const prompts: CachedPrompt[] = [];
 
-  // Pull kid_family_chat observations, find ones at target ages
-  const data = await langfuseGet("/api/public/observations", {
-    type: "GENERATION",
-    name: "kid_family_chat",
-    limit: "500",
-  }) as { data: Array<{ input: unknown; output: unknown }> };
+  // Pull kid_family_chat observations, paginating through pages of 100
+  const allObs: Array<{ input: unknown; output: unknown }> = [];
+  for (let page = 1; page <= 5; page++) {
+    const data = await langfuseGet("/api/public/observations", {
+      type: "GENERATION",
+      name: "kid_family_chat",
+      limit: "100",
+      page: String(page),
+    }) as { data: Array<{ input: unknown; output: unknown }> };
+    allObs.push(...data.data);
+    if (data.data.length < 100) break;
+  }
+  const data = { data: allObs };
 
   for (const age of targetAges) {
     // Find observations where the system prompt mentions the target age
