@@ -9,6 +9,8 @@
  * premium credits.
  */
 
+import { createHash } from "crypto";
+
 /**
  * Logical LLM roles. Each maps to a specific model per tier. The Kid splits
  * into three roles because family chat (highest volume, short outputs) can run
@@ -198,4 +200,119 @@ export function estimateCostUsd(
     (inputTokens / 1_000_000) * pricing.input +
     (outputTokens / 1_000_000) * pricing.output
   );
+}
+
+/**
+ * Roles played by the kid — the only roles ever rotated across the
+ * `kid_model_pool`. Every other role always uses the hardcoded per-tier
+ * model above.
+ */
+export const KID_ROLES: ReadonlySet<LLMRole> = new Set([
+  "kid_family_chat",
+  "kid_sidebar",
+  "kid_adult_chat",
+]);
+
+/** One weighted entry in a tier's kid model pool. */
+export interface PoolEntry {
+  slug: string;
+  freeSlug: string | null;
+  weight: number;
+}
+
+interface PoolCache {
+  models: PoolEntry[];
+  totalWeight: number;
+  fetchedAt: number;
+}
+
+const POOL_CACHE_TTL_MS = 5 * 60 * 1000;
+const poolCacheByTier = new Map<ModelTier, PoolCache>();
+
+// Test injection — allows tests to bypass the DB entirely.
+const testPoolOverrides = new Map<ModelTier, PoolEntry[]>();
+
+export function _resetPoolCacheForTests(): void {
+  poolCacheByTier.clear();
+  testPoolOverrides.clear();
+}
+
+export function _setPoolForTests(tier: ModelTier, entries: PoolEntry[]): void {
+  testPoolOverrides.set(tier, entries);
+  poolCacheByTier.delete(tier);
+}
+
+/**
+ * Deterministic uint32 hash of `gameId`, reduced mod `totalWeight`. Used to
+ * stick a given game to the same pool entry across calls without storing
+ * per-game state.
+ */
+export function hashGameId(gameId: string, totalWeight: number): number {
+  const hash = createHash("sha256").update(gameId).digest();
+  return hash.readUInt32BE(0) % totalWeight;
+}
+
+async function getKidModelPool(
+  tier: ModelTier
+): Promise<{ models: PoolEntry[]; totalWeight: number }> {
+  const override = testPoolOverrides.get(tier);
+  if (override) {
+    const totalWeight = override.reduce((s, e) => s + e.weight, 0);
+    return { models: override, totalWeight };
+  }
+
+  const cached = poolCacheByTier.get(tier);
+  if (cached && Date.now() - cached.fetchedAt < POOL_CACHE_TTL_MS) {
+    return cached;
+  }
+
+  try {
+    const { query } = await import("../db/pool.js");
+    const { rows } = await query<{
+      slug: string;
+      free_slug: string | null;
+      weight: number;
+    }>(
+      "SELECT slug, free_slug, weight FROM kid_model_pool WHERE tier = $1 AND active = true ORDER BY id",
+      [tier]
+    );
+    const models: PoolEntry[] = rows.map((r) => ({
+      slug: r.slug,
+      freeSlug: r.free_slug,
+      weight: r.weight,
+    }));
+    const totalWeight = models.reduce((s, e) => s + e.weight, 0);
+    const entry: PoolCache = { models, totalWeight, fetchedAt: Date.now() };
+    poolCacheByTier.set(tier, entry);
+    return entry;
+  } catch {
+    // No DB (in-memory mode) or query error — fall back to empty pool
+    return { models: [], totalWeight: 0 };
+  }
+}
+
+/**
+ * Weighted, sticky model pick for a kid role at a given tier. The same
+ * `gameId` always maps to the same pool entry (see `hashGameId`), so a given
+ * child's model stays stable across the game's lifetime. Falls back to the
+ * hardcoded `kid_family_chat` model for the tier when the pool is empty or
+ * unconfigured (e.g. no DB in in-memory mode).
+ */
+export async function selectKidModel(
+  tier: ModelTier,
+  gameId: string
+): Promise<string> {
+  const pool = await getKidModelPool(tier);
+  if (pool.models.length === 0 || pool.totalWeight === 0) {
+    return selectModel("kid_family_chat", tier);
+  }
+  const target = hashGameId(gameId, pool.totalWeight);
+  let cumulative = 0;
+  for (const entry of pool.models) {
+    cumulative += entry.weight;
+    if (target < cumulative) {
+      return entry.freeSlug ?? entry.slug;
+    }
+  }
+  return pool.models[pool.models.length - 1].slug;
 }
