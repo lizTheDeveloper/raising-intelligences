@@ -124,9 +124,27 @@ export class TracedLLMClient implements LLMClient {
     return new ChildSeedClient(this, tier, gameId);
   }
 
+  /**
+   * Returns a new TracedLLMClient wrapping the inner client's model override,
+   * carrying `kidModel: model` in its metadata.
+   *
+   * This is how kid-model rotation actually reaches Langfuse. ChildSeedClient
+   * wraps a TracedLLMClient (not the other way around — see child-seed-client.ts),
+   * so an `instanceof ChildSeedClient` check inside TracedLLMClient's own
+   * streamResponse/completeResponse can never be true; that check used to sit
+   * here and silently never fire, leaving every trace's `kidModel` field empty.
+   * Stamping the resolved model into metadata at override time — the one place
+   * ChildSeedClient and TracedLLMClient actually touch — means the traces
+   * produced by calls on the returned client already carry it, with no runtime
+   * type check required.
+   */
   withModelOverride(model: string): LLMClient {
     if (typeof (this.inner as any).withModelOverride === "function") {
-      return new TracedLLMClient((this.inner as any).withModelOverride(model), this.metadata, this.tier);
+      return new TracedLLMClient(
+        (this.inner as any).withModelOverride(model),
+        { ...this.metadata, kidModel: model },
+        this.tier
+      );
     }
     return this;
   }
@@ -143,9 +161,6 @@ export class TracedLLMClient implements LLMClient {
     role?: LLMRole
   ): Promise<string> {
     const metadata = this.mergeRole(role);
-    if (this.inner instanceof ChildSeedClient && this.inner.kidModel) {
-      metadata.kidModel = this.inner.kidModel;
-    }
     const client = getLangfuseClient();
     if (!client) {
       return this.inner.streamResponse(system, messages, onChunk, role);
@@ -188,9 +203,6 @@ export class TracedLLMClient implements LLMClient {
     onChunk?: (chunk: string) => void
   ): Promise<string> {
     const metadata = this.mergeRole(role);
-    if (this.inner instanceof ChildSeedClient && this.inner.kidModel) {
-      metadata.kidModel = this.inner.kidModel;
-    }
     const client = getLangfuseClient();
     if (!client) {
       return this.inner.completeResponse(system, userMessage, maxTokens, role, onChunk);
