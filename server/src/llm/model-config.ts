@@ -296,6 +296,21 @@ async function getKidModelPool(
 }
 
 /**
+ * Result of a kid model pick: the model to try first, and the model to fall
+ * back to if the primary is rate-limited (429) or has been removed (404).
+ *
+ * `fallback` is `null` whenever there is nothing to fall back to — either the
+ * pool entry has no free tier (primary IS the paid model already) or the pool
+ * itself is empty/unconfigured, so retrying would just hit the same slug.
+ */
+export interface KidModelSelection {
+  /** free_slug if the pool entry has one, else slug. */
+  primary: string;
+  /** The paid slug to retry with on a 429/404, or null if primary is already the paid model. */
+  fallback: string | null;
+}
+
+/**
  * Weighted, sticky model pick for a kid role at a given tier. The same
  * `gameId` always maps to the same pool entry (see `hashGameId`), so a given
  * child's model stays stable across the game's lifetime. Falls back to the
@@ -305,18 +320,25 @@ async function getKidModelPool(
 export async function selectKidModel(
   tier: ModelTier,
   gameId: string
-): Promise<string> {
+): Promise<KidModelSelection> {
   const pool = await getKidModelPool(tier);
   if (pool.models.length === 0 || pool.totalWeight === 0) {
-    return selectModel("kid_family_chat", tier);
+    return { primary: selectModel("kid_family_chat", tier), fallback: null };
   }
   const target = hashGameId(gameId, pool.totalWeight);
   let cumulative = 0;
   for (const entry of pool.models) {
     cumulative += entry.weight;
     if (target < cumulative) {
-      return entry.freeSlug ?? entry.slug;
+      return {
+        primary: entry.freeSlug ?? entry.slug,
+        fallback: entry.freeSlug ? entry.slug : null,
+      };
     }
   }
-  return pool.models[pool.models.length - 1].slug;
+  const last = pool.models[pool.models.length - 1];
+  return {
+    primary: last.freeSlug ?? last.slug,
+    fallback: last.freeSlug ? last.slug : null,
+  };
 }
