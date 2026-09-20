@@ -132,6 +132,10 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
  * Getting this list wrong is not cosmetic: a reasoning model listed here that
  * is not one merely costs a little headroom, but one MISSING from the list
  * returns `content: null` on every prompt long enough to make it think.
+ *
+ * IMPORTANT: If you add a reasoning model to kid_model_pool, you must also
+ * add it here. A reasoning model missing from this set will exhaust its
+ * token budget on thinking and return content: null.
  */
 const REASONING_MODELS = new Set(["qwen/qwen3.7-plus", "qwen/qwen3.7-max"]);
 
