@@ -13,6 +13,7 @@
 import { Langfuse } from "langfuse";
 import type { LLMClient } from "../llm/client.js";
 import { type LLMRole, type ModelTier, selectModel } from "../llm/model-config.js";
+import { ChildSeedClient } from "../llm/child-seed-client.js";
 
 /**
  * Metadata carried by a traced client. Used both for trace tags
@@ -23,6 +24,10 @@ export interface TraceMetadata {
   eventNumber?: number;
   /** Logical LLM role: "kid" | "world_manager" | "psychologist" | "epilogue" | "report_card". */
   role?: string;
+  /** The pool-selected model actually used for this call, when it went through
+   * a ChildSeedClient kid-role rotation. Absent for non-kid roles and for
+   * calls made before the first kid model has been resolved. */
+  kidModel?: string;
 }
 
 let cachedClient: Langfuse | null = null;
@@ -108,6 +113,17 @@ export class TracedLLMClient implements LLMClient {
     return new TracedLLMClient(this.inner, { ...this.metadata, ...metadata }, this.tier);
   }
 
+  /**
+   * Returns a ChildSeedClient that rotates kid models for this gameId, drawn
+   * from the DB pool for `this.tier`. Non-kid roles pass through to this
+   * TracedLLMClient's own inner client unchanged, so tracing/provider-routing
+   * behavior for every other role is identical to calling this client directly.
+   */
+  withChildSeed(gameId: string): ChildSeedClient {
+    const tier = this.tier ?? "standard";
+    return new ChildSeedClient(this.inner, tier, gameId);
+  }
+
   private resolveModel(role?: LLMRole): string | undefined {
     if (!this.tier || !role) return undefined;
     try { return selectModel(role, this.tier); } catch { return undefined; }
@@ -120,6 +136,9 @@ export class TracedLLMClient implements LLMClient {
     role?: LLMRole
   ): Promise<string> {
     const metadata = this.mergeRole(role);
+    if (this.inner instanceof ChildSeedClient && this.inner.kidModel) {
+      metadata.kidModel = this.inner.kidModel;
+    }
     const client = getLangfuseClient();
     if (!client) {
       return this.inner.streamResponse(system, messages, onChunk, role);
@@ -162,6 +181,9 @@ export class TracedLLMClient implements LLMClient {
     onChunk?: (chunk: string) => void
   ): Promise<string> {
     const metadata = this.mergeRole(role);
+    if (this.inner instanceof ChildSeedClient && this.inner.kidModel) {
+      metadata.kidModel = this.inner.kidModel;
+    }
     const client = getLangfuseClient();
     if (!client) {
       return this.inner.completeResponse(system, userMessage, maxTokens, role, onChunk);

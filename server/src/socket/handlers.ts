@@ -1,8 +1,9 @@
 import type { Server, Socket } from "socket.io";
 import type { GameState, GameEvent, Sender, ParentPersonality } from "../types.js";
-import type { ConversationEngine } from "../game/conversation-engine.js";
+import { ConversationEngine } from "../game/conversation-engine.js";
 import type { EndgameEngine } from "../game/endgame-engine.js";
 import type { GameRepository } from "../db/repository.js";
+import type { LLMClient } from "../llm/client.js";
 import {
   createGame,
   PARENT_MESSAGE_CAP,
@@ -62,6 +63,15 @@ export interface SocketDeps {
   conversationEngine: ConversationEngine;
   endgameEngine: EndgameEngine;
   repo: GameRepository;
+  /** The same (traced) LLM client the singleton engines were built with.
+   * Kid-role turns build a per-game `ConversationEngine` from
+   * `llm.withChildSeed?.(gameId)` instead of using the singleton directly, so
+   * each game rotates its own kid model — see the PARENT_MESSAGE handler.
+   * Optional so existing callers (tests build `SocketDeps` directly with a
+   * plain mock client) keep working without kid model rotation: the
+   * PARENT_MESSAGE handler falls back to `conversationEngine.llm` when absent
+   * or when it doesn't implement `withChildSeed`. */
+  llm?: LLMClient & { withChildSeed?: (gameId: string) => LLMClient };
   gameLocks?: Map<string, Promise<void>>;
   /** Lifetime of a device-handoff code. Injectable so tests can expire one
    * without waiting; production always takes the default. */
@@ -226,7 +236,7 @@ function lobbyState(session: Session): LobbyState {
 }
 
 export function registerSocketHandlers(deps: SocketDeps): void {
-  const { io, games, sessions, conversationEngine, endgameEngine, repo,
+  const { io, games, sessions, conversationEngine, endgameEngine, repo, llm,
           gameLocks = new Map<string, Promise<void>>(),
           handoffTtlMs = HANDOFF_TTL_MS } = deps;
 
@@ -1132,7 +1142,16 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           }
         };
 
-        const result = await conversationEngine.handleParentMessage(
+        // Kid-role turns (family_chat/adult_chat/sidebar all route through
+        // handleParentMessage) rotate through the per-game kid model pool, so
+        // this call runs on a per-game engine wrapping a ChildSeedClient
+        // instead of the shared singleton. Every other conversationEngine
+        // method in this file (endFamilyChat, generateConsult, ...) keeps
+        // using the singleton — those roles are never in KID_ROLES, so
+        // ChildSeedClient would pass them through unchanged anyway.
+        const childLlm = llm?.withChildSeed?.(gameId) ?? conversationEngine.llm;
+        const gameEngine = new ConversationEngine(childLlm);
+        const result = await gameEngine.handleParentMessage(
           state,
           slot,
           payload.content.trim(),

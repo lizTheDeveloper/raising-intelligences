@@ -251,6 +251,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     conversationEngine,
     endgameEngine,
     repo,
+    llm,
     gameLocks,
   });
 
