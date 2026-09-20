@@ -121,7 +121,14 @@ export class TracedLLMClient implements LLMClient {
    */
   withChildSeed(gameId: string): ChildSeedClient {
     const tier = this.tier ?? "standard";
-    return new ChildSeedClient(this.inner, tier, gameId);
+    return new ChildSeedClient(this, tier, gameId);
+  }
+
+  withModelOverride(model: string): LLMClient {
+    if (typeof (this.inner as any).withModelOverride === "function") {
+      return new TracedLLMClient((this.inner as any).withModelOverride(model), this.metadata, this.tier);
+    }
+    return this;
   }
 
   private resolveModel(role?: LLMRole): string | undefined {
