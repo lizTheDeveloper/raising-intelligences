@@ -17,6 +17,7 @@ import {
   THERAPY_TURN_CAP,
 } from "../game/state-machine.js";
 import type { GameState, Sender, ParentPersonality } from "../types.js";
+import type { LLMClient } from "../llm/client.js";
 import type { GameRepository } from "../db/repository.js";
 import { generateFirstPortrait, generateNextPortrait, PORTRAITS_DIR } from "../portrait-gen.js";
 import { logger } from "../logger.js";
@@ -40,6 +41,14 @@ interface GameRouteOptions {
   /** Shared lock map — pass the same instance to endgame routes and socket
    * handlers so cross-module operations on the same game are serialized. */
   gameLocks?: Map<string, Promise<void>>;
+  /** The same (traced) LLM client the singleton `engine` was built with.
+   * Kid-role turns (see /game/:id/message) build a per-game `ConversationEngine`
+   * from `llm.withChildSeed?.(gameId)` instead of using the singleton directly,
+   * mirroring the socket PARENT_MESSAGE handler — solo REST play otherwise gets
+   * no kid model rotation at all. Optional so existing callers (tests build
+   * routes directly with a plain mock engine) keep working: falls back to
+   * `engine.llm` when absent or when it doesn't implement `withChildSeed`. */
+  llm?: LLMClient & { withChildSeed?: (gameId: string) => LLMClient };
 }
 
 export function createGameRoutes(
@@ -49,7 +58,7 @@ export function createGameRoutes(
   repo: GameRepository,
   options: GameRouteOptions = {}
 ): Router {
-  const { llmRateLimit, gameCreateLimit, gameLocks = new Map<string, Promise<void>>() } = options;
+  const { llmRateLimit, gameCreateLimit, gameLocks = new Map<string, Promise<void>>(), llm } = options;
   const router = Router();
 
   // Prefetched event promises — kicked off at game creation (event 1) and after
@@ -279,7 +288,16 @@ export function createGameRoutes(
             return;
           }
 
-          const result = await engine.handleParentMessage(state, sender, content, (chunk) => {
+          // Kid-role turns (family_chat/adult_chat/sidebar all route through
+          // handleParentMessage) rotate through the per-game kid model pool, so
+          // this call runs on a per-game engine wrapping a ChildSeedClient
+          // instead of the shared singleton — mirrors the socket PARENT_MESSAGE
+          // handler (socket/handlers.ts). Every other route in this file keeps
+          // using the singleton `engine` directly: those roles are never in
+          // KID_ROLES, so ChildSeedClient would pass them through unchanged.
+          const childLlm = llm?.withChildSeed?.(state.id) ?? engine.llm;
+          const gameEngine = new ConversationEngine(childLlm);
+          const result = await gameEngine.handleParentMessage(state, sender, content, (chunk) => {
             sseChunk(res, chunk);
           });
 

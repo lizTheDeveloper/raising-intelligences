@@ -75,6 +75,8 @@ async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
 export class RoutingLLMClient implements LLMClient {
   private providers: Map<string, { client: OpenAI; pricing?: Record<string, { input: number; output: number }> }>;
   private fallback: string; // provider key for unprefixed slugs
+  /** Set only on a clone returned by withModelOverride(); see that method. */
+  private _modelOverride?: string;
 
   constructor(
     private readonly tier: ModelTier = "standard",
@@ -110,6 +112,19 @@ export class RoutingLLMClient implements LLMClient {
     }
   }
 
+  /**
+   * Returns a shallow, prototype-linked copy that uses `model` instead of
+   * calling selectModel() on the NEXT call. Used by ChildSeedClient to inject
+   * a pool-selected model for kid roles without changing the LLMClient
+   * interface or mutating the shared singleton (every other role/game keeps
+   * calling selectModel as normal on the original instance).
+   */
+  withModelOverride(model: string): RoutingLLMClient {
+    const clone = Object.create(this) as RoutingLLMClient;
+    Object.defineProperty(clone, "_modelOverride", { value: model, writable: false });
+    return clone;
+  }
+
   private needsEnglishEnforcement(slug: string): boolean {
     return /qwen|deepseek/i.test(slug);
   }
@@ -143,7 +158,7 @@ export class RoutingLLMClient implements LLMClient {
     role?: LLMRole
   ): Promise<string> {
     const resolvedRole = role ?? this.defaultRole;
-    const slug = selectModel(resolvedRole, this.tier);
+    const slug = this._modelOverride ?? selectModel(resolvedRole, this.tier);
     const { providerKey, model } = this.resolve(slug);
     const client = this.getClient(providerKey);
 
@@ -203,7 +218,7 @@ export class RoutingLLMClient implements LLMClient {
     onChunk?: (chunk: string) => void
   ): Promise<string> {
     const resolvedRole = role ?? this.defaultRole;
-    const slug = selectModel(resolvedRole, this.tier);
+    const slug = this._modelOverride ?? selectModel(resolvedRole, this.tier);
     const { providerKey, model } = this.resolve(slug);
     const client = this.getClient(providerKey);
 
