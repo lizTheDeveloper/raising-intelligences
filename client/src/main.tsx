@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import * as Sentry from "@sentry/browser";
 import { App } from "./App";
 import { startSessionTracking } from "./analytics";
+import { normalizeNullPayload, toReportableRejection, toReportableWindowError } from "./errorReporting";
 import "./global.css";
 
 /**
@@ -35,11 +36,35 @@ if (import.meta.env.VITE_SENTRY_DSN) {
       if (/load failed|failed to fetch|networkerror|operation was aborted|aborterror/i.test(msg)) {
         return null;
       }
+      // Second half of the #149 guard: the SDK's BrowserApiErrors integration
+      // forwards a `throw null` from a setTimeout/RAF callback verbatim, so
+      // rewrite any null-payload exception into something that fingerprints.
+      normalizeNullPayload(event);
       return event;
     },
   });
-  window.addEventListener("error", (e) => Sentry.captureException(e.error));
-  window.addEventListener("unhandledrejection", (e) => Sentry.captureException(e.reason));
+  // GitHub #149: these used to pass e.error/e.reason straight to
+  // captureException, so a blocked-resource or null-rejection event shipped a
+  // literal `error: null` with no fingerprint. Report through errorReporting.ts
+  // guards: every report carries a real message, and zero-information
+  // third-party noise (blocked <script>s, cross-origin "Script error.") is
+  // dropped before it reaches GlitchTip.
+  window.addEventListener("error", (e) => {
+    const err = toReportableWindowError({
+      error: e.error,
+      message: e.message,
+      filename: e.filename,
+      lineno: e.lineno,
+      colno: e.colno,
+      isResourceLoad: e.target instanceof Element,
+    });
+    if (err) {
+      Sentry.captureException(err);
+    }
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    Sentry.captureException(toReportableRejection(e.reason));
+  });
 }
 
 if (import.meta.env.PROD) {
