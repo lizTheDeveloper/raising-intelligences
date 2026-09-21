@@ -16,6 +16,13 @@ import {
   CPS_STAY_DECAY,
   THERAPY_TURN_CAP,
 } from "../game/state-machine.js";
+import {
+  SceneEndStreamFilter,
+  containsSceneEnd,
+  detectSceneEnd,
+  shouldAutoEndScene,
+  stripSceneEnd,
+} from "../game/scene-end.js";
 import { generateFirstPortrait, generateNextPortrait } from "../portrait-gen.js";
 import { withGameLock } from "../lib/game-lock.js";
 import { randomBytes } from "crypto";
@@ -1129,8 +1136,11 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         }
 
         const inSidebar = state.phase === "sidebar";
+        const sceneEndFilter = new SceneEndStreamFilter();
         const emitChunk = (chunk: string) => {
-          const filtered = chunk.replace(/\[SCENE_END\]/g, "");
+          // Streaming-safe scrub: a per-chunk regex replace leaks the token
+          // whenever the provider splits "[SCENE_END]" across chunks.
+          const filtered = sceneEndFilter.push(chunk);
           if (!filtered) return;
           if (inSidebar) {
             // Slot room, not `socket` — a private sidebar belongs to the
@@ -1157,6 +1167,17 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           payload.content.trim(),
           emitChunk
         );
+
+        // Release anything the scrubber held back at the stream tail (a
+        // partial token that never completed — honest text, show it).
+        const heldTail = sceneEndFilter.flush();
+        if (heldTail) {
+          if (inSidebar) {
+            io.to(slotRoom(gameId, slot)).emit(E.KID_CHUNK, { text: heldTail });
+          } else {
+            io.to(gameId).emit(E.KID_CHUNK, { text: heldTail });
+          }
+        }
 
         // Mid-scene safety interception: a "block" verdict terminates
         // immediately rather than letting a bad-faith actor keep going until
@@ -1190,14 +1211,18 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           // NOTE: session continues — fall through to the normal message flow below.
         }
 
-        // Detect and strip the [SCENE_END] sentinel before saving/broadcasting
-        const sceneEnded = result.kidResponse.includes("[SCENE_END]");
-        if (sceneEnded) {
-          result.kidResponse = result.kidResponse.replace(/\s*\[SCENE_END\]\s*/g, "").trim();
+        // Detect and strip the [SCENE_END] sentinel before saving/broadcasting.
+        // `detectSceneEnd` also carries the no-token heuristic: the rotating
+        // free-tier kid models demonstrably ignore the sentinel instruction
+        // (9/9 replies, 2026-09-21 prod playtest), so the token alone is not
+        // a liveness path for Phase 1.
+        const sceneEnd = detectSceneEnd(result.kidResponse, result.state.parentMessageCount);
+        if (containsSceneEnd(result.kidResponse)) {
+          result.kidResponse = stripSceneEnd(result.kidResponse);
           const msgs = result.state.messages;
           const lastMsg = msgs[msgs.length - 1];
           if (lastMsg) {
-            lastMsg.content = lastMsg.content.replace(/\s*\[SCENE_END\]\s*/g, "").trim();
+            lastMsg.content = stripSceneEnd(lastMsg.content);
           }
         }
 
@@ -1224,9 +1249,20 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         // messages — MessageInput disables itself at 0 remaining and the button
         // stays live.
         if (
-          result.state.phase === "family_chat" &&
-          (sceneEnded || result.state.parentMessageCount >= PARENT_MESSAGE_CAP)
+          shouldAutoEndScene(
+            result.state.phase,
+            sceneEnd,
+            result.state.parentMessageCount,
+            PARENT_MESSAGE_CAP
+          )
         ) {
+          logger.info("scene_auto_end", {
+            gameId,
+            reason: sceneEnd ?? "cap",
+            eventNumber: result.state.currentEventNumber,
+            parentMessageCount: result.state.parentMessageCount,
+            transport: "socket",
+          });
           io.to(gameId).emit(E.SCENE_ENDED, {});
           await endChat(gameId, getSocketIp(socket));
         }

@@ -129,13 +129,17 @@ You are playing a specific moment, not an entire day. The scene has a natural ar
 - You react authentically based on who you are
 - The moment either resolves, escalates, or stalls
 
-When the moment has reached its natural conclusion — you've accepted what they said, you've stormed off, you've shut down, the situation has played out — end your response with a physical action that closes the scene. Walk away, go to your room, go back to what you were doing, reach for their hand. Then append the exact token [SCENE_END] at the very end of your response (after your dialogue/action).
-
 Don't drag scenes out. Real parenting moments are short. 3-6 exchanges is a full scene. If the parent keeps pushing after you've made your feelings clear, you can close the scene: "okay" and walk away. If they keep lecturing after you've already accepted, you zone out.
 
-The parents have sent ${state.parentMessageCount} of ${PARENT_MESSAGE_CAP} messages. If this is near the limit (within 2 messages of the cap), start winding the scene down naturally. If you're at the last message, end the scene definitively.
+When the moment has reached its natural conclusion — you've accepted what they said, you've stormed off, you've shut down, the situation has played out — close the scene in this reply: end on a physical action that leaves the moment (walk away, go to your room, go back to what you were doing, reach for their hand), and put the exact token [SCENE_END] at the very end of the reply, after your last word. Nothing may come after [SCENE_END]. Like this:
 
-Not every response should end the scene. Only end it when the moment has genuinely resolved, escalated to a natural stopping point, or stalled. Early in the conversation (messages 1-3), the scene is usually still developing.`;
+"Fine." She picks up her backpack and walks to the car without looking at you. [SCENE_END]
+He nods slowly, then goes back to his homework. The kitchen is quiet. [SCENE_END]
+She slams her door. You hear music start playing, loud. [SCENE_END]
+
+Not every response should end the scene — no [SCENE_END] on a reply that is still in the middle of the moment. Only end it when the moment has genuinely resolved, escalated to a natural stopping point, or stalled. Early in the conversation (messages 1-3), the scene is usually still developing.
+
+The parents have sent ${state.parentMessageCount} of ${PARENT_MESSAGE_CAP} messages. If this is near the limit (within 2 messages of the cap), start winding the scene down naturally. If this is their last message, you MUST close the scene in this reply and end it with [SCENE_END].`;
 
   const temperamentSection = state.personalitySeed
     ? `**Your temperament:** ${state.personalitySeed}`

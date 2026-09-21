@@ -28,6 +28,13 @@ import { resolveGame as sharedResolveGame } from "../lib/resolve-game.js";
 import { moderateParentMessage, applyModerationBlock, recordConcern } from "../safety/moderation.js";
 import { evaluateEscalation } from "../safety/escalation.js";
 import { buildSceneTranscript } from "../game/context-assembler.js";
+import {
+  SceneEndStreamFilter,
+  containsSceneEnd,
+  detectSceneEnd,
+  shouldAutoEndScene,
+  stripSceneEnd,
+} from "../game/scene-end.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -297,9 +304,19 @@ export function createGameRoutes(
           // KID_ROLES, so ChildSeedClient would pass them through unchanged.
           const childLlm = llm?.withChildSeed?.(state.id) ?? engine.llm;
           const gameEngine = new ConversationEngine(childLlm);
+          const sceneEndFilter = new SceneEndStreamFilter();
           const result = await gameEngine.handleParentMessage(state, sender, content, (chunk) => {
-            sseChunk(res, chunk);
+            // The [SCENE_END] sentinel must never reach the player — the solo
+            // path used to stream it raw (and persist it raw), unlike the
+            // socket path which filtered it. Streaming-safe scrub: a plain
+            // per-chunk replace leaks when the provider splits the token
+            // across chunks.
+            const filtered = sceneEndFilter.push(chunk);
+            if (filtered) sseChunk(res, filtered);
           });
+          // Release a held-back tail that turned out not to be the token.
+          const heldTail = sceneEndFilter.flush();
+          if (heldTail) sseChunk(res, heldTail);
 
           // Mid-scene safety interception: a "block" verdict terminates
           // immediately rather than letting a bad-faith actor keep going
@@ -332,14 +349,48 @@ export function createGameRoutes(
             // NOTE: session continues — fall through to the normal message flow below.
           }
 
+          // Natural scene resolution (spec-conversation-flow.md Phase 1). The
+          // socket PARENT_MESSAGE handler has done this since June; the solo
+          // REST path never did — which is why no solo scene ever auto-ended
+          // in the 2026-09-21 production playtest. Same three steps, same
+          // shared module: detect, strip before anything is persisted, and
+          // signal the client so it can close the scene. REST has no
+          // server->client push, so the auto-end is a flag on the done frame
+          // and useGame triggers its existing endChat after a short reading
+          // pause (spec: "auto-triggers END_CHAT after a brief pause").
+          const sceneEnd = detectSceneEnd(result.kidResponse, result.state.parentMessageCount);
+          if (containsSceneEnd(result.kidResponse)) {
+            result.kidResponse = stripSceneEnd(result.kidResponse);
+            const msgs = result.state.messages;
+            const lastMsg = msgs[msgs.length - 1];
+            if (lastMsg) lastMsg.content = stripSceneEnd(lastMsg.content);
+          }
+
           games.set(result.state.id, result.state);
           // Persist just the two new tail messages (parent + kid), then the checkpoint.
           const tail = result.state.messages.slice(-2);
           for (const m of tail) await repo.saveMessage(result.state.id, m);
           await repo.saveGame(result.state);
+          const autoEnd = shouldAutoEndScene(
+            result.state.phase,
+            sceneEnd,
+            result.state.parentMessageCount,
+            PARENT_MESSAGE_CAP
+          );
+          if (autoEnd) {
+            logger.info("scene_auto_end", {
+              gameId: result.state.id,
+              reason: sceneEnd ?? "cap",
+              eventNumber: result.state.currentEventNumber,
+              parentMessageCount: result.state.parentMessageCount,
+              transport: "rest",
+            });
+          }
           sseDone(res, {
             kidResponse: result.kidResponse,
             messagesRemaining: engine.getMessageCapRemaining(result.state),
+            sceneEnded: sceneEnd !== null,
+            autoEnd,
           });
         } catch (err) {
           logger.error("message_error", { gameId: req.params.id, error: err instanceof Error ? err.stack : String(err) });

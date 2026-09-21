@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { track, mark, secondsSince, bucketSeconds, bucketHours } from "../analytics";
 
 export interface SavedKid {
@@ -157,6 +157,23 @@ export function useGame() {
    * sitting's.
    */
   const scenesPlayedRef = useRef(0);
+
+  /**
+   * Natural scene resolution — solo half (spec-conversation-flow.md Phase 1).
+   *
+   * Solo is REST, so the server cannot push `scene_ended` the way the socket
+   * path does; instead /message's done frame carries `autoEnd` (kid sent
+   * [SCENE_END], or the hard cap was hit) and this hook closes the scene by
+   * calling the very same `endChat` the "end conversation" button uses, after
+   * a short pause so the player reads the kid's last line. The button stays
+   * as the spec's escape hatch; a click within the pause advances `phase`
+   * past family_chat and the pending timer then no-ops.
+   */
+  const SCENE_AUTO_END_DELAY_MS = 2500;
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+  const autoEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const endChatRef = useRef<(() => Promise<void>) | null>(null);
 
   const setTrackedError = useCallback((msg: string | null, step?: string) => {
     if (msg) {
@@ -384,6 +401,13 @@ export function useGame() {
     async (content: string) => {
       if (!gameId || isStreaming) return;
 
+      // A fresh send cancels any still-pending auto-end from the previous
+      // done frame — the player chose to keep playing the scene.
+      if (autoEndTimerRef.current) {
+        clearTimeout(autoEndTimerRef.current);
+        autoEndTimerRef.current = null;
+      }
+
       setMessages((prev) => [
         ...prev,
         { sender: "parent1", content, chatType: "shared" },
@@ -443,6 +467,15 @@ export function useGame() {
               // can type again. The stream may not have physically closed yet
               // (finally will also clear this), but there's nothing left to receive.
               setIsStreaming(false);
+              if (data.autoEnd) {
+                if (autoEndTimerRef.current) clearTimeout(autoEndTimerRef.current);
+                autoEndTimerRef.current = setTimeout(() => {
+                  autoEndTimerRef.current = null;
+                  // Still the same unresolved family_chat scene? Close it. If
+                  // the player hit the escape-hatch button first, this no-ops.
+                  if (phaseRef.current === "family_chat") void endChatRef.current?.();
+                }, SCENE_AUTO_END_DELAY_MS);
+              }
             } else if (data.type === "terminated") {
               setPhase("ended");
               setTrackedError("This session has ended.", "moderation");
@@ -466,6 +499,13 @@ export function useGame() {
 
   const endChat = useCallback(async () => {
     if (!gameId) return;
+    // Any end of the scene — manual button or the auto-end timer — cancels a
+    // pending auto-end; the second endChat call would only re-POST a closed
+    // scene (harmless server-side, but a processing-screen flicker).
+    if (autoEndTimerRef.current) {
+      clearTimeout(autoEndTimerRef.current);
+      autoEndTimerRef.current = null;
+    }
     const messagesSent = 12 - messagesRemaining;
     track("conversation_ended", {
       age: currentEvent?.age ?? 0,
@@ -509,6 +549,15 @@ export function useGame() {
       if (!(await loadGame(gameId))) setPhase("family_chat");
     }
   }, [gameId, messagesRemaining, currentEvent, loadGame]);
+
+  endChatRef.current = endChat;
+
+  useEffect(
+    () => () => {
+      if (autoEndTimerRef.current) clearTimeout(autoEndTimerRef.current);
+    },
+    []
+  );
 
   const endDebrief = useCallback(async () => {
     if (!gameId) return null;
