@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import * as Sentry from "@sentry/browser";
 import { App } from "./App";
 import { startSessionTracking } from "./analytics";
+import { eventHasOnlyThirdPartyFrames } from "./errorNoise";
 import "./global.css";
 
 /**
@@ -23,6 +24,10 @@ if (import.meta.env.VITE_SENTRY_DSN) {
     // This game's transcripts are intimate parent/child roleplay. Never let a
     // crash report carry user identity or the conversation itself.
     beforeSend(event) {
+      // MUL-13: drop content-blocker / extension noise at the source — an event
+      // whose frames are ALL opaque or non-studio-origin cannot contain our bug.
+      // Kept: ≥1 same-origin/studio frame, frame-less events, mixed stacks.
+      if (eventHasOnlyThirdPartyFrames(event, location.origin)) return null;
       delete event.user;
       // Drop benign network/abort noise — a dropped connection or a fetch/SSE
       // aborted on unmount is a browser network-layer failure ("Load failed",
