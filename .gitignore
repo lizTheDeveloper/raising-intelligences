@@ -16,3 +16,5 @@ client/public/portraits/starters/
 server/test-results/
 # Model search prompt cache
 scripts/.prompt-cache/
+# Adversarial test results (contain full model responses)
+scripts/.adversarial-results/
