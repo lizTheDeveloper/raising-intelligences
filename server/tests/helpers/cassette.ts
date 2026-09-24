@@ -59,6 +59,9 @@ export class CassetteLLMClient implements LLMClient {
   /** Number of calls served from the cassette vs. recorded — handy in assertions. */
   public replays = 0;
   public records = 0;
+  /** Record calls still running (e.g. a fire-and-forget prefetch). Drained by
+   * `waitInFlight()` so a run can't exit and orphan a half-recorded cassette. */
+  private readonly inFlight = new Set<Promise<unknown>>();
 
   constructor(private readonly inner: LLMClient, options: CassetteOptions) {
     this.file = options.file;
@@ -88,6 +91,60 @@ export class CassetteLLMClient implements LLMClient {
     writeFileSync(this.file, JSON.stringify(this.store, null, 2) + "\n");
   }
 
+  /** Register a live record call so `waitInFlight()` can drain it. Fire-and-forget
+   * calls (e.g. the endChat scene prefetch) run concurrently and would otherwise
+   * still be in flight when the run exits, leaving a hole in the cassette. */
+  private track<T>(p: Promise<T>): Promise<T> {
+    if (this.mode !== "record") return p;
+    this.inFlight.add(p);
+    void p.finally(() => this.inFlight.delete(p));
+    return p;
+  }
+
+  /** Resolve once every in-flight record call has settled (no-op in replay). */
+  async waitInFlight(): Promise<void> {
+    while (this.inFlight.size > 0) {
+      await Promise.allSettled([...this.inFlight]);
+    }
+  }
+
+  /** Bounded retries when the live provider answers with nothing usable
+   * during recording. */
+  private static readonly RECORD_RETRIES = 5;
+
+  /**
+   * In record mode the live provider occasionally misbehaves in ways that
+   * must not be baked into the cassette:
+   *
+   * - empty content — a documented OpenRouter failure mode (see
+   *   tests/empty-content-failover.test.ts), most visible on the rotating
+   *   kid models' long prompts. An empty entry replays as nothing and fails
+   *   the assertion it was supposed to back.
+   * - a thrown error (timeout abort, 5xx, malformed JSON) — a non-fatal
+   *   live call that fails only once must not leave a hole in the cassette
+   *   that replay then trips over; and a fatal one is usually transient too.
+   *
+   * So re-ask a bounded number of times, only giving up (empty string, or the
+   * last error) once every attempt has failed. Replay never reaches this path:
+   * the cassette is the source of truth there.
+   */
+  private async recordWithRetries(label: string, call: () => Promise<string>): Promise<string> {
+    let text = "";
+    for (let attempt = 0; ; attempt++) {
+      try {
+        text = await call();
+      } catch (e) {
+        if (attempt >= CassetteLLMClient.RECORD_RETRIES) throw e;
+        // eslint-disable-next-line no-console
+        console.log(`[cassette] ${label} failed (attempt ${attempt + 1}): ${(e as Error).message}; re-asking the provider`);
+        continue;
+      }
+      if (text.trim() !== "" || attempt >= CassetteLLMClient.RECORD_RETRIES) return text;
+      // eslint-disable-next-line no-console
+      console.log(`[cassette] ${label} returned empty (attempt ${attempt + 1}), re-asking the provider`);
+    }
+  }
+
   private save(key: string, entry: CassetteEntry): void {
     this.store[key] = entry;
     this.records += 1;
@@ -112,7 +169,12 @@ export class CassetteLLMClient implements LLMClient {
     }
     if (this.mode === "replay") this.miss("stream", role);
 
-    const text = await this.inner.streamResponse(system, messages, onChunk, role);
+    const text = await this.track(
+      this.recordWithRetries(
+        `stream (role=${role ?? "default"})`,
+        () => this.inner.streamResponse(system, messages, onChunk, role)
+      )
+    );
     this.save(key, { method: "stream", role, preview: preview(prompt), value: text });
     return text;
   }
@@ -133,7 +195,12 @@ export class CassetteLLMClient implements LLMClient {
     }
     if (this.mode === "replay") this.miss("complete", role);
 
-    const text = await this.inner.completeResponse(system, userMessage, maxTokens, role);
+    const text = await this.track(
+      this.recordWithRetries(
+        `complete (role=${role ?? "default"})`,
+        () => this.inner.completeResponse(system, userMessage, maxTokens, role)
+      )
+    );
     this.save(key, { method: "complete", role, preview: preview(prompt), value: text });
     return text;
   }
@@ -149,7 +216,12 @@ export class CassetteLLMClient implements LLMClient {
     }
     if (this.mode === "replay") this.miss("json", role);
 
-    const value = await this.inner.completeJson<T>(system, userMessage, role);
+    const value = await this.track(
+      this.recordWithRetries(
+        `json (role=${role ?? "default"})`,
+        async () => JSON.stringify(await this.inner.completeJson<T>(system, userMessage, role))
+      )
+    ).then((serialized) => JSON.parse(serialized) as T);
     this.save(key, { method: "json", role, preview: preview(prompt), value });
     return value;
   }

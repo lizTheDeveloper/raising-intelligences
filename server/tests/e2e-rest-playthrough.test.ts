@@ -24,7 +24,10 @@ describe("E2E: solo REST playthrough", () => {
   });
 
   afterAll(async () => {
-    await server.stop();
+    // In record mode, drain any fire-and-forget LLM calls still in flight (the
+    // end-chat next-event prefetch) so the cassette is written complete.
+    await server?.cassette.waitInFlight();
+    await server?.stop();
   });
 
   it("creates a game", async () => {

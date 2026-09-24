@@ -2,7 +2,7 @@ import type { AddressInfo } from "net";
 import path from "path";
 import { fileURLToPath } from "url";
 import { buildServer, type BuiltServer } from "../../src/app.js";
-import { OpenRouterLLMClient } from "../../src/llm/openrouter.js";
+import { RoutingLLMClient } from "../../src/llm/routing-client.js";
 import { InMemoryGameRepository } from "../../src/db/repository.js";
 import { InMemoryAdminQueries } from "../../src/db/admin-queries.js";
 import { CassetteLLMClient, type CassetteMode } from "./cassette.js";
@@ -51,7 +51,7 @@ export async function createTestServer(cassetteName: string): Promise<TestServer
   // but the OpenAI constructor throws eagerly if no key is set, so we defer.
   const real =
     mode !== "replay"
-      ? new OpenRouterLLMClient("standard", undefined, "kid_family_chat", TEST_SEED)
+      ? new RoutingLLMClient("standard", undefined, "kid_family_chat", TEST_SEED)
       : ({
           streamResponse: async () => {
             throw new Error("Real LLM called in replay mode — re-record with LLM_CACHE_MODE=record");

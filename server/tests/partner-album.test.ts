@@ -95,6 +95,9 @@ describe("multiplayer partner album", () => {
     let state: GameState;
 
     beforeEach(() => {
+      // Never spend on moment illustrations here — without this, a dev machine
+      // with OPENROUTER_API_KEY set makes live image calls and times out.
+      process.env.DISABLE_PORTRAITS = "1";
       const mock = new MockLLMClient();
       // The mock returns this regardless of input. The saved partner name must
       // come from the co-parent's real display name, NOT this generated field.
