@@ -150,6 +150,11 @@ export class TracedLLMClient implements LLMClient {
   }
 
   private resolveModel(role?: LLMRole): string | undefined {
+    // A client returned by withModelOverride() sends every call to that model
+    // (RoutingLLMClient's _modelOverride), so report it — not the role default.
+    // Before this, every rotated kid voice was logged (and priced) as the
+    // default kid model, with the real one only in metadata.kidModel.
+    if (this.metadata.kidModel) return this.metadata.kidModel;
     if (!this.tier || !role) return undefined;
     try { return selectModel(role, this.tier); } catch { return undefined; }
   }
