@@ -34,6 +34,7 @@ vi.mock("openai", () => {
 const { RoutingLLMClient, EMPTY_CONTENT_FAILOVER_MODEL } = await import(
   "../src/llm/routing-client.js"
 );
+const { logger } = await import("../src/logger.js");
 
 /** A stream that reasons for its whole budget and never emits content. */
 const emptyStream = () => ({
@@ -95,4 +96,23 @@ describe("streamed empty responses fail over instead of returning silence", () =
     expect(seen).toHaveLength(1);
     expect(seen.includes(EMPTY_CONTENT_FAILOVER_MODEL)).toBe(false);
   }, 30_000);
+
+  it("logs role and model context when the streamed failover is also empty", async () => {
+    // Streaming counterpart of the non-streaming "exhausted failover" case
+    // (see #169/#170/#171) — the error that used to reach GlitchTip as a bare
+    // "Unexpected response from openrouter" with no way to tell which role
+    // or model was involved.
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+    createMock.mockImplementation(async () => emptyStream());
+
+    await expect(
+      new RoutingLLMClient().completeResponse("sys", "user", 1500, "psychologist", () => {}),
+    ).rejects.toThrow(/Unexpected response from openrouter \(role=psychologist, model=/);
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "llm_empty_content_exhausted",
+      expect.objectContaining({ role: "psychologist", streaming: true }),
+    );
+    errorSpy.mockRestore();
+  }, 40_000);
 });

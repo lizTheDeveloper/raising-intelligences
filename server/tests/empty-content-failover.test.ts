@@ -32,6 +32,7 @@ vi.mock("openai", () => {
 const { RoutingLLMClient, EMPTY_CONTENT_FAILOVER_MODEL } = await import(
   "../src/llm/routing-client.js"
 );
+const { logger } = await import("../src/logger.js");
 
 const empty = () => ({ choices: [{ message: { content: null } }], usage: undefined });
 const says = (t: string) => ({ choices: [{ message: { content: t } }], usage: undefined });
@@ -110,5 +111,30 @@ describe("empty-content failover", () => {
     await expect(
       client.completeResponse("sys", "user", 100, "psychologist"),
     ).rejects.toThrow(/Unexpected response/);
+  }, 40_000);
+
+  it("logs role and model context when the failover is exhausted", async () => {
+    /**
+     * GlitchTip prunes full events, so a bare "Unexpected response from
+     * openrouter" (the case where even EMPTY_CONTENT_FAILOVER_MODEL comes
+     * back empty) carried no role or model — see #169/#170/#171. The error
+     * message and an error-level log line must both carry that context so
+     * the next occurrence is diagnosable without a stack trace.
+     */
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+    createMock.mockImplementation(async () => empty());
+    const client = new RoutingLLMClient();
+
+    await expect(
+      client.completeResponse("sys", "user", 100, "psychologist"),
+    ).rejects.toThrow(
+      new RegExp(`Unexpected response from openrouter \\(role=psychologist, model=.*${EMPTY_CONTENT_FAILOVER_MODEL.replace(/[/.]/g, "\\$&")}`),
+    );
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "llm_empty_content_exhausted",
+      expect.objectContaining({ role: "psychologist", provider: "openrouter", model: EMPTY_CONTENT_FAILOVER_MODEL }),
+    );
+    errorSpy.mockRestore();
   }, 40_000);
 });
