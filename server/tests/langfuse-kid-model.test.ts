@@ -40,6 +40,7 @@ describe("Langfuse generation model for rotated kid voices", () => {
     generations.length = 0;
     process.env.LANGFUSE_PUBLIC_KEY = "pk-test";
     process.env.LANGFUSE_SECRET_KEY = "sk-test";
+    process.env.LANGFUSE_HOST = "https://langfuse.example.internal";
     vi.resetModules();
     _resetPoolCacheForTests();
     _setPoolForTests("standard", pool);
@@ -47,6 +48,7 @@ describe("Langfuse generation model for rotated kid voices", () => {
   afterEach(() => {
     delete process.env.LANGFUSE_PUBLIC_KEY;
     delete process.env.LANGFUSE_SECRET_KEY;
+    delete process.env.LANGFUSE_HOST;
   });
 
   it("logs the rotated kid model, not the role default, for a kid chat", async () => {
