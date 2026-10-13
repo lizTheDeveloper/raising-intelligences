@@ -1222,7 +1222,17 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           const msgs = result.state.messages;
           const lastMsg = msgs[msgs.length - 1];
           if (lastMsg) {
-            lastMsg.content = stripSceneEnd(lastMsg.content);
+            // Rebuild immutably rather than mutating the message object in
+            // place — every other state change goes through transition()/a
+            // spread update, and this object is already sitting in
+            // result.state.messages, about to be persisted.
+            result.state = {
+              ...result.state,
+              messages: [
+                ...msgs.slice(0, -1),
+                { ...lastMsg, content: stripSceneEnd(lastMsg.content) },
+              ],
+            };
           }
         }
 

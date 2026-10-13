@@ -186,7 +186,13 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit, gameLocks }));
   app.use("/api", createUserRoutes());
   app.use("/api", createAlbumRoutes(repo));
-  app.use("/api", supportCheckoutLimit, createSupportRoutes());
+  // The limiter is scoped to the /support/checkout route itself, not mounted
+  // as blanket middleware at the /api prefix — app.use("/api", mw, router)
+  // would have run `mw` for every /api/* request regardless of which router
+  // ultimately handled it (Express matches the mount prefix before trying
+  // the router's own routes), capping the whole API at the checkout-specific
+  // rate instead of just the one endpoint.
+  app.use("/api", createSupportRoutes(supportCheckoutLimit));
   if (adminQueries) {
     app.use("/api", createAdminRoutes(adminQueries, repo));
   }

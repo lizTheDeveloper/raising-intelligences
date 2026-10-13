@@ -4,6 +4,7 @@ import * as Sentry from "@sentry/browser";
 import { App } from "./App";
 import { startSessionTracking } from "./analytics";
 import { normalizeNullPayload, toReportableRejection, toReportableWindowError } from "./errorReporting";
+import { eventHasOnlyThirdPartyFrames } from "./errorNoise";
 import "./global.css";
 
 /**
@@ -24,6 +25,10 @@ if (import.meta.env.VITE_SENTRY_DSN) {
     // This game's transcripts are intimate parent/child roleplay. Never let a
     // crash report carry user identity or the conversation itself.
     beforeSend(event) {
+      // MUL-13: drop content-blocker / extension noise at the source — an event
+      // whose frames are ALL opaque or non-studio-origin cannot contain our bug.
+      // Kept: ≥1 same-origin/studio frame, frame-less events, mixed stacks.
+      if (eventHasOnlyThirdPartyFrames(event, location.origin)) return null;
       delete event.user;
       // Drop benign network/abort noise — a dropped connection or a fetch/SSE
       // aborted on unmount is a browser network-layer failure ("Load failed",
@@ -34,6 +39,15 @@ if (import.meta.env.VITE_SENTRY_DSN) {
       const msg =
         event.exception?.values?.[0]?.value ?? (typeof event.message === "string" ? event.message : "");
       if (/load failed|failed to fetch|networkerror|operation was aborted|aborterror/i.test(msg)) {
+        return null;
+      }
+      // Drop host-app/webview bridge noise: neither `runtime.sendMessage`
+      // (the Chrome extension messaging API) nor `postMessage`/`iabjs://`
+      // (an Android in-app-browser JS bridge) appear anywhere in this app's
+      // code — both are thrown by something injected around the page
+      // (a browser extension, or the native shell embedding this site),
+      // not by our own crash.
+      if (/runtime\.sendMessage|extension context invalidated|iabjs:\/\/|invoking postmessage/i.test(msg)) {
         return null;
       }
       // Second half of the #149 guard: the SDK's BrowserApiErrors integration

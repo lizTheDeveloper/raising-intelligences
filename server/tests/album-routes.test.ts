@@ -12,16 +12,33 @@ describe("Album API routes", () => {
     await server.stop();
   });
 
-  it("GET /api/user/:userId/album returns empty album for user with no games", async () => {
+  it("GET /api/user/:userId/album returns 400 for a malformed userId", async () => {
     const res = await fetch(`${server.baseUrl}/api/user/unknown-user/album`);
+    expect(res.status).toBe(400);
+  });
+
+  it("GET /api/user/:userId/album returns empty album for user with no games", async () => {
+    const userId = "00000000-0000-0000-0000-000000000000";
+    const res = await fetch(`${server.baseUrl}/api/user/${userId}/album`);
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data).toEqual({ partners: [], unlinkedKids: [] });
   });
 
+  it("GET /api/user/:userId/album/kid/:gameId returns 400 for a malformed userId or gameId", async () => {
+    const validUserId = "00000000-0000-0000-0000-000000000001";
+    const validGameId = "00000000-0000-0000-0000-0000000000aa";
+    const res1 = await fetch(`${server.baseUrl}/api/user/some-user/album/kid/${validGameId}`);
+    expect(res1.status).toBe(400);
+    const res2 = await fetch(`${server.baseUrl}/api/user/${validUserId}/album/kid/not-a-uuid`);
+    expect(res2.status).toBe(400);
+  });
+
   it("GET /api/user/:userId/album/kid/nonexistent returns 404", async () => {
+    const userId = "00000000-0000-0000-0000-000000000002";
+    const gameId = "00000000-0000-0000-0000-0000000000bb";
     const res = await fetch(
-      `${server.baseUrl}/api/user/some-user/album/kid/nonexistent`
+      `${server.baseUrl}/api/user/${userId}/album/kid/${gameId}`
     );
     expect(res.status).toBe(404);
     const data = await res.json();
@@ -29,8 +46,8 @@ describe("Album API routes", () => {
   });
 
   it("GET /api/user/:userId/album/kid/:gameId returns scrapbook data when game exists", async () => {
-    const userId = "test-user-album";
-    const gameId = "album-game-1";
+    const userId = "00000000-0000-0000-0000-000000000003";
+    const gameId = "00000000-0000-0000-0000-0000000000cc";
 
     server.memRepo.addUserGame(userId, gameId, "Luna");
     await server.memRepo.saveEndgame(gameId, "Luna grew up well.", "# Report Card\nA+");
@@ -51,8 +68,9 @@ describe("Album API routes", () => {
   });
 
   it("GET /api/user/:userId/album returns unlinked kids when no partner is assigned", async () => {
-    const userId = "test-user-unlinked";
-    server.memRepo.addUserGame(userId, "game-unlinked-1", "Kai");
+    const userId = "00000000-0000-0000-0000-000000000004";
+    const gameId = "00000000-0000-0000-0000-0000000000dd";
+    server.memRepo.addUserGame(userId, gameId, "Kai");
 
     const res = await fetch(`${server.baseUrl}/api/user/${userId}/album`);
     expect(res.status).toBe(200);
@@ -60,11 +78,12 @@ describe("Album API routes", () => {
     expect(data.partners).toEqual([]);
     expect(data.unlinkedKids).toHaveLength(1);
     expect(data.unlinkedKids[0].childName).toBe("Kai");
-    expect(data.unlinkedKids[0].gameId).toBe("game-unlinked-1");
+    expect(data.unlinkedKids[0].gameId).toBe(gameId);
   });
 
   it("GET /api/user/:userId/album groups kids under their partner", async () => {
-    const userId = "test-user-partner";
+    const userId = "00000000-0000-0000-0000-000000000005";
+    const gameId = "00000000-0000-0000-0000-0000000000ee";
     const partnerId = "partner-1";
 
     server.memRepo.addAlbumPartner(userId, {
@@ -74,7 +93,7 @@ describe("Album API routes", () => {
       relationshipSummary: "Worked well together.",
       kids: [],
     });
-    server.memRepo.addUserGame(userId, "game-partner-1", "Zoe", partnerId);
+    server.memRepo.addUserGame(userId, gameId, "Zoe", partnerId);
 
     const res = await fetch(`${server.baseUrl}/api/user/${userId}/album`);
     expect(res.status).toBe(200);

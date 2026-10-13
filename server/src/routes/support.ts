@@ -1,5 +1,5 @@
 import { Router } from "express";
-import type { Request, Response } from "express";
+import type { Request, Response, RequestHandler } from "express";
 import { logger } from "../logger.js";
 
 /**
@@ -37,10 +37,10 @@ const MAX_CENTS = 100_000; // $1,000
  * "raising_intelligences") so the browser never needs stripe-webhook's
  * ALLOWED_ORIGINS/CSP wired in — this app's own CSP connectSrc stays 'self'.
  */
-export function createSupportRoutes(): Router {
+export function createSupportRoutes(checkoutLimit?: RequestHandler): Router {
   const router = Router();
 
-  router.post("/support/checkout", async (req: Request, res: Response) => {
+  router.post("/support/checkout", ...(checkoutLimit ? [checkoutLimit] : []), async (req: Request, res: Response) => {
     const { amount, sourcePage } = req.body as { amount?: number; sourcePage?: string };
 
     if (!Number.isInteger(amount) || (amount as number) < MIN_CENTS || (amount as number) > MAX_CENTS) {

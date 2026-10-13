@@ -20,6 +20,24 @@ async function waitForStreamingDone(page, timeout = LLM_TIMEOUT) {
   await page.waitForSelector('form.message-input input:not([disabled])', { timeout });
 }
 
+// The input re-enabling and the chat list re-rendering with the new message
+// are two separate DOM updates; reading .message count right after the input
+// unlocks can race the list before it catches up. Poll briefly for the count
+// to reach the expected value instead of reading it once.
+async function waitForMessageCount(page, count, timeout = 5_000) {
+  try {
+    await page.waitForFunction(
+      (n) => document.querySelectorAll(".message").length >= n,
+      count,
+      { timeout }
+    );
+  } catch {
+    // Fall through — the caller reads the actual count and logs an issue if
+    // it's still short after the wait.
+  }
+  return page.$$eval(".message", (els) => els.length);
+}
+
 async function run() {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
@@ -190,7 +208,7 @@ async function run() {
     await waitForStreamingDone(page);
     console.log("  ✓ First response received");
 
-    const msgs1 = await page.$$eval(".message", (els) => els.length);
+    const msgs1 = await waitForMessageCount(page, 2);
     console.log(`  Messages visible: ${msgs1}`);
     if (msgs1 < 2) {
       logIssue("Fewer than 2 messages after first exchange", `Expected parent + kid = 2 messages, got ${msgs1}`);
