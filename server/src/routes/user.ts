@@ -1,6 +1,8 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
 import { query } from "../db/pool.js";
+import type { GameRepository } from "../db/repository.js";
+import type { GameState } from "../types.js";
 
 const MAX_USER_ID_LENGTH = 300;
 
@@ -12,7 +14,13 @@ function isValidUserId(id: string): boolean {
   return MATRIX_ID_RE.test(id) || UUID_RE.test(id);
 }
 
-export function createUserRoutes(): Router {
+/**
+ * @param games The authoritative in-memory game-state cache shared with the
+ * game/socket routes (see app.ts). Deleting a user's data must also evict
+ * any of their games from this cache, or a game deleted from the repository
+ * could still be served from memory until eviction/restart.
+ */
+export function createUserRoutes(repo: GameRepository, games: Map<string, GameState>): Router {
   const router = Router();
 
   router.get("/user/:userId/kids", async (req: Request, res: Response) => {
@@ -55,6 +63,23 @@ export function createUserRoutes(): Router {
       );
     }
     res.json({ synced: kids.length });
+  });
+
+  // Data-subject erasure (issue #141): deletes every game linked to this
+  // userId (and that game's messages/events/album/etc. via cascade), plus
+  // this user's album partners. See GameRepository.deleteUserData for the
+  // exact scope and its limitations.
+  router.delete("/user/:userId", async (req: Request, res: Response) => {
+    const userId = String(req.params.userId);
+    if (!isValidUserId(userId)) {
+      res.status(400).json({ error: "Invalid userId format" });
+      return;
+    }
+    const { deletedGameIds } = await repo.deleteUserData(userId);
+    for (const gameId of deletedGameIds) {
+      games.delete(gameId);
+    }
+    res.json({ deletedGameIds });
   });
 
   return router;

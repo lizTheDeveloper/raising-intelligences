@@ -125,6 +125,22 @@ export interface GameRepository {
   }): Promise<void>;
   /** Whether this IP already has an escalation flag on file — evaluateEscalation records once per IP. */
   hasEscalationFlagForIp(ipAddress: string): Promise<boolean>;
+
+  /**
+   * Data-subject erasure (issue #141): deletes every game this user is
+   * linked to via `user_games` — cascading to that game's players, events,
+   * messages, identity snapshots, endgame, moderation flags, and album
+   * moments — plus this user's album partners and concern/escalation rows
+   * (the two tables not wired to `games` via `ON DELETE CASCADE`).
+   *
+   * Scoped to what the user themselves can request self-service: it removes
+   * everything keyed to their `userId`, not a full retention/purge policy
+   * (IP logs on games other users co-own, etc. — see issue #141's other
+   * open items).
+   *
+   * Returns the ids of the games that were deleted.
+   */
+  deleteUserData(userId: string): Promise<{ deletedGameIds: string[] }>;
 }
 
 const DEFAULT_TOTAL_EVENTS = 10;
@@ -790,6 +806,30 @@ export class PgGameRepository implements GameRepository {
     const res = await this.db.query("SELECT 1 FROM escalation_flags WHERE ip_address = $1 LIMIT 1", [ipAddress]);
     return res.rows.length > 0;
   }
+
+  async deleteUserData(userId: string): Promise<{ deletedGameIds: string[] }> {
+    const linked = await this.db.query<{ game_id: string }>(
+      "SELECT DISTINCT game_id FROM user_games WHERE user_id = $1",
+      [userId]
+    );
+    const deletedGameIds = linked.rows.map((r) => r.game_id);
+
+    if (deletedGameIds.length > 0) {
+      // concern_events and escalation_flags have no FK to games (see
+      // migrations 014/018), so they are not covered by the games row's
+      // ON DELETE CASCADE and must be cleared explicitly.
+      await this.db.query("DELETE FROM concern_events WHERE game_id = ANY($1::uuid[])", [deletedGameIds]);
+      await this.db.query("DELETE FROM escalation_flags WHERE game_id = ANY($1::uuid[])", [deletedGameIds]);
+      // Cascades to players, events, messages, identity_snapshots, endgames,
+      // moderation_flags, album_moments, and the user_games rows themselves.
+      await this.db.query("DELETE FROM games WHERE id = ANY($1::uuid[])", [deletedGameIds]);
+    }
+    // album_partners is keyed by user_id directly, not by game_id, so it
+    // survives the games cascade above and needs its own delete.
+    await this.db.query("DELETE FROM album_partners WHERE user_id = $1", [userId]);
+
+    return { deletedGameIds };
+  }
 }
 
 /**
@@ -1192,5 +1232,33 @@ export class InMemoryGameRepository implements GameRepository {
     ordinaryGames: number;
   }> {
     return this.escalationFlags.map(({ createdAt: _createdAt, ...rest }) => rest);
+  }
+
+  async deleteUserData(userId: string): Promise<{ deletedGameIds: string[] }> {
+    const deletedGameIds = [...this.userGames.values()]
+      .filter((ug) => ug.userId === userId)
+      .map((ug) => ug.gameId);
+
+    for (const gameId of deletedGameIds) {
+      this.games.delete(gameId);
+      this.messages.delete(gameId);
+      this.events.delete(gameId);
+      this.snapshots.delete(gameId);
+      this.endgames.delete(gameId);
+      this.playerRecords.delete(gameId);
+      this.albumMoments.delete(gameId);
+      this.gameIpAddresses.delete(gameId);
+      this.moderationFlags = this.moderationFlags.filter((f) => f.gameId !== gameId);
+      this.concernEvents = this.concernEvents.filter((e) => e.gameId !== gameId);
+      this.escalationFlags = this.escalationFlags.filter((f) => f.gameId !== gameId);
+      this.userGames.delete(`${userId}:${gameId}`);
+      this.partnerLinks.delete(`${userId}:${gameId}`);
+    }
+
+    for (const [id, partner] of this.albumPartners) {
+      if (partner.userId === userId) this.albumPartners.delete(id);
+    }
+
+    return { deletedGameIds };
   }
 }
