@@ -19,6 +19,22 @@ describe("Admin API routes", () => {
     expect(res.status).toBe(401);
   });
 
+  it("is not throttled by the /support/checkout rate limiter", async () => {
+    // Regression guard: app.ts used to mount `supportCheckoutLimit` as
+    // blanket middleware at the /api prefix (`app.use("/api", limit, router)`),
+    // which Express runs for every /api/* request regardless of which router
+    // ends up handling it — capping the entire API (not just checkout) at
+    // the checkout-specific rate. 15 admin requests here is one more than
+    // that limiter's max (10), so a regression would 429 before this
+    // completes.
+    for (let i = 0; i < 15; i++) {
+      const res = await fetch(`${server.baseUrl}/api/admin/overview`, {
+        headers: { Authorization: "Bearer test-admin-secret" },
+      });
+      expect(res.status).toBe(200);
+    }
+  });
+
   it("rejects requests with wrong token", async () => {
     const res = await fetch(`${server.baseUrl}/api/admin/overview`, {
       headers: { Authorization: "Bearer wrong-token" },
@@ -74,6 +90,39 @@ describe("Admin API routes", () => {
     const data = await res.json();
     expect(data.games.length).toBeGreaterThanOrEqual(1);
     expect(data.games.some((g: { id: string }) => g.id === "completed-1")).toBe(true);
+  });
+
+  it("clamps non-numeric or negative limit/offset instead of erroring", async () => {
+    const res = await fetch(`${server.baseUrl}/api/admin/games?limit=abc&offset=-5`, {
+      headers: { Authorization: "Bearer test-admin-secret" },
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data.games)).toBe(true);
+  });
+
+  it("caps an oversized limit instead of returning the whole table", async () => {
+    for (let i = 0; i < 5; i++) {
+      server.adminQueries.addGame({
+        id: `page-game-${i}`,
+        childName: `Kid${i}`,
+        phase: "family_chat",
+        currentEventNumber: 1,
+        totalEvents: 10,
+        relationshipType: "co-parents",
+        identityDocument: "",
+        sidebarUsedParent1: false,
+        sidebarUsedParent2: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    }
+    const res = await fetch(`${server.baseUrl}/api/admin/games?limit=100000000`, {
+      headers: { Authorization: "Bearer test-admin-secret" },
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.games.length).toBeLessThanOrEqual(200);
   });
 
   it("returns game detail", async () => {
