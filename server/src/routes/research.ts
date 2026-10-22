@@ -63,9 +63,9 @@ function validateBody(body: unknown, state: GameState): Validated {
 export function createResearchRoutes(
   games: Map<string, GameState>,
   repo: GameRepository,
-  options: { gameLocks?: Map<string, Promise<void>> } = {},
+  options: { gameLocks?: Map<string, Promise<void>>; hasSeat?: (gameId: string) => boolean } = {},
 ): Router {
-  const { gameLocks = new Map<string, Promise<void>>() } = options;
+  const { gameLocks = new Map<string, Promise<void>>(), hasSeat = () => false } = options;
   const router = Router();
 
   // Check order: secret first (403 regardless of anything else), then the
@@ -162,7 +162,11 @@ export function createResearchRoutes(
           await repo.saveAnswer(stored);
           const context = await loadParentContext(gameId, repo);
           const live = games.get(gameId);
-          if (live) live.parentContext = context || undefined;
+          // Fail closed. JOIN_GAME seats a player in memory synchronously and
+          // clears the context in the same tick, so this synchronous check (no
+          // await between it and the assignment) cannot interleave with a seat:
+          // either the seat is already visible here, or JOIN's clear runs after.
+          if (live) live.parentContext = !hasSeat(gameId) && context ? context : undefined;
         });
       }
       res.status(204).end();

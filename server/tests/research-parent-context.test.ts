@@ -301,6 +301,33 @@ describe("parent context through the HTTP flow", () => {
     expect(await loadParentContext(g.gameId, repo)).toBe("");
   });
 
+  it("a JOIN that seats a player while an answer is between its seat read and its assignment leaves no context", async () => {
+    const g = await create(1985);
+    const realList = repo.listAnswers.bind(repo);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let reached!: () => void;
+    const atGate = new Promise<void>((r) => { reached = r; });
+    repo.listAnswers = async (id: string) => {
+      const rows = await realList(id);
+      if (id === g.gameId) { reached(); await gate; }
+      return rows;
+    };
+    try {
+      const pending = answer(g.gameId, g.secret, "worry_for_child", "RACE-SENTINEL");
+      await atGate; // the answer has read zero seats from the DB and is paused
+      const c = await sock();
+      const joined = c.once(E.JOINED);
+      c.emit(E.JOIN_GAME, { gameId: g.gameId });
+      await joined; // seat added, saved, context cleared
+      release();
+      expect((await pending).status).toBe(204);
+    } finally {
+      repo.listAnswers = realList;
+    }
+    expect(built.games.get(g.gameId)!.parentContext).toBeUndefined();
+  });
+
   it("a game created without birthYear (the multiplayer create path) gets nothing, via REST and socket JOIN", async () => {
     const g = await create();
     await repo.saveAnswer(row({ gameId: g.gameId, answer: "NOAGE-SENTINEL" }));
