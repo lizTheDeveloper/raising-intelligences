@@ -62,8 +62,7 @@ import { buildSceneTranscript } from "../game/context-assembler.js";
 import { captureException } from "../observability/sentry.js";
 import { generateMultiplayerAlbums } from "../game/album-generator.js";
 import { logger } from "../logger.js";
-import { isResearchEnabled } from "../research/config.js";
-import { withParentContext } from "../research/parent-context.js";
+import { loadParentContext } from "../research/parent-context.js";
 
 export interface SocketDeps {
   io: Server;
@@ -663,13 +662,23 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       // Load game state if not in memory
       let state = games.get(gameId);
       if (!state) {
+        // The research lookup runs concurrently with loadGame and never
+        // delays registering the game: the state goes into `games` straight
+        // after loadGame resolves, and parentContext is filled into that
+        // registered object in place once the lookup lands.
+        const lookup = loadParentContext(gameId, repo).catch((err) => {
+          logger.warn("parent_context_rehydrate_failed", { gameId, error: err instanceof Error ? err.message : String(err) });
+          return "";
+        });
         const loaded = await repo.loadGame(gameId);
         if (loaded) {
-          state = loaded;
-          if (isResearchEnabled()) state = await withParentContext(loaded, repo);
-          // A concurrent REST request may have rehydrated during the await.
-          state = games.get(gameId) ?? state;
+          state = games.get(gameId) ?? loaded;
           games.set(gameId, state);
+          const registered = state;
+          void lookup.then((ctx) => {
+            const live = games.get(gameId) ?? registered;
+            if (ctx && !live.parentContext) live.parentContext = ctx;
+          });
         }
       }
       if (!state) return fail("Game not found");

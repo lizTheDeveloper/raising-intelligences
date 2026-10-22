@@ -5,7 +5,8 @@ import type { GameState } from "../types.js";
 import { resolveGame } from "../lib/resolve-game.js";
 import { isResearchEnabled } from "../research/config.js";
 import { withGameLock } from "../lib/game-lock.js";
-import { formatParentContext } from "../research/parent-context.js";
+import { loadParentContext } from "../research/parent-context.js";
+import { cleanUntrustedText } from "../research/sanitize.js";
 import { requireGameSecret } from "../security/game-secret.js";
 import {
   QUESTION_BANK,
@@ -17,12 +18,6 @@ import {
 } from "../research/questions.js";
 
 const MAX_QUESTIONS_PER_WAIT = 2;
-// Whitespace controls become a space so words do not run together.
-const WHITESPACE_CONTROLS = /[\t\n\v\f\r\u0085\u2028\u2029]/g;
-// Other C0/C1 controls, and invisible formatting / bidi characters, are removed.
-// eslint-disable-next-line no-control-regex
-const STRIPPED_CHARS = /[\u0000-\u0008\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
-
 function notAvailable(res: Response): void {
   res.status(404).json({ error: "Not available" });
 }
@@ -30,16 +25,6 @@ function notAvailable(res: Response): void {
 type Validated =
   | { ok: true; question: Question; sceneIndex: number; answer: unknown; skipped: boolean; shownAt: number }
   | { ok: false; error: string };
-
-function cleanText(raw: string, maxLength: number): string {
-  const stripped = raw
-    .replace(WHITESPACE_CONTROLS, " ")
-    .replace(STRIPPED_CHARS, "")
-    .replace(/ {2,}/g, " ")
-    .trim();
-  // Cap by code point so a surrogate pair is never split.
-  return Array.from(stripped).slice(0, maxLength).join("").trim();
-}
 
 function validateBody(body: unknown, state: GameState): Validated {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -70,7 +55,7 @@ function validateBody(body: unknown, state: GameState): Validated {
     return { ok: true, question, sceneIndex, answer: b.answer, skipped: false, shownAt: b.shownAt };
   }
   if (typeof b.answer !== "string") return { ok: false, error: "Invalid answer" };
-  const text = cleanText(b.answer, spec.maxLength);
+  const text = cleanUntrustedText(b.answer, spec.maxLength);
   if (!text) return { ok: false, error: "Invalid answer" };
   return { ok: true, question, sceneIndex, answer: text, skipped: false, shownAt: b.shownAt };
 }
@@ -175,7 +160,7 @@ export function createResearchRoutes(
         // nor overwrites it with a stale copy.
         await withGameLock(gameLocks, gameId, async () => {
           await repo.saveAnswer(stored);
-          const context = formatParentContext(await repo.listAnswers(gameId));
+          const context = await loadParentContext(gameId, repo);
           const live = games.get(gameId);
           if (live) live.parentContext = context || undefined;
         });

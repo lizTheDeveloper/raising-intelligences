@@ -1,3 +1,4 @@
+import { kidParentContext } from "../research/parent-context.js";
 import type { GameState, Message } from "../types.js";
 import {
   PSYCHOLOGIST_SYSTEM_PROMPT,
@@ -150,7 +151,7 @@ The parents have sent ${state.parentMessageCount} of ${PARENT_MESSAGE_CAP} messa
     + `\n\n${scenePacing}\n\n${identitySection}`
     + (memorySection ? `\n\n${memorySection}` : "")
     + `\n\nThe current situation: ${state.currentEvent?.description ?? ""}`
-    + (state.parentContext ? `\n\n${state.parentContext}` : "");
+    + (state.parentContext ? `\n\n${kidParentContext(state.parentContext)}` : "");
 
   const eventMessages = currentEventMessages(state);
   const isInSidebar = state.phase === "sidebar";

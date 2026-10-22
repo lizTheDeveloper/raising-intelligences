@@ -1,6 +1,6 @@
 import type { GameRepository } from "../db/repository.js";
 import type { GameState } from "../types.js";
-import { withParentContext } from "../research/parent-context.js";
+import { loadParentContext } from "../research/parent-context.js";
 
 export async function resolveGame(
   id: string,
@@ -13,7 +13,8 @@ export async function resolveGame(
   if (!loaded) return null;
   // parentContext is in-memory only: rebuild it (research-enabled adult games
   // only) whenever a game is brought back from the repo.
-  const state = await withParentContext(loaded, repo);
+  const parentContext = await loadParentContext(id, repo);
+  const state = parentContext ? { ...loaded, parentContext } : loaded;
   // Another request may have rehydrated while this one awaited; keep that copy.
   const raced = games.get(id);
   if (raced) return raced;
