@@ -20,6 +20,10 @@ export function Credits({ variant = "page", style }: Props) {
         and in collaboration with{" "}
         <a href={COLLABORATOR_URL} target="_blank" rel="noopener noreferrer">
           Brynn Caputo
+        </a>{" "}
+        &middot;{" "}
+        <a href={import.meta.env.BASE_URL + "privacy.html"} target="_blank" rel="noopener noreferrer">
+          privacy
         </a>
       </p>
     </footer>

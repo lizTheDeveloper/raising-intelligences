@@ -102,6 +102,34 @@ body::after {
   width: 200px;
 }
 
+.start-form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.birth-year-label {
+  font-size: 12px;
+  margin-top: 8px;
+}
+.birth-year-input {
+  width: 80px;
+  letter-spacing: 2px;
+}
+.practice-note {
+  max-width: 420px;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--fg-dim);
+}
+.practice-note p { margin: 0 0 6px; }
+.practice-note a {
+  color: var(--fg-dim);
+  text-decoration: underline;
+}
+.practice-note a:hover { color: var(--fg); }
+
 .saved-kids {
   margin-top: 32px;
   display: flex;

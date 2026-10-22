@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { saveGameSecret } from "./gameSecret";
 import { track, mark, secondsSince, bucketSeconds, bucketHours } from "../analytics";
 
 export interface SavedKid {
@@ -237,11 +238,13 @@ export function useGame() {
   );
 
   const createGame = useCallback(
-    async (name: string, relationshipType = "solo parent") => {
+    async (name: string, relationshipType = "solo parent", birthYear?: number) => {
       const res = await fetch(`${API}/game`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ childName: name, relationshipType }),
+        // birthYear goes in this request only: it is never saved locally and
+        // never put in a track() event.
+        body: JSON.stringify({ childName: name, relationshipType, birthYear }),
       });
       if (!res.ok) {
         const body = await res.text().catch(() => "");
@@ -249,6 +252,7 @@ export function useGame() {
         return;
       }
       const data = await res.json();
+      if (typeof data.secret === "string") saveGameSecret(data.gameId, data.secret);
       setGameId(data.gameId);
       setChildName(name);
       setPhase("event_intro");

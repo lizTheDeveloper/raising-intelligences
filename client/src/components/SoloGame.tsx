@@ -29,6 +29,15 @@ const RUNG_BY_PHASE: Record<string, number> = { consult: 1, therapy: 2, cps_revi
 /** Where the saved-kids picker parks its intent across the reload it triggers.
  *  `handleResume` navigates rather than loading in place, so the resume lands
  *  on the `?game=` path and would otherwise be indistinguishable from a link. */
+const PRIVACY_URL = import.meta.env.BASE_URL + "privacy.html";
+
+/** A 4-digit year from 1900 to this year, or null. */
+function parseBirthYear(input: string): number | null {
+  if (!/^\d{4}$/.test(input)) return null;
+  const year = Number(input);
+  return year >= 1900 && year <= new Date().getFullYear() ? year : null;
+}
+
 const RESUME_SOURCE_KEY = "ri_resume_source";
 
 export function SoloGame() {
@@ -64,6 +73,7 @@ export function SoloGame() {
   } = useGame();
 
   const [nameInput, setNameInput] = useState("");
+  const [birthYearInput, setBirthYearInput] = useState("");
   const [loadingEvent, setLoadingEvent] = useState(false);
   const [showGuardian, setShowGuardian] = useState(false);
   const [matrixUser, setMatrixUser] = useState<string | null>(
@@ -165,8 +175,12 @@ export function SoloGame() {
     };
   }, [syncOnLogin]);
 
+  // Client-side convenience only; the server validates again. Deliberately
+  // not persisted and not passed to track().
+  const birthYear = parseBirthYear(birthYearInput);
+
   const handleStart = async () => {
-    if (!nameInput.trim()) return;
+    if (!nameInput.trim() || birthYear === null) return;
     // Emitted BEFORE the POST, deliberately: it is the numerator for the
     // mode_selected → game_started loss, and a create that fails server-side
     // must still count as an attempt. Without it, "abandoned the form" and
@@ -179,7 +193,7 @@ export function SoloGame() {
       ...(setupSeconds !== null ? { secondsOnSetup: bucketSeconds(setupSeconds) } : {}),
     });
     setShowGuardian(true);
-    const id = await createGame(nameInput.trim());
+    const id = await createGame(nameInput.trim(), undefined, birthYear);
     if (!id) {
       setShowGuardian(false);
       return;
@@ -321,6 +335,7 @@ export function SoloGame() {
           <h1>raising intelligences</h1>
           <p className="dim">name your child</p>
           <form
+            className="start-form"
             onSubmit={(e) => {
               e.preventDefault();
               handleStart();
@@ -333,10 +348,41 @@ export function SoloGame() {
               autoFocus
               className="name-input"
             />
-            <button type="submit" className="btn" data-testid="btn-begin" disabled={!nameInput.trim()}>
+            <label className="birth-year-label dim" htmlFor="birth-year">
+              the year you were born
+            </label>
+            <input
+              id="birth-year"
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={4}
+              value={birthYearInput}
+              onChange={(e) => setBirthYearInput(e.target.value.replace(/\D/g, ""))}
+              className="name-input birth-year-input"
+              data-testid="birth-year"
+            />
+            <button
+              type="submit"
+              className="btn"
+              data-testid="btn-begin"
+              disabled={!nameInput.trim() || birthYear === null}
+            >
               begin
             </button>
           </form>
+          {/* COPY: pending Liz review */}
+          <div className="practice-note" data-testid="practice-note">
+            <p>
+              your child is an AI. this is a place to practice, not therapy.{" "}
+              <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer">
+                privacy
+              </a>
+            </p>
+            <p>
+              If you're in crisis, call or text 988 in the US, or find a local line at findahelpline.com
+            </p>
+          </div>
           {savedKids.length > 0 && (
             <div className="saved-kids">
               <p className="dim">or continue raising...</p>
