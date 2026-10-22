@@ -100,7 +100,9 @@ export function createGameRoutes(
     // GameState; written directly to the games row.
     await repo.recordGameIp(state.id, req.ip ?? null);
     res.json({ gameId: state.id });
-    // Kick off gender inference, portrait, and first-event generation in parallel.
+    // Kick off gender inference and portrait generation in parallel. Scene 1 is
+    // deliberately not prefetched here: it must be built after the personality
+    // seed exists, so /next-event generates it via engine.startEvent.
     inferGender(engine.llm, childName).then(async (gender) => {
       // Re-read the live state: /next-event may have already transitioned to
       // family_chat by the time gender inference completes (especially on retry).
@@ -113,7 +115,6 @@ export function createGameRoutes(
     }).catch(() => {
       generateFirstPortrait(state.id).catch(() => {});
     });
-    prefetchedEvents.set(state.id, engine.prefetchNextEvent(state));
   });
 
   router.get("/game/:id/state", async (req: Request, res: Response) => {
