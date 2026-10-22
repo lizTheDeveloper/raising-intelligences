@@ -1112,6 +1112,45 @@ body::after {
   animation-delay: 1500ms;
 }
 
+/* What the child kept, and what the player hoped. Quiet: small, dim, no
+   emphasis. Capped and scrollable so the continue / end-childhood buttons
+   below stay on screen on a phone however long the memory is. */
+.debrief-kept {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 480px;
+  width: 100%;
+  max-height: 32dvh;
+  overflow-y: auto;
+  text-align: left;
+  opacity: 0;
+  animation: fadeIn 900ms ease both;
+  animation-delay: 2200ms;
+}
+
+.debrief-kept-label {
+  font-size: 11px;
+  color: var(--fg-dim);
+  letter-spacing: 3px;
+  text-transform: lowercase;
+  margin-bottom: 4px;
+}
+
+.debrief-kept-text {
+  font-size: 14px;
+  line-height: 1.6;
+  font-style: italic;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 480px) {
+  .debrief-enhanced:has(.debrief-kept) { gap: 20px; }
+  .debrief-kept { max-height: 28dvh; }
+}
+
 /* ─── Epilogue Staggered Reveal ──────────────────────────────── */
 
 .epilogue-para {

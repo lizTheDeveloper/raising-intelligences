@@ -118,13 +118,15 @@ export function WaitQuestions({
   wait,
   sceneIndex,
   active = true,
+  onAnswered,
 }: {
   gameId: string | null | undefined;
   wait: WaitKind;
   sceneIndex: number;
   active?: boolean;
+  onAnswered?: (q: Question, answer: unknown, sceneIndex: number) => void;
 }) {
-  const { current, submit, skip } = useWaitQuestions(gameId ?? null, wait, sceneIndex, active);
+  const { current, submit, skip } = useWaitQuestions(gameId ?? null, wait, sceneIndex, active, onAnswered);
   // The fade is for card-to-card changes and a finished queue. A wait that has
   // ended removes the card outright, with no fade to linger through.
   if (!active) return null;

@@ -15,6 +15,7 @@ import { GuardianScreen } from "./GuardianScreen";
 import { EventIntro } from "./EventIntro";
 import { Chat } from "./Chat";
 import { Debrief } from "./Debrief";
+import type { Question } from "../researchTypes";
 import { ConsultScreen } from "./ConsultScreen";
 import { TherapyScreen } from "./TherapyScreen";
 import { CpsScreen } from "./CpsScreen";
@@ -62,6 +63,7 @@ export function SoloGame() {
     epilogue,
     reportCard,
     error,
+    memorySummary,
     generateEpilogue,
     generateReportCard,
   } = useGame();
@@ -80,6 +82,21 @@ export function SoloGame() {
   else if (serverEventNumber !== null && serverEventNumber > lastSceneRef.current) {
     lastSceneRef.current = serverEventNumber;
   }
+  // What the player said they hoped the child would take from the scene just
+  // played: their own answer to the "about_moment" wait card, held here only so
+  // the debrief can show it back. Never fetched, never saved, never tracked;
+  // keyed by scene so it cannot outlive that scene's debrief.
+  const [hopedAnswer, setHopedAnswer] = useState<{ scene: number; text: string } | null>(null);
+  const handleQuestionAnswered = (q: Question, answer: unknown, scene: number) => {
+    if (q.kind !== "about_moment" || typeof answer !== "string") return;
+    const text = answer.trim();
+    if (text) setHopedAnswer({ scene, text });
+  };
+  // Dropped as soon as the next scene begins or the game ends: it is kept only
+  // through the processing wait and the debrief that follow its own scene.
+  useEffect(() => {
+    if (phase !== "processing" && phase !== "debrief") setHopedAnswer(null);
+  }, [phase]);
   const [showGuardian, setShowGuardian] = useState(false);
   const [matrixUser, setMatrixUser] = useState<string | null>(
     () => window.matrixAuth?.getUserId() ?? null
@@ -522,7 +539,7 @@ export function SoloGame() {
   if (phase === "processing") {
     return (
       <div className="app">
-        <ProcessingScreen childName={childName} age={currentEvent?.age} gameId={gameId} streamingText={streamingDocText} sceneIndex={currentEvent?.eventNumber} />
+        <ProcessingScreen childName={childName} age={currentEvent?.age} gameId={gameId} streamingText={streamingDocText} sceneIndex={currentEvent?.eventNumber} onQuestionAnswered={handleQuestionAnswered} />
       </div>
     );
   }
@@ -532,6 +549,8 @@ export function SoloGame() {
       <div className="app">
         {error && <p className="error-banner">{error}</p>}
         <Debrief
+          memorySummary={memorySummary}
+          hoped={hopedAnswer && hopedAnswer.scene === currentEvent?.eventNumber ? hopedAnswer.text : undefined}
           onContinue={handleDebrief}
           // Deliberate early exit — KEPT. A parent may end childhood before the
           // arc runs out, and the auto-advance in useGame's nextEvent does not

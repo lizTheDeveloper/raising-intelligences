@@ -15,7 +15,7 @@ const q2: Question = { ...q1, id: "b", prompt: "p2" };
 
 type Call = { url: string; init?: RequestInit };
 
-function setup(opts: { respond?: (c: Call) => Promise<Response> | Response; sceneIndex?: number; research?: boolean | null } = {}) {
+function setup(opts: { respond?: (c: Call) => Promise<Response> | Response; sceneIndex?: number; research?: boolean | null; onAnswered?: (q: Question, a: unknown, scene: number) => void } = {}) {
   const calls: Call[] = [];
   const shown: Array<Question | null> = [];
   const events: Array<[string, unknown]> = [];
@@ -37,6 +37,7 @@ function setup(opts: { respond?: (c: Call) => Promise<Response> | Response; scen
     now: () => 1234,
     onCurrent: (q) => shown.push(q),
     onEvent: (e, p) => events.push([e, p]),
+    onAnswered: opts.onAnswered,
   });
   return { session, calls, shown, events };
 }
@@ -254,4 +255,29 @@ test("the posted sceneIndex is the one captured at show time, not a later prop",
   const post = calls.find((c) => c.init?.method === "POST")!;
   assert.equal(JSON.parse(post.init!.body as string).sceneIndex, 2);
   assert.equal(JSON.parse(post.init!.body as string).shownAt, 1000 + SHOW_AFTER_MS);
+});
+
+test("onAnswered gets the answer and captured scene on submit, never on skip, and never reaches analytics", async () => {
+  const got: Array<[string, unknown, number]> = [];
+  const { session, events } = setup({ sceneIndex: 3, onAnswered: (q, a, scene) => got.push([q.id, a, scene]) });
+  session.start();
+  await tick();
+  session.skip();
+  assert.deepEqual(got, []);
+  session.submit("be kind");
+  assert.deepEqual(got, [["b", "be kind", 3]]);
+  assert.ok(!JSON.stringify(events).includes("be kind"));
+});
+
+test("a throwing onAnswered does not break the wait", async () => {
+  const { session, calls, shown } = setup({
+    onAnswered: () => {
+      throw new Error("boom");
+    },
+  });
+  session.start();
+  await tick();
+  session.submit("x");
+  assert.equal(posts(calls).length, 1);
+  assert.equal(shown.at(-1)?.id, "b");
 });

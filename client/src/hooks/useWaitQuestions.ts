@@ -23,11 +23,14 @@ export function useWaitQuestions(
   wait: WaitKind,
   sceneIndex: number,
   active: boolean,
+  onAnswered?: (q: Question, answer: unknown, sceneIndex: number) => void,
 ): { current: Question | null; submit: (answer: unknown) => void; skip: () => void } {
   const [current, setCurrent] = useState<Question | null>(null);
   const sessionRef = useRef<WaitSession | null>(null);
   const sceneRef = useRef(sceneIndex);
   sceneRef.current = sceneIndex;
+  const onAnsweredRef = useRef(onAnswered);
+  onAnsweredRef.current = onAnswered;
 
   useEffect(() => {
     // A new cycle never inherits the previous cycle's card.
@@ -48,6 +51,7 @@ export function useWaitQuestions(
       fetchFn: (input, init) => fetch(input, init),
       now: Date.now,
       onCurrent: setCurrent,
+      onAnswered: (q, answer, scene) => onAnsweredRef.current?.(q, answer, scene),
       onEvent: track,
     });
     sessionRef.current = session;

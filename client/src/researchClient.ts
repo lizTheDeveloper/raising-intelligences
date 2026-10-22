@@ -41,6 +41,13 @@ export interface WaitSessionDeps {
   clearTimer?: (handle: unknown) => void;
   /** Receives the card to show, or null for none. Never called after dispose(). */
   onCurrent: (q: Question | null) => void;
+  /**
+   * Called with the player's own typed or tapped answer, once, when they answer
+   * (never on skip). It exists so the screen can show the player their own
+   * words back for the rest of the scene; the text goes nowhere else: it is not
+   * stored, and not sent to analytics.
+   */
+  onAnswered?: (q: Question, answer: unknown, sceneIndex: number) => void;
   /** Analytics. Props are ids only, never answer text. */
   onEvent: (event: "wait_question_shown" | "wait_question_answered" | "wait_question_skipped", props: { questionId: string; wait: WaitKind }) => void;
 }
@@ -133,6 +140,13 @@ export function createWaitSession(deps: WaitSessionDeps): WaitSession {
     const q = current;
     current = null;
     post(q, body);
+    if (!body.skipped) {
+      try {
+        deps.onAnswered?.(q, body.answer, sceneIndex);
+      } catch {
+        /* a caller's callback must not break the wait */
+      }
+    }
     trackSafe(body.skipped ? "wait_question_skipped" : "wait_question_answered", q.id);
     showNext();
   }
