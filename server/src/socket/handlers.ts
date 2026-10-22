@@ -62,6 +62,7 @@ import { buildSceneTranscript } from "../game/context-assembler.js";
 import { captureException } from "../observability/sentry.js";
 import { generateMultiplayerAlbums } from "../game/album-generator.js";
 import { logger } from "../logger.js";
+import { isResearchEnabled } from "../research/config.js";
 import { loadParentContext } from "../research/parent-context.js";
 
 export interface SocketDeps {
@@ -677,7 +678,9 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           const registered = state;
           void lookup.then((ctx) => {
             const live = games.get(gameId) ?? registered;
-            if (ctx && !live.parentContext) live.parentContext = ctx;
+            // Fail closed: a seated game never takes a late-arriving context.
+            const seated = (sessions.get(gameId)?.players.length ?? 0) > 0;
+            if (ctx && !seated && isResearchEnabled() && !live.parentContext) live.parentContext = ctx;
           });
         }
       }
@@ -788,6 +791,14 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       }
       session = added.session;
       sessions.set(gameId, session);
+      // Research context is solo-only: seating a player drops it, in place.
+      // Cleared again once the seat row is saved (below), so an answer that
+      // landed in between cannot leave one behind.
+      const clearParentContext = () => {
+        const live = games.get(gameId);
+        if (live) live.parentContext = undefined;
+      };
+      clearParentContext();
 
       data.gameId = gameId;
       data.slot = added.player.slot;
@@ -795,6 +806,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       await socket.join(slotRoom(gameId, added.player.slot));
 
       await repo.savePlayer(gameId, added.player.slot, added.player.displayName, added.player.token, added.player.userId);
+      clearParentContext();
       socket.emit(E.JOINED, { gameId, slot: added.player.slot, playerToken: added.player.token });
       broadcastLobby(gameId);
       socket.emit(

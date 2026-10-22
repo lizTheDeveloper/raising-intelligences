@@ -6,7 +6,7 @@ const WHITESPACE_CONTROLS = /[\t\n\v\f\r\u0085\u2028\u2029]/g;
 // separator, zero-width / bidi / invisible formatting characters, variation
 // selectors and Unicode tag characters are removed.
 const STRIPPED_CHARS = new RegExp(
-  "[\\u0000-\\u0008\\u000e-\\u001f\\u007f-\\u009f\\u00ad\\u034f\\u180e" +
+  "[\\u061c\\u115f\\u1160\\u3164\\uffa0\\u0000-\\u0008\\u000e-\\u001f\\u007f-\\u009f\\u00ad\\u034f\\u180e" +
     "\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u2064\\u2066-\\u2069\\ufeff" +
     "\\ufe00-\\ufe0f]|[\\u{e0000}-\\u{e007f}\\u{e0100}-\\u{e01ef}]",
   "gu",
