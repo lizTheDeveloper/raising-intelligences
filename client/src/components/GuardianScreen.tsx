@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { ChildPortrait } from "./ChildPortrait";
+import { WaitQuestions } from "./WaitQuestionCard";
 import { track, mark, secondsSince, bucketSeconds } from "../analytics";
 import { getWeightedFragments } from "../data/child-fragments";
 
@@ -755,6 +756,11 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
                   ? "shaping who they'll become…"
                   : "getting your story ready…"}
               </p>
+              {/* Mounted only while this spinner is: the moment `canBegin` or a
+                  failure replaces it, the card goes with it. Scene 0 = "before
+                  any scene" — the server's event number is 0 until scene 1
+                  lands, and 0 is never in its future. */}
+              <WaitQuestions gameId={gameId} wait="first" sceneIndex={0} />
             </div>
           )}
         </div>

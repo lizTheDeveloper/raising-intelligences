@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { ChildPortrait } from "./ChildPortrait";
+import { WaitQuestions } from "./WaitQuestionCard";
 
 const FRAGMENTS_BY_AGE: { maxAge: number; lines: string[] }[] = [
   {
@@ -889,9 +890,15 @@ interface Props {
   gameId?: string | null;
   /** Live-streamed text from the LLM — shown over the fragment while generating. */
   streamingText?: string;
+  /**
+   * The scene that just ended (the server's current event number). Wait-time
+   * questions are offered only when this is given; without it there is no
+   * honest scene to file an answer under, so none are asked.
+   */
+  sceneIndex?: number;
 }
 
-export function ProcessingScreen({ childName, age = 6, gameId, streamingText }: Props) {
+export function ProcessingScreen({ childName, age = 6, gameId, streamingText, sceneIndex }: Props) {
   const [fragments] = useState(() => sampleFragments(age, 8));
   const [fragmentIdx, setFragmentIdx] = useState(0);
 
@@ -919,6 +926,9 @@ export function ProcessingScreen({ childName, age = 6, gameId, streamingText }: 
           </span>
         )}
       </div>
+      {sceneIndex !== undefined && (
+        <WaitQuestions gameId={gameId} wait="post_scene" sceneIndex={sceneIndex} />
+      )}
     </div>
   );
 }

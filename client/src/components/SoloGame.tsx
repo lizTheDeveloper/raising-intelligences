@@ -68,6 +68,11 @@ export function SoloGame() {
   const [nameInput, setNameInput] = useState("");
   const [birthYearInput, setBirthYearInput] = useState("");
   const [loadingEvent, setLoadingEvent] = useState(false);
+  // The last scene the player saw. endDebrief clears currentEvent before the
+  // next-scene wait begins, but the server's event number stays at this scene
+  // until the next one lands, so this is the number wait questions file under.
+  const lastSceneRef = useRef(0);
+  if (currentEvent) lastSceneRef.current = currentEvent.eventNumber;
   const [showGuardian, setShowGuardian] = useState(false);
   const [matrixUser, setMatrixUser] = useState<string | null>(
     () => window.matrixAuth?.getUserId() ?? null
@@ -464,6 +469,7 @@ export function SoloGame() {
           onReady={currentEvent ? beginChat : handleNextEvent}
           waiting={loadingEvent}
           gameId={gameId}
+          sceneIndex={lastSceneRef.current}
         />
       </div>
     );
@@ -509,7 +515,7 @@ export function SoloGame() {
   if (phase === "processing") {
     return (
       <div className="app">
-        <ProcessingScreen childName={childName} age={currentEvent?.age} gameId={gameId} streamingText={streamingDocText} />
+        <ProcessingScreen childName={childName} age={currentEvent?.age} gameId={gameId} streamingText={streamingDocText} sceneIndex={currentEvent?.eventNumber} />
       </div>
     );
   }

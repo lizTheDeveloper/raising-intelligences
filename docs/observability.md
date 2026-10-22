@@ -33,6 +33,9 @@ The wrapper calls `window.umami?.track(...)` — a no-op if the script hasn't lo
 | `guardian_not_ready` | `GuardianScreen` | — |
 | `portrait_loaded` | `ChildPortrait` | `ageBucket`, `attempts` |
 | `portrait_failed` | `ChildPortrait` | `ageBucket` |
+| `wait_question_shown` | `useWaitQuestions` | `questionId`, `wait` |
+| `wait_question_answered` | `useWaitQuestions` | `questionId`, `wait` |
+| `wait_question_skipped` | `useWaitQuestions` | `questionId`, `wait` |
 | `error_occurred` | `useGame` | `step` |
 
 To add a new event, import `track` and call it. No registration needed — Umami creates new event names on first receipt.
