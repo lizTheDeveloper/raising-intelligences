@@ -860,6 +860,8 @@ export class InMemoryGameRepository implements GameRepository {
   // because saveGame replaces that row wholesale on every checkpoint and
   // ip_address is deliberately NOT part of GameState (see recordGameIp).
   private gameIpAddresses = new Map<string, string | null>();
+  // Self-reported age classification; under-18 entries carry birthYear null.
+  private gameAges = new Map<string, { birthYear: number | null; isAdult: boolean }>();
   private escalationFlags: Array<{
     ipAddress: string;
     gameId: string;
@@ -1168,8 +1170,6 @@ export class InMemoryGameRepository implements GameRepository {
   async recordGameIp(gameId: string, ipAddress: string | null): Promise<void> {
     this.gameIpAddresses.set(gameId, ipAddress);
   }
-
-  private gameAges = new Map<string, { birthYear: number | null; isAdult: boolean }>();
 
   async recordAge(gameId: string, age: { birthYear: number | null; isAdult: boolean }): Promise<void> {
     this.gameAges.set(gameId, { ...age });
