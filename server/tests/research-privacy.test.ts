@@ -1,8 +1,20 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { AddressInfo } from "net";
 import { buildServer, type BuiltServer } from "../src/app.js";
 import { MockLLMClient } from "../src/llm/mock.js";
 import { InMemoryGameRepository, PgGameRepository } from "../src/db/repository.js";
+
+const portraitCalls: Array<{ gameId: string; liveAtCall: boolean }> = [];
+let portraitProbe: ((gameId: string) => boolean) | null = null;
+vi.mock("../src/portrait-gen.js", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("../src/portrait-gen.js")>();
+  return {
+    ...orig,
+    generateFirstPortrait: async (gameId: string) => {
+      portraitCalls.push({ gameId, liveAtCall: portraitProbe ? portraitProbe(gameId) : true });
+    },
+  };
+});
 
 const SENTINEL = "SENTINEL-CONFESSION-research-privacy-71c2";
 
@@ -121,6 +133,74 @@ describe("deletion is not undone by in-flight gender inference", () => {
       expect((await fetch(`${base}/game/${gameId}/state`)).status).toBe(404);
     } finally {
       release();
+      await new Promise<void>((resolve) => built.httpServer.close(() => resolve()));
+    }
+  });
+});
+
+describe("deletion racing the gender-inference save", () => {
+  it("serializes the callback's save with DELETE so the row is not recreated", async () => {
+    let releaseLlm!: () => void;
+    const llmGate = new Promise<void>((r) => (releaseLlm = r));
+    let releaseSave!: () => void;
+    const saveGate = new Promise<void>((r) => (releaseSave = r));
+    let armed = false;
+    let saveStarted!: () => void;
+    const saveStartedP = new Promise<void>((r) => (saveStarted = r));
+    class GatedLLM extends MockLLMClient {
+      async completeResponse(...args: Parameters<MockLLMClient["completeResponse"]>): Promise<string> {
+        if (args[3] === "gender_inference") {
+          await llmGate;
+          return "girl";
+        }
+        return super.completeResponse(...args);
+      }
+    }
+    class GatedRepo extends InMemoryGameRepository {
+      hasGame(id: string): boolean {
+        return (this as unknown as { games: Map<string, unknown> }).games.has(id);
+      }
+      async saveGame(state: Parameters<InMemoryGameRepository["saveGame"]>[0]): Promise<void> {
+        if (armed) {
+          saveStarted();
+          await saveGate;
+        }
+        return super.saveGame(state);
+      }
+    }
+    const repo = new GatedRepo();
+    const built = buildServer({ llm: new GatedLLM(), repo, enableEviction: false, allowedOrigin: "*" });
+    await new Promise<void>((resolve) => built.httpServer.listen(0, "127.0.0.1", () => resolve()));
+    const base = `http://127.0.0.1:${(built.httpServer.address() as AddressInfo).port}/api`;
+    portraitCalls.length = 0;
+    portraitProbe = (id) => built.games.has(id) && repo.hasGame(id);
+    try {
+      const res = await fetch(`${base}/game`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Forwarded-For": "203.0.113.22" },
+        body: JSON.stringify({ childName: "Kai" }),
+      });
+      const { gameId, secret } = (await res.json()) as { gameId: string; secret: string };
+
+      armed = true;
+      releaseLlm();
+      await saveStartedP; // callback is now inside the lock with its save pending
+      const delP = fetch(`${base}/game/${gameId}`, { method: "DELETE", headers: { "x-game-secret": secret } });
+      await new Promise((r) => setTimeout(r, 30));
+      releaseSave();
+      expect((await delP).status).toBe(204);
+      await new Promise((r) => setTimeout(r, 30));
+
+      expect(repo.hasGame(gameId)).toBe(false);
+      expect(await repo.loadGame(gameId)).toBeNull();
+      expect(built.games.has(gameId)).toBe(false);
+      expect((await fetch(`${base}/game/${gameId}/state`)).status).toBe(404);
+      // Any portrait kickoff must have happened while the game still existed.
+      expect(portraitCalls.every((c) => c.liveAtCall)).toBe(true);
+    } finally {
+      releaseLlm();
+      releaseSave();
+      portraitProbe = null;
       await new Promise<void>((resolve) => built.httpServer.close(() => resolve()));
     }
   });

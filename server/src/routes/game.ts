@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import { existsSync } from "fs";
 import path from "path";
+import { rm } from "fs/promises";
 import { ConversationEngine } from "../game/conversation-engine.js";
 import type { EndgameEngine } from "../game/endgame-engine.js";
 import {
@@ -122,19 +123,23 @@ export function createGameRoutes(
     // Kick off gender inference and portrait generation in parallel. Scene 1 is
     // deliberately not prefetched here: it must be built after the personality
     // seed exists, so /next-event generates it via engine.startEvent.
-    inferGender(engine.llm, childName).then(async (gender) => {
-      // The game may have been deleted while inference was in flight; saving
-      // here would resurrect it (saveGame upserts). Only touch live entries.
-      const current = games.get(state.id);
-      if (!current) return;
-      // Re-read the live state: /next-event may have already transitioned to
-      // family_chat by the time gender inference completes (especially on retry).
-      // Spreading the stale `state` here would revert the phase to event_intro.
-      const updated = { ...current, childGender: gender };
-      games.set(state.id, updated);
-      await repo.saveGame(updated);
-      generateFirstPortrait(state.id, gender).catch(() => {});
-    }).catch(() => {
+    inferGender(engine.llm, childName).then((gender) =>
+      // The LLM call above runs outside the lock; only the check, save and
+      // portrait kickoff are serialized with DELETE (which holds the same
+      // lock), so a save can never land after a delete and recreate the row.
+      lock(state.id, async () => {
+        const current = games.get(state.id);
+        if (!current) return; // deleted while inference was in flight
+        // Re-read the live state: /next-event may have already transitioned to
+        // family_chat by the time gender inference completes (especially on retry).
+        // Spreading the stale `state` here would revert the phase to event_intro.
+        const updated = { ...current, childGender: gender };
+        games.set(state.id, updated);
+        await repo.saveGame(updated);
+        if (!games.has(state.id)) return;
+        generateFirstPortrait(state.id, gender).catch(() => {});
+      })
+    ).catch(() => {
       if (!games.has(state.id)) return;
       generateFirstPortrait(state.id).catch(() => {});
     });
@@ -149,6 +154,10 @@ export function createGameRoutes(
       await repo.deleteGameData(gameId);
       games.delete(gameId);
       prefetchedEvents.delete(gameId);
+      // Best effort: generated portraits live on disk under the game id.
+      if (UUID_RE.test(gameId)) {
+        await rm(path.join(PORTRAITS_DIR, gameId), { recursive: true, force: true }).catch(() => {});
+      }
     });
     res.status(204).end();
   });
