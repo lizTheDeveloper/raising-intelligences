@@ -41,12 +41,22 @@ describe("selectQuestions", () => {
 });
 
 describe("InMemory answers", () => {
+  it("rejects an answer for a game that does not exist, like the Postgres foreign key", async () => {
+    const repo = new InMemoryGameRepository();
+    await expect(repo.saveAnswer({
+      gameId: "nope", sceneIndex: 1, questionId: "q", questionVersion: 1, kind: "about_you",
+      answer: "x", skipped: false, shownAt: 1, answeredAt: 2,
+    })).rejects.toThrow(/does not exist/);
+  });
   const a = (over: Partial<StoredAnswer> = {}): StoredAnswer => ({
     gameId: "g1", sceneIndex: 1, questionId: "q", questionVersion: 1, kind: "about_you",
     answer: "x", skipped: false, shownAt: 1, answeredAt: 2, ...over,
   });
   it("upserts on (game, scene, question) and is wiped by deleteGameData", async () => {
     const repo = new InMemoryGameRepository();
+    const mk = (id: string) => ({ id, sidebarUsed: {}, therapyMessages: [] }) as never;
+    await repo.saveGame(mk("g1"));
+    await repo.saveGame(mk("g2"));
     await repo.saveAnswer(a());
     await repo.saveAnswer(a({ answer: "y" }));
     await repo.saveAnswer(a({ sceneIndex: 2 }));

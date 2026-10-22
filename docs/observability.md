@@ -148,6 +148,8 @@ server/src/
 
 All endpoints require `Authorization: Bearer <ADMIN_TOKEN>`.
 
+The one write endpoint is `DELETE /api/admin/games/:id` (204, or 404 for an unknown game): it erases a game and everything keyed to it, through the same code as the player's own `DELETE /api/game/:id`. It is used when a player asks staff to delete their game.
+
 | Method | Path | Response |
 |--------|------|----------|
 | GET | `/api/admin/overview` | `{ totalGames, activeGames, completedGames, abandonedGames }` |

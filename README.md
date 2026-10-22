@@ -60,7 +60,8 @@ Copy `.env.example` to `.env`. The required keys:
 - `OPENROUTER_API_KEY` — for LLM calls and portrait generation
 - `OPENAI_API_KEY` — optional, only if you want direct OpenAI image generation (portraits use OpenRouter by default)
 - `LANGFUSE_*` — optional, enables LLM call tracing
-- `ADMIN_TOKEN` — optional, enables the admin dashboard at `/raising-intelligences/admin` (requires `DATABASE_URL`)
+- `ADMIN_TOKEN` — optional, enables the admin dashboard at `/raising-intelligences/admin` (requires `DATABASE_URL`); also authenticates `DELETE /api/admin/games/:id`, which erases a game on a player's request
+- `RI_RESEARCH_ENABLED` — optional, default off; only the exact value `true` enables the research features. Leave off until the copy and the consent and age handling are reviewed
 
 The server works without any of these, but LLM calls will fail without an API key.
 

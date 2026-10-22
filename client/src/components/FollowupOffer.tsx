@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { track } from "../analytics";
 import { getGameSecret, getResearchHint } from "../hooks/gameSecret";
 import { looksLikeEmail, saveFollowup, withdrawFollowup } from "../followupClient";
+import { PRIVACY_URL } from "../links";
 
 interface Props {
   gameId: string | null;
@@ -108,7 +109,7 @@ export function FollowupOffer({ gameId, style }: Props) {
         If you're in crisis, call or text 988 in the US, or find a local line at findahelpline.com.
       </p>
       <p className="followup-line">
-        Right after saving, a withdraw button appears here and deletes your email. Once you leave this screen, withdrawing means contacting us (contact route: placeholder, to be filled in before release). See the <a href="privacy.html" target="_blank" rel="noopener">privacy page</a>.
+        Right after saving, a withdraw button appears here and deletes your email. Once you leave this screen, withdrawing means contacting us (contact route: placeholder, to be filled in before release). See the <a href={PRIVACY_URL} target="_blank" rel="noopener">privacy page</a>.
       </p>
       <label className="followup-check">
         <input type="checkbox" checked={contactOk} onChange={(e) => setContactOk(e.target.checked)} data-testid="chk-followup-contact" />

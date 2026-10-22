@@ -1455,6 +1455,8 @@ export class InMemoryGameRepository implements GameRepository {
   }
 
   async saveAnswer(a: StoredAnswer): Promise<void> {
+    // Mirrors the Postgres foreign key: no game, no answer.
+    if (!this.games.has(a.gameId)) throw new Error("question_answers: game does not exist");
     const key = JSON.stringify([a.gameId, a.sceneIndex, a.questionId]);
     const existing = this.answers.get(key);
     if (existing && !existing.skipped && a.skipped) return;
