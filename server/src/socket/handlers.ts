@@ -62,6 +62,8 @@ import { buildSceneTranscript } from "../game/context-assembler.js";
 import { captureException } from "../observability/sentry.js";
 import { generateMultiplayerAlbums } from "../game/album-generator.js";
 import { logger } from "../logger.js";
+import { isResearchEnabled } from "../research/config.js";
+import { withParentContext } from "../research/parent-context.js";
 
 export interface SocketDeps {
   io: Server;
@@ -663,8 +665,11 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       if (!state) {
         const loaded = await repo.loadGame(gameId);
         if (loaded) {
-          games.set(gameId, loaded);
           state = loaded;
+          if (isResearchEnabled()) state = await withParentContext(loaded, repo);
+          // A concurrent REST request may have rehydrated during the await.
+          state = games.get(gameId) ?? state;
+          games.set(gameId, state);
         }
       }
       if (!state) return fail("Game not found");

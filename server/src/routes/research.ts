@@ -4,6 +4,8 @@ import type { GameRepository } from "../db/repository.js";
 import type { GameState } from "../types.js";
 import { resolveGame } from "../lib/resolve-game.js";
 import { isResearchEnabled } from "../research/config.js";
+import { withGameLock } from "../lib/game-lock.js";
+import { formatParentContext } from "../research/parent-context.js";
 import { requireGameSecret } from "../security/game-secret.js";
 import {
   QUESTION_BANK,
@@ -73,7 +75,12 @@ function validateBody(body: unknown, state: GameState): Validated {
   return { ok: true, question, sceneIndex, answer: text, skipped: false, shownAt: b.shownAt };
 }
 
-export function createResearchRoutes(games: Map<string, GameState>, repo: GameRepository): Router {
+export function createResearchRoutes(
+  games: Map<string, GameState>,
+  repo: GameRepository,
+  options: { gameLocks?: Map<string, Promise<void>> } = {},
+): Router {
+  const { gameLocks = new Map<string, Promise<void>>() } = options;
   const router = Router();
 
   // Check order: secret first (403 regardless of anything else), then the
@@ -156,10 +163,23 @@ export function createResearchRoutes(games: Map<string, GameState>, repo: GameRe
         shownAt: v.shownAt,
         answeredAt: Date.now(),
       };
-      // The repository enforces "a skip never overwrites an answer".
-      await repo.saveAnswer(stored);
-      // Hook point: a valid, non-skipped 'about_you' answer is consumed here
-      // (Task 9) using `v.question.kind` and `stored.answer`.
+      if (v.question.kind !== "about_you") {
+        // The repository enforces "a skip never overwrites an answer".
+        await repo.saveAnswer(stored);
+      } else {
+        // An about_you row changes the parent context, so save, rebuild and
+        // publish under the per-game lock, serialized with the other handlers
+        // that write game state. Publishing mutates the live state object in
+        // place: a scene generation already in flight reduces from that same
+        // object after its LLM call returns, so it neither loses this update
+        // nor overwrites it with a stale copy.
+        await withGameLock(gameLocks, gameId, async () => {
+          await repo.saveAnswer(stored);
+          const context = formatParentContext(await repo.listAnswers(gameId));
+          const live = games.get(gameId);
+          if (live) live.parentContext = context || undefined;
+        });
+      }
       res.status(204).end();
     } catch (err) {
       next(err);

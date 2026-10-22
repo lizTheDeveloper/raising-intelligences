@@ -149,7 +149,8 @@ The parents have sent ${state.parentMessageCount} of ${PARENT_MESSAGE_CAP} messa
     + (temperamentSection ? `\n\n${temperamentSection}` : "")
     + `\n\n${scenePacing}\n\n${identitySection}`
     + (memorySection ? `\n\n${memorySection}` : "")
-    + `\n\nThe current situation: ${state.currentEvent?.description ?? ""}`;
+    + `\n\nThe current situation: ${state.currentEvent?.description ?? ""}`
+    + (state.parentContext ? `\n\n${state.parentContext}` : "");
 
   const eventMessages = currentEventMessages(state);
   const isInSidebar = state.phase === "sidebar";
@@ -217,6 +218,12 @@ export function buildPsychologistContext(state: GameState): {
   const transcript = buildSceneTranscript(state);
 
   let userMessage = "";
+  if (state.personalitySeed) {
+    userMessage += `## Temperament seed\n${state.personalitySeed}\n\n`;
+  }
+  if (state.parentContext) {
+    userMessage += `${state.parentContext}\n\n`;
+  }
   if (state.identityDocument) {
     userMessage += `## Current Identity Document\n${state.identityDocument}\n\n`;
   }
@@ -539,7 +546,7 @@ export function buildWorldManagerContext(state: GameState): {
     previousEvents,
     familyStructure: familyStructureText(state.relationshipType),
     landmineSection,
-  });
+  }) + (state.parentContext ? `\n\n${state.parentContext}` : "");
 
   let userMessage = `Generate the next event (event #${state.currentEventNumber + 1}).`;
   if (state.identityDocument) {

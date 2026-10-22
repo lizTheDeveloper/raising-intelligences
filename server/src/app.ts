@@ -185,7 +185,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
 
   app.use("/api", createGameRoutes(conversationEngine, endgameEngine, games, repo, { llmRateLimit, gameCreateLimit, gameLocks, llm }));
   app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit, gameLocks }));
-  app.use("/api", createResearchRoutes(games, repo));
+  app.use("/api", createResearchRoutes(games, repo, { gameLocks }));
   app.use("/api", createUserRoutes());
   app.use("/api", createAlbumRoutes(repo));
   // The limiter is scoped to the /support/checkout route itself, not mounted
