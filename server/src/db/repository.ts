@@ -109,6 +109,13 @@ export interface GameRepository {
    */
   recordGameIp(gameId: string, ipAddress: string | null): Promise<void>;
   /**
+   * Records the self-reported age classification. `birthYear` is null for
+   * under-18 players (their year is never stored). Games with no record read
+   * back as null from `getIsAdult` (unknown).
+   */
+  recordAge(gameId: string, age: { birthYear: number | null; isAdult: boolean }): Promise<void>;
+  getIsAdult(gameId: string): Promise<boolean | null>;
+  /**
    * The IP's cross-game play profile: how many games total, how many were
    * dark, how many showed ordinary range. THE safety-critical query — see
    * safety/escalation.ts `isEscalation` for why `ordinaryGames` must never
@@ -732,6 +739,22 @@ export class PgGameRepository implements GameRepository {
     await this.db.query(`UPDATE games SET ip_address = $2 WHERE id = $1`, [gameId, ipAddress]);
   }
 
+  async recordAge(gameId: string, age: { birthYear: number | null; isAdult: boolean }): Promise<void> {
+    await this.db.query(`UPDATE games SET birth_year = $2, is_adult = $3 WHERE id = $1`, [
+      gameId,
+      age.birthYear,
+      age.isAdult,
+    ]);
+  }
+
+  async getIsAdult(gameId: string): Promise<boolean | null> {
+    const { rows } = await this.db.query<{ is_adult: boolean | null }>(
+      `SELECT is_adult FROM games WHERE id = $1`,
+      [gameId],
+    );
+    return rows[0]?.is_adult ?? null;
+  }
+
   async getIpPlayProfile(ipAddress: string): Promise<{ totalGames: number; darkGames: number; ordinaryGames: number }> {
     // darkGames: the game got genuinely dark — highest rung of the
     // intervention ladder fired, or net concern reached ESCALATION_DARK_CONCERN.
@@ -1144,6 +1167,16 @@ export class InMemoryGameRepository implements GameRepository {
 
   async recordGameIp(gameId: string, ipAddress: string | null): Promise<void> {
     this.gameIpAddresses.set(gameId, ipAddress);
+  }
+
+  private gameAges = new Map<string, { birthYear: number | null; isAdult: boolean }>();
+
+  async recordAge(gameId: string, age: { birthYear: number | null; isAdult: boolean }): Promise<void> {
+    this.gameAges.set(gameId, { ...age });
+  }
+
+  async getIsAdult(gameId: string): Promise<boolean | null> {
+    return this.gameAges.get(gameId)?.isAdult ?? null;
   }
 
   async getIpPlayProfile(ipAddress: string): Promise<{ totalGames: number; darkGames: number; ordinaryGames: number }> {

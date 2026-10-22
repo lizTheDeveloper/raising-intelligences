@@ -36,6 +36,7 @@ import {
   stripSceneEnd,
 } from "../game/scene-end.js";
 import { UUID_RE } from "../lib/validation.js";
+import { classifyBirthYear } from "../research/age.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -76,9 +77,10 @@ export function createGameRoutes(
   const resolveGame = (id: string) => sharedResolveGame(id, games, repo);
 
   router.post("/game", ...(gameCreateLimit ? [gameCreateLimit] : []), async (req: Request, res: Response) => {
-    const { childName, relationshipType } = req.body as {
+    const { childName, relationshipType, birthYear } = req.body as {
       childName: string;
       relationshipType?: string;
+      birthYear?: unknown;
     };
     if (!childName) {
       res.status(400).json({ error: "childName is required" });
@@ -92,9 +94,22 @@ export function createGameRoutes(
       res.status(400).json({ error: `relationshipType must be ${MAX_RELATIONSHIP_TYPE_LENGTH} characters or fewer` });
       return;
     }
+    // Optional (legacy clients omit it). Under-18 players: only the flag is
+    // stored, never the year.
+    const age = birthYear === undefined ? null : classifyBirthYear(birthYear);
+    if (age && !age.ok) {
+      res.status(400).json({ error: age.error });
+      return;
+    }
     const state = createGame(childName, relationshipType);
     games.set(state.id, state);
     await repo.saveGame(state);
+    if (age?.ok) {
+      await repo.recordAge(state.id, {
+        birthYear: age.isAdult ? age.birthYear : null,
+        isAdult: age.isAdult,
+      });
+    }
     // Dark Play Plan 4: record the creating IP — the denominator prerequisite
     // for escalation detection (see safety/escalation.ts). Not part of
     // GameState; written directly to the games row.
