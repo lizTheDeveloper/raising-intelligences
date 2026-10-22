@@ -1,5 +1,5 @@
 import { Router } from "express";
-import type { Request, Response, NextFunction } from "express";
+import type { Request, Response, NextFunction, RequestHandler } from "express";
 import type { GameRepository } from "../db/repository.js";
 import type { GameState } from "../types.js";
 import { resolveGame } from "../lib/resolve-game.js";
@@ -9,6 +9,7 @@ import { loadParentContext } from "../research/parent-context.js";
 import { cleanUntrustedText } from "../research/sanitize.js";
 import type { LLMClient } from "../llm/client.js";
 import { labelHopeFromAnswer } from "../research/moment-label.js";
+import { normalizeEmail } from "../research/email.js";
 import { requireGameSecret } from "../security/game-secret.js";
 import {
   QUESTION_BANK,
@@ -65,9 +66,15 @@ function validateBody(body: unknown, state: GameState): Validated {
 export function createResearchRoutes(
   games: Map<string, GameState>,
   repo: GameRepository,
-  options: { gameLocks?: Map<string, Promise<void>>; hasSeat?: (gameId: string) => boolean; llm?: LLMClient } = {},
+  options: {
+    gameLocks?: Map<string, Promise<void>>;
+    hasSeat?: (gameId: string) => boolean;
+    llm?: LLMClient;
+    followupLimit?: RequestHandler;
+  } = {},
 ): Router {
   const { gameLocks = new Map<string, Promise<void>>(), hasSeat = () => false, llm } = options;
+  const followupLimit: RequestHandler = options.followupLimit ?? ((_req, _res, next) => next());
   const router = Router();
 
   // Check order: secret first (403 regardless of anything else), then the
@@ -176,6 +183,53 @@ export function createResearchRoutes(
           if (live) live.parentContext = !hasSeat(gameId) && context ? context : undefined;
         });
       }
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Follow-up contact: secret, research enabled, adult, and NOT seated. A seated
+  // game is a shared (multiplayer) game; one player must not be able to leave an
+  // email on behalf of the table. Same opaque 404 as the other research gates.
+  function requireSoloFollowup(req: Request, res: Response, next: NextFunction): void {
+    if (hasSeat(req.params.id as string)) {
+      notAvailable(res);
+      return;
+    }
+    next();
+  }
+  const followupGate = [requireGameSecret(repo), requireResearchAccess, requireSoloFollowup];
+
+  // The body and the email are deliberately never logged, echoed or passed to
+  // anything but the repository. Responses are always empty.
+  router.post("/research/followup/:id", followupLimit, ...followupGate, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const b = req.body as unknown;
+      if (typeof b !== "object" || b === null || Array.isArray(b)) {
+        res.status(400).json({ error: "Invalid request" });
+        return;
+      }
+      const r = b as Record<string, unknown>;
+      if (r.consentFollowup !== true || r.consentAiAnalysis !== true) {
+        res.status(400).json({ error: "Both consents are required" });
+        return;
+      }
+      const email = normalizeEmail(r.email);
+      if (!email) {
+        res.status(400).json({ error: "Invalid email" });
+        return;
+      }
+      await repo.saveFollowupContact(req.params.id as string, { email, consentFollowup: true, consentAiAnalysis: true });
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.delete("/research/followup/:id", followupLimit, ...followupGate, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await repo.withdrawFollowup(req.params.id as string);
       res.status(204).end();
     } catch (err) {
       next(err);

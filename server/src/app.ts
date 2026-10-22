@@ -177,6 +177,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   // Tighter limits on LLM-triggering and game-creation endpoints.
   const llmRateLimit = rateLimit({ windowMs: 60_000, max: 10, standardHeaders: true, legacyHeaders: false });
   const gameCreateLimit = rateLimit({ windowMs: 60_000, max: 5, standardHeaders: true, legacyHeaders: false });
+  const followupLimit = rateLimit({ windowMs: 60_000, max: 10, standardHeaders: true, legacyHeaders: false });
   const supportCheckoutLimit = rateLimit({ windowMs: 60_000, max: 10, standardHeaders: true, legacyHeaders: false });
 
   // Single shared lock map — prevents cross-module races between game.ts,
@@ -185,7 +186,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
 
   app.use("/api", createGameRoutes(conversationEngine, endgameEngine, games, repo, { llmRateLimit, gameCreateLimit, gameLocks, llm, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0 }));
   app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit, gameLocks }));
-  app.use("/api", createResearchRoutes(games, repo, { gameLocks, llm, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0 }));
+  app.use("/api", createResearchRoutes(games, repo, { gameLocks, llm, followupLimit, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0 }));
   app.use("/api", createUserRoutes());
   app.use("/api", createAlbumRoutes(repo));
   // The limiter is scoped to the /support/checkout route itself, not mounted

@@ -607,7 +607,7 @@ export function SoloGame() {
     return (
       <div className="app">
         {error && <p className="error-banner">{error}</p>}
-        <Endgame epilogue={epilogue} onContinue={() => generateReportCard(matrixUser ?? undefined)} />
+        <Endgame epilogue={epilogue} followupGameId={gameId} onContinue={() => generateReportCard(matrixUser ?? undefined)} />
       </div>
     );
   }

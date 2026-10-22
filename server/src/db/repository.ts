@@ -15,6 +15,14 @@ import type { StoredAnswer } from "../research/questions.js";
 import type { MomentLabel } from "../research/moment-label.js";
 import { ESCALATION_DARK_CONCERN } from "../safety/escalation.js";
 
+export interface FollowupContact {
+  email: string | null;
+  consentFollowup: boolean;
+  consentAiAnalysis: boolean;
+  consentedAt: number | null;
+  withdrawnAt: number | null;
+}
+
 export interface IdentitySnapshot {
   eventNumber: number;
   document: string;
@@ -132,6 +140,28 @@ export interface GameRepository {
    * answered row; an answer always overwrites. */
   saveAnswer(a: StoredAnswer): Promise<void>;
   listAnswers(gameId: string): Promise<StoredAnswer[]>;
+  /**
+   * Opt-in follow-up contact (adult research games only; the route enforces
+   * that). The email lives in followup_contacts under a random pseudonym that
+   * has no relationship to the game id, never beside answers. A second call
+   * replaces the email and refreshes consented_at; a call after a withdrawal
+   * re-opens consent. Rejects for a game that no longer exists.
+   */
+  saveFollowupContact(
+    gameId: string,
+    c: { email: string; consentFollowup: true; consentAiAnalysis: true },
+  ): Promise<void>;
+  /**
+   * Withdraws follow-up consent: removes the email value, sets both consents to
+   * false and records withdrawn_at. Idempotent; a no-op when nothing was stored.
+   */
+  withdrawFollowup(gameId: string): Promise<void>;
+  /**
+   * TEST-ORIENTED: reads the stored contact back. Nothing in the app calls
+   * this; only tests and, later, the follow-up sender may. Never serialize it
+   * into a response, a log line or a prompt.
+   */
+  getFollowupContact(gameId: string): Promise<FollowupContact | null>;
   /**
    * Research label for a scene; upsert on (gameId, sceneIndex, kind). Fails
    * (rejects) for a game that no longer exists, so a label finishing after
@@ -790,6 +820,16 @@ export class PgGameRepository implements GameRepository {
       await client.query(`DELETE FROM escalation_flags WHERE game_id = $1`, [gameId]);
       await client.query(`DELETE FROM question_answers WHERE game_id = $1`, [gameId]);
       await client.query(`DELETE FROM moment_labels WHERE game_id = $1`, [gameId]);
+      // The contact row is keyed by the pseudonym, not the game, so find the
+      // pseudonym first; deleting only the link would orphan the email.
+      const { rows: links } = await client.query<{ pseudonym_id: string }>(
+        `SELECT pseudonym_id FROM followup_links WHERE game_id = $1`,
+        [gameId],
+      );
+      for (const l of links) {
+        await client.query(`DELETE FROM followup_contacts WHERE pseudonym_id = $1`, [l.pseudonym_id]);
+      }
+      await client.query(`DELETE FROM followup_links WHERE game_id = $1`, [gameId]);
       await client.query(`DELETE FROM games WHERE id = $1`, [gameId]);
       await client.query("COMMIT");
     } catch (err) {
@@ -847,6 +887,68 @@ export class PgGameRepository implements GameRepository {
       shownAt: Number(r.shown_at),
       answeredAt: Number(r.answered_at),
     }));
+  }
+
+  async saveFollowupContact(
+    gameId: string,
+    c: { email: string; consentFollowup: true; consentAiAnalysis: true },
+  ): Promise<void> {
+    // The link row is created once per game with a random pseudonym; a later
+    // call keeps the existing one. Rejects (FK) when the game is gone.
+    await this.db.query(
+      `INSERT INTO followup_links (game_id, pseudonym_id) VALUES ($1, $2)
+       ON CONFLICT (game_id) DO NOTHING`,
+      [gameId, crypto.randomUUID()],
+    );
+    const { rows } = await this.db.query<{ pseudonym_id: string }>(
+      `SELECT pseudonym_id FROM followup_links WHERE game_id = $1`,
+      [gameId],
+    );
+    const pseudonym = rows[0]?.pseudonym_id;
+    if (!pseudonym) throw new Error("followup: game does not exist");
+    await this.db.query(
+      `INSERT INTO followup_contacts
+         (pseudonym_id, email, consent_followup, consent_ai_analysis, consented_at, withdrawn_at)
+       VALUES ($1, $2, true, true, $3, NULL)
+       ON CONFLICT (pseudonym_id) DO UPDATE SET
+         email               = EXCLUDED.email,
+         consent_followup    = true,
+         consent_ai_analysis = true,
+         consented_at        = EXCLUDED.consented_at,
+         withdrawn_at        = NULL`,
+      [pseudonym, c.email, Date.now()],
+    );
+  }
+
+  async withdrawFollowup(gameId: string): Promise<void> {
+    await this.db.query(
+      `UPDATE followup_contacts
+          SET email = NULL, consent_followup = false, consent_ai_analysis = false,
+              withdrawn_at = COALESCE(withdrawn_at, $2)
+        WHERE pseudonym_id IN (SELECT pseudonym_id FROM followup_links WHERE game_id = $1)`,
+      [gameId, Date.now()],
+    );
+  }
+
+  async getFollowupContact(gameId: string): Promise<FollowupContact | null> {
+    const { rows } = await this.db.query<{
+      email: string | null; consent_followup: boolean; consent_ai_analysis: boolean;
+      consented_at: string | number | null; withdrawn_at: string | number | null;
+    }>(
+      `SELECT c.email, c.consent_followup, c.consent_ai_analysis, c.consented_at, c.withdrawn_at
+         FROM followup_contacts c JOIN followup_links l ON l.pseudonym_id = c.pseudonym_id
+        WHERE l.game_id = $1`,
+      [gameId],
+    );
+    const r = rows[0];
+    if (!r) return null;
+    return {
+      email: r.email,
+      consentFollowup: r.consent_followup,
+      consentAiAnalysis: r.consent_ai_analysis,
+      consentedAt: r.consented_at === null ? null : Number(r.consented_at),
+      withdrawnAt: r.withdrawn_at === null ? null : Number(r.withdrawn_at),
+    };
   }
 
   async saveMomentLabel(gameId: string, sceneIndex: number, label: MomentLabel): Promise<void> {
@@ -991,6 +1093,9 @@ export class InMemoryGameRepository implements GameRepository {
   private accessSecretHashes = new Map<string, string>();
   private answers = new Map<string, StoredAnswer>();
   private momentLabels = new Map<string, MomentLabel & { gameId: string; sceneIndex: number }>();
+  // Two maps, like the two tables: the contact is keyed by a random pseudonym.
+  private followupLinks = new Map<string, string>();
+  private followupContacts = new Map<string, FollowupContact>();
   private escalationFlags: Array<{
     ipAddress: string;
     gameId: string;
@@ -1334,6 +1439,9 @@ export class InMemoryGameRepository implements GameRepository {
     for (const [key, l] of [...this.momentLabels]) {
       if (l.gameId === gameId) this.momentLabels.delete(key);
     }
+    const pseudonym = this.followupLinks.get(gameId);
+    if (pseudonym) this.followupContacts.delete(pseudonym);
+    this.followupLinks.delete(gameId);
   }
 
   async saveAnswer(a: StoredAnswer): Promise<void> {
@@ -1348,6 +1456,56 @@ export class InMemoryGameRepository implements GameRepository {
       .filter((a) => a.gameId === gameId)
       .map((a) => ({ ...a }))
       .sort((x, y) => x.sceneIndex - y.sceneIndex || x.answeredAt - y.answeredAt);
+  }
+
+  async saveFollowupContact(
+    gameId: string,
+    c: { email: string; consentFollowup: true; consentAiAnalysis: true },
+  ): Promise<void> {
+    // Mirrors the Postgres foreign key: no game, no link.
+    if (!this.games.has(gameId)) throw new Error("followup: game does not exist");
+    let pseudonym = this.followupLinks.get(gameId);
+    if (!pseudonym) {
+      pseudonym = crypto.randomUUID();
+      this.followupLinks.set(gameId, pseudonym);
+    }
+    this.followupContacts.set(pseudonym, {
+      email: c.email,
+      consentFollowup: true,
+      consentAiAnalysis: true,
+      consentedAt: Date.now(),
+      withdrawnAt: null,
+    });
+  }
+
+  async withdrawFollowup(gameId: string): Promise<void> {
+    const pseudonym = this.followupLinks.get(gameId);
+    const existing = pseudonym ? this.followupContacts.get(pseudonym) : undefined;
+    if (!pseudonym || !existing) return;
+    this.followupContacts.set(pseudonym, {
+      ...existing,
+      email: null,
+      consentFollowup: false,
+      consentAiAnalysis: false,
+      withdrawnAt: existing.withdrawnAt ?? Date.now(),
+    });
+  }
+
+  async getFollowupContact(gameId: string): Promise<FollowupContact | null> {
+    const pseudonym = this.followupLinks.get(gameId);
+    const c = pseudonym ? this.followupContacts.get(pseudonym) : undefined;
+    return c ? { ...c } : null;
+  }
+
+  // Test-only inspection of the two follow-up tables.
+  followupPseudonymFor(gameId: string): string | null {
+    return this.followupLinks.get(gameId) ?? null;
+  }
+  followupHasContactRow(pseudonym: string): boolean {
+    return this.followupContacts.has(pseudonym);
+  }
+  followupRowCounts(): { links: number; contacts: number } {
+    return { links: this.followupLinks.size, contacts: this.followupContacts.size };
   }
 
   async saveMomentLabel(gameId: string, sceneIndex: number, label: MomentLabel): Promise<void> {

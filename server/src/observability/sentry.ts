@@ -70,6 +70,16 @@ export function initSentry(): boolean {
     // Drop benign client-disconnect noise (aborted SSE/fetch) so it doesn't
     // bury real server errors. See isBenignDisconnect.
     beforeSend(event, hint) {
+      // The follow-up routes carry an email in the request body. Never let it
+      // reach GlitchTip: drop the captured body/cookies/query and the message
+      // text (a JSON parse error message quotes a fragment of the body).
+      if (event.request?.url?.includes("/research/followup/")) {
+        delete event.request.data;
+        delete event.request.cookies;
+        delete event.request.query_string;
+        for (const v of event.exception?.values ?? []) v.value = "redacted (follow-up route)";
+        if (event.message) event.message = "redacted (follow-up route)";
+      }
       const err = hint?.originalException as
         | { name?: string; message?: string; code?: string }
         | undefined;
