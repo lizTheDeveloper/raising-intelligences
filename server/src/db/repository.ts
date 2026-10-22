@@ -115,6 +115,10 @@ export interface GameRepository {
    */
   recordAge(gameId: string, age: { birthYear: number | null; isAdult: boolean }): Promise<void>;
   getIsAdult(gameId: string): Promise<boolean | null>;
+  /** Stores the SHA-256 hash of the per-game secret (never the secret). */
+  recordAccessSecretHash(gameId: string, hash: string): Promise<void>;
+  /** Null for unknown games and legacy games created before secrets existed. */
+  getAccessSecretHash(gameId: string): Promise<string | null>;
   /**
    * The IP's cross-game play profile: how many games total, how many were
    * dark, how many showed ordinary range. THE safety-critical query — see
@@ -755,6 +759,18 @@ export class PgGameRepository implements GameRepository {
     return rows[0]?.is_adult ?? null;
   }
 
+  async recordAccessSecretHash(gameId: string, hash: string): Promise<void> {
+    await this.db.query(`UPDATE games SET access_secret_hash = $2 WHERE id = $1`, [gameId, hash]);
+  }
+
+  async getAccessSecretHash(gameId: string): Promise<string | null> {
+    const { rows } = await this.db.query<{ access_secret_hash: string | null }>(
+      `SELECT access_secret_hash FROM games WHERE id = $1`,
+      [gameId],
+    );
+    return rows[0]?.access_secret_hash ?? null;
+  }
+
   async getIpPlayProfile(ipAddress: string): Promise<{ totalGames: number; darkGames: number; ordinaryGames: number }> {
     // darkGames: the game got genuinely dark — highest rung of the
     // intervention ladder fired, or net concern reached ESCALATION_DARK_CONCERN.
@@ -862,6 +878,7 @@ export class InMemoryGameRepository implements GameRepository {
   private gameIpAddresses = new Map<string, string | null>();
   // Self-reported age classification; under-18 entries carry birthYear null.
   private gameAges = new Map<string, { birthYear: number | null; isAdult: boolean }>();
+  private accessSecretHashes = new Map<string, string>();
   private escalationFlags: Array<{
     ipAddress: string;
     gameId: string;
@@ -1177,6 +1194,14 @@ export class InMemoryGameRepository implements GameRepository {
 
   async getIsAdult(gameId: string): Promise<boolean | null> {
     return this.gameAges.get(gameId)?.isAdult ?? null;
+  }
+
+  async recordAccessSecretHash(gameId: string, hash: string): Promise<void> {
+    this.accessSecretHashes.set(gameId, hash);
+  }
+
+  async getAccessSecretHash(gameId: string): Promise<string | null> {
+    return this.accessSecretHashes.get(gameId) ?? null;
   }
 
   async getIpPlayProfile(ipAddress: string): Promise<{ totalGames: number; darkGames: number; ordinaryGames: number }> {

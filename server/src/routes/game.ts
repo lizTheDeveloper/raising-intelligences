@@ -37,6 +37,7 @@ import {
 } from "../game/scene-end.js";
 import { UUID_RE } from "../lib/validation.js";
 import { classifyBirthYear } from "../research/age.js";
+import { newGameSecret } from "../security/game-secret.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -114,7 +115,10 @@ export function createGameRoutes(
     // for escalation detection (see safety/escalation.ts). Not part of
     // GameState; written directly to the games row.
     await repo.recordGameIp(state.id, req.ip ?? null);
-    res.json({ gameId: state.id });
+    // Per-game secret: only its hash is stored; the plaintext is returned once.
+    const { secret, hash } = newGameSecret();
+    await repo.recordAccessSecretHash(state.id, hash);
+    res.json({ gameId: state.id, secret });
     // Kick off gender inference and portrait generation in parallel. Scene 1 is
     // deliberately not prefetched here: it must be built after the personality
     // seed exists, so /next-event generates it via engine.startEvent.

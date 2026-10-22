@@ -82,7 +82,7 @@ describe("POST /api/game birthYear", () => {
   it("missing birthYear stores nothing and still works", async () => {
     const { status, json } = await create({});
     expect(status).toBe(200);
-    expect(Object.keys(json)).toEqual(["gameId"]);
+    expect(Object.keys(json)).toEqual(["gameId", "secret"]);
     expect(await repo.getIsAdult(json.gameId!)).toBeNull();
   });
 
