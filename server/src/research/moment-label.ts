@@ -143,6 +143,32 @@ export function peekSceneSummary(gameId: string): { sceneIndex: number; memorySu
 
 export function forgetSceneSummary(gameId: string): void {
   sceneSummaries.delete(gameId);
+  for (const key of [...claimed]) if (key.startsWith(`${gameId}:`)) claimed.delete(key);
+}
+
+// One labeler call per (game, scene, kind), ever, in this process: the budget is a
+// single call per scene. The claim is made synchronously (check-and-set) by the side
+// that holds both inputs, immediately before the call, and is never released: a
+// failed call is not retried, and a changed answer for an already-labeled scene is
+// not relabeled (the first answer wins). Bounded; the oldest claims are evicted
+// (a restart or eviction falls back on the stored-row check in labelAndSave).
+const MAX_CLAIMS = 2000;
+const claimed = new Set<string>();
+
+function claim(gameId: string, sceneIndex: number, kind: MomentLabelKind): boolean {
+  const key = `${gameId}:${sceneIndex}:${kind}`;
+  if (claimed.has(key)) return false;
+  claimed.add(key);
+  while (claimed.size > MAX_CLAIMS) {
+    const oldest = claimed.values().next().value;
+    if (oldest === undefined) break;
+    claimed.delete(oldest);
+  }
+  return true;
+}
+
+export function claimedLabelCount(): number {
+  return claimed.size;
 }
 
 /** Research on, adult flag recorded, no player seats (solo). */
@@ -160,7 +186,10 @@ async function labelAndSave(
   job: { kind: MomentLabelKind; hoped: string | null; repair: string | null },
   memorySummary: string,
 ): Promise<void> {
+  // Claim before anything awaits; if a stored label already exists, skip (claim stays).
+  if (!claim(gameId, sceneIndex, job.kind)) return;
   try {
+    if (await repo.hasMomentLabel(gameId, sceneIndex, job.kind)) return;
     const label = await labelMoment(llm, { ...job, memorySummary });
     await repo.saveMomentLabel(gameId, sceneIndex, label);
   } catch (err) {

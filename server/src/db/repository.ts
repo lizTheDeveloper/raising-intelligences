@@ -169,6 +169,8 @@ export interface GameRepository {
    */
   saveMomentLabel(gameId: string, sceneIndex: number, label: MomentLabel): Promise<void>;
   listMomentLabels(gameId: string): Promise<Array<MomentLabel & { sceneIndex: number }>>;
+  /** Cheap existence check used before paying for a label. */
+  hasMomentLabel(gameId: string, sceneIndex: number, kind: MomentLabel["kind"]): Promise<boolean>;
   /**
    * The IP's cross-game play profile: how many games total, how many were
    * dark, how many showed ordinary range. THE safety-critical query — see
@@ -963,6 +965,14 @@ export class PgGameRepository implements GameRepository {
     );
   }
 
+  async hasMomentLabel(gameId: string, sceneIndex: number, kind: MomentLabel["kind"]): Promise<boolean> {
+    const { rows } = await this.db.query(
+      `SELECT 1 FROM moment_labels WHERE game_id = $1 AND scene_index = $2 AND kind = $3 LIMIT 1`,
+      [gameId, sceneIndex, kind],
+    );
+    return rows.length > 0;
+  }
+
   async listMomentLabels(gameId: string): Promise<Array<MomentLabel & { sceneIndex: number }>> {
     const { rows } = await this.db.query<{ scene_index: number; kind: MomentLabel["kind"]; label: MomentLabel["label"]; rationale: string }>(
       `SELECT scene_index, kind, label, rationale FROM moment_labels WHERE game_id = $1 ORDER BY scene_index, kind`,
@@ -1512,6 +1522,10 @@ export class InMemoryGameRepository implements GameRepository {
     // Mirrors the Postgres foreign key: no game, no label.
     if (!this.games.has(gameId)) throw new Error("moment_labels: game does not exist");
     this.momentLabels.set(JSON.stringify([gameId, sceneIndex, label.kind]), { gameId, sceneIndex, ...label });
+  }
+
+  async hasMomentLabel(gameId: string, sceneIndex: number, kind: MomentLabel["kind"]): Promise<boolean> {
+    return this.momentLabels.has(JSON.stringify([gameId, sceneIndex, kind]));
   }
 
   async listMomentLabels(gameId: string): Promise<Array<MomentLabel & { sceneIndex: number }>> {

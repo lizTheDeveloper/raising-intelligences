@@ -71,9 +71,11 @@ export function createResearchRoutes(
     hasSeat?: (gameId: string) => boolean;
     llm?: LLMClient;
     followupLimit?: RequestHandler;
+    answerLimit?: RequestHandler;
   } = {},
 ): Router {
   const { gameLocks = new Map<string, Promise<void>>(), hasSeat = () => false, llm } = options;
+  const answerLimit: RequestHandler = options.answerLimit ?? ((_req, _res, next) => next());
   const followupLimit: RequestHandler = options.followupLimit ?? ((_req, _res, next) => next());
   const router = Router();
 
@@ -133,7 +135,7 @@ export function createResearchRoutes(
     }
   });
 
-  router.post("/game/:id/answers", ...gate, async (req: Request, res: Response, next: NextFunction) => {
+  router.post("/game/:id/answers", answerLimit, ...gate, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const gameId = req.params.id as string;
       const state = await resolveGame(gameId, games, repo);
