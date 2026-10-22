@@ -137,6 +137,8 @@
 
 /* Optional follow-up offer, after the epilogue. Quiet by design. */
 .followup-offer {
+  opacity: 0;
+  animation: fadeIn 900ms ease both;
   text-align: left;
   padding: 0 8px;
   max-width: 52ch;

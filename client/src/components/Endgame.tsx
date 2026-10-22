@@ -10,6 +10,9 @@ interface Props {
   followupGameId?: string | null;
 }
 
+/** The follow-up ask lands after the support prompt (+500ms) and before continue (+900ms). */
+const FOLLOWUP_DELAY_MS = 700;
+
 export function Endgame({ epilogue, onContinue, followupGameId }: Props) {
   const paragraphs = epilogue
     .split(/\n\s*\n/)
@@ -36,7 +39,7 @@ export function Endgame({ epilogue, onContinue, followupGameId }: Props) {
         ))}
       </div>
       <SupportPrompt sourcePage="epilogue" style={{ animationDelay: `${lastParaDelay + 500}ms` }} />
-      {followupGameId ? <FollowupOffer gameId={followupGameId} /> : null}
+      {followupGameId ? <FollowupOffer gameId={followupGameId} style={{ animationDelay: `${lastParaDelay + FOLLOWUP_DELAY_MS}ms` }} /> : null}
       <div className="endgame-actions">
         <button
           onClick={onContinue}

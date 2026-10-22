@@ -300,7 +300,35 @@ describe.skipIf(!process.env.DATABASE_URL)("deleteGameData covers every game_id 
         seeded.push(table_name);
       }
 
+      // followup_contacts has no game_id: it hangs off followup_links by pseudonym.
+      // Seed a contact for the pseudonym of the seeded link, if that table exists.
+      const { rows: linkRows } = await pool.query<{ pseudonym_id: string }>(
+        `SELECT pseudonym_id FROM followup_links WHERE game_id = $1`, [gameId]);
+      const pseudonym = linkRows[0]?.pseudonym_id;
+      if (pseudonym) {
+        await pool.query(
+          `INSERT INTO followup_contacts (pseudonym_id, email, consent_followup, consent_ai_analysis, consented_at)
+           VALUES ($1, 'x@example.com', true, true, 1)`, [pseudonym]);
+      }
+      // Any table that references followup_links(pseudonym_id) must be cleaned too.
+      const { rows: refs } = await pool.query<{ table_name: string; column_name: string }>(
+        `SELECT cl.relname AS table_name, a.attname AS column_name
+           FROM pg_constraint con
+           JOIN pg_class cl ON cl.oid = con.conrelid
+           JOIN pg_class ft ON ft.oid = con.confrelid
+           JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = ANY (con.conkey)
+          WHERE con.contype = 'f' AND ft.relname = 'followup_links'
+            AND cl.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = current_schema())`);
+      expect(refs.map((r) => r.table_name).sort()).toContain("followup_contacts");
+
       await repo.deleteGameData(gameId);
+
+      if (pseudonym) {
+        for (const r of refs) {
+          const { rows } = await pool.query(`SELECT 1 FROM "${r.table_name}" WHERE "${r.column_name}" = $1`, [pseudonym]);
+          expect(rows, `table ${r.table_name} still has a row for the deleted game's pseudonym`).toHaveLength(0);
+        }
+      }
 
       for (const t of seeded) {
         const { rows } = await pool.query(`SELECT 1 FROM "${t}" WHERE game_id = $1`, [gameId]);

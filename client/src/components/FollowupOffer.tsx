@@ -5,6 +5,8 @@ import { looksLikeEmail, saveFollowup, withdrawFollowup } from "../followupClien
 
 interface Props {
   gameId: string | null;
+  /** Applied to the wrapper so the ask can fade in after the epilogue has been read. */
+  style?: React.CSSProperties;
 }
 
 type Stage = "form" | "saved" | "withdrawn" | "hidden";
@@ -19,7 +21,7 @@ type Stage = "form" | "saved" | "withdrawn" | "hidden";
  * is never written to localStorage/sessionStorage and never sent to analytics
  * (track() calls carry no props).
  */
-export function FollowupOffer({ gameId }: Props) {
+export function FollowupOffer({ gameId, style }: Props) {
   const secret = gameId ? getGameSecret(gameId) : null;
   const available = !!gameId && !!secret && getResearchHint(gameId) === true;
   const [stage, setStage] = useState<Stage>("form");
@@ -75,7 +77,7 @@ export function FollowupOffer({ gameId }: Props) {
 
   if (stage === "withdrawn") {
     return (
-      <div className="followup-offer" data-testid="followup-withdrawn">
+      <div className="followup-offer" style={style} data-testid="followup-withdrawn">
         <p className="followup-line">Done. Your email has been deleted and you won't be contacted.</p>
       </div>
     );
@@ -83,8 +85,8 @@ export function FollowupOffer({ gameId }: Props) {
 
   if (stage === "saved") {
     return (
-      <div className="followup-offer" data-testid="followup-saved">
-        <p className="followup-line">Thank you. Your email is saved. You can withdraw at any time, and withdrawing deletes it.</p>
+      <div className="followup-offer" style={style} data-testid="followup-saved">
+        <p className="followup-line">Thank you. Your email is saved. You can withdraw right here, which deletes it. Later, withdrawing means contacting us (contact route: placeholder, to be filled in before release).</p>
         <button type="button" className="btn-link" onClick={withdraw} disabled={busy} data-testid="btn-followup-withdraw">
           withdraw
         </button>
@@ -94,7 +96,7 @@ export function FollowupOffer({ gameId }: Props) {
   }
 
   return (
-    <div className="followup-offer" data-testid="followup-offer">
+    <div className="followup-offer" style={style} data-testid="followup-offer">
       {/* COPY: pending counsel review */}
       <p className="followup-title">Want to hear from us later? (optional)</p>
       <p className="followup-line">
@@ -106,8 +108,7 @@ export function FollowupOffer({ gameId }: Props) {
         If you're in crisis, call or text 988 in the US, or find a local line at findahelpline.com.
       </p>
       <p className="followup-line">
-        You can withdraw at any time using the withdraw button that appears once you've saved, and withdrawing deletes your email.
-        See the <a href="privacy.html" target="_blank" rel="noopener">privacy page</a>.
+        Right after saving, a withdraw button appears here and deletes your email. Once you leave this screen, withdrawing means contacting us (contact route: placeholder, to be filled in before release). See the <a href="privacy.html" target="_blank" rel="noopener">privacy page</a>.
       </p>
       <label className="followup-check">
         <input type="checkbox" checked={contactOk} onChange={(e) => setContactOk(e.target.checked)} data-testid="chk-followup-contact" />
