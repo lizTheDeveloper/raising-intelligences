@@ -7,6 +7,7 @@ vi.mock("@sentry/node", () => ({
   init: vi.fn(),
   captureException: vi.fn(),
   flush: vi.fn().mockResolvedValue(true),
+  httpIntegration: vi.fn((o: unknown) => ({ name: "Http", opts: o })),
 }));
 
 import * as Sentry from "@sentry/node";
@@ -17,6 +18,7 @@ import {
   sentryExpressErrorHandler,
   flushSentry,
   isBenignDisconnect,
+  scrubResearchEvent,
   __resetSentryForTests,
 } from "../src/observability/sentry.js";
 
@@ -136,5 +138,47 @@ describe("Sentry observability layer", () => {
       expect(captureSpy).toHaveBeenCalledWith(err, { tags: { component: "express" } });
       expect(next).toHaveBeenCalledWith(err);
     });
+  });
+});
+
+describe("scrubResearchEvent", () => {
+  const ev = (url: string) => ({
+    request: { url, data: { answer: "SECRET-TEXT" }, cookies: { a: "b" }, query_string: "x=SECRET", headers: { "x-game-secret": "S" } },
+    exception: { values: [{ type: "SyntaxError", value: "Unexpected token SECRET-TEXT in JSON" }] },
+    message: "failed SECRET-TEXT",
+  }) as never as Parameters<typeof scrubResearchEvent>[0];
+  for (const url of [
+    "https://x.test/api/game/6a66aab-1/answers",
+    "https://x.test/api/game/6a66aab-1/repair",
+    "https://x.test/api/research/followup/6a66aab-1",
+    "https://x.test/api/game/6a66aab-1/answers?x=1",
+  ]) {
+    it(`drops body, cookies, query, headers and message text for ${url}`, () => {
+      const out = scrubResearchEvent(ev(url));
+      expect(JSON.stringify(out)).not.toContain("SECRET");
+      expect(out.request?.data).toBeUndefined();
+      expect(out.request?.cookies).toBeUndefined();
+      expect(out.request?.query_string).toBeUndefined();
+      expect(out.exception?.values?.[0].value).toMatch(/redacted/);
+    });
+  }
+  it("leaves a non-research URL intact", () => {
+    for (const url of ["https://x.test/api/game/abc/message", "https://x.test/api/game/abc/answers-export", "https://x.test/api/game"]) {
+      const out = scrubResearchEvent(ev(url));
+      expect(out.request?.data).toEqual({ answer: "SECRET-TEXT" });
+      expect(out.exception?.values?.[0].value).toContain("SECRET-TEXT");
+    }
+  });
+  it("init disables incoming request body capture and wires beforeSend through the scrub", () => {
+    const orig = process.env.SENTRY_DSN;
+    process.env.SENTRY_DSN = "https://k@example.test/1";
+    __resetSentryForTests();
+    initSentry();
+    const opts = vi.mocked(Sentry.init).mock.calls.at(-1)![0] as { integrations: Array<{ opts: unknown }>; beforeSend: (e: unknown, h: unknown) => unknown };
+    expect(opts.integrations[0].opts).toEqual({ maxIncomingRequestBodySize: "none" });
+    const out = opts.beforeSend(ev("https://x.test/api/game/g/repair"), {}) as { request: { data?: unknown } };
+    expect(out.request.data).toBeUndefined();
+    if (orig === undefined) delete process.env.SENTRY_DSN; else process.env.SENTRY_DSN = orig;
+    __resetSentryForTests();
   });
 });
