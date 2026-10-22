@@ -11,6 +11,7 @@ import type {
 } from "../types.js";
 import { pool } from "./pool.js";
 import type pg from "pg";
+import type { StoredAnswer } from "../research/questions.js";
 import { ESCALATION_DARK_CONCERN } from "../safety/escalation.js";
 
 export interface IdentitySnapshot {
@@ -126,6 +127,10 @@ export interface GameRepository {
    * be covered here; the Postgres test in research-privacy.test.ts enforces it.
    */
   deleteGameData(gameId: string): Promise<void>;
+  /** Upsert on (gameId, sceneIndex, questionId). A skip never overwrites an
+   * answered row; an answer always overwrites. */
+  saveAnswer(a: StoredAnswer): Promise<void>;
+  listAnswers(gameId: string): Promise<StoredAnswer[]>;
   /**
    * The IP's cross-game play profile: how many games total, how many were
    * dark, how many showed ordinary range. THE safety-critical query — see
@@ -775,6 +780,7 @@ export class PgGameRepository implements GameRepository {
       // These two have no foreign key, so they are deleted explicitly.
       await client.query(`DELETE FROM concern_events WHERE game_id = $1`, [gameId]);
       await client.query(`DELETE FROM escalation_flags WHERE game_id = $1`, [gameId]);
+      await client.query(`DELETE FROM question_answers WHERE game_id = $1`, [gameId]);
       await client.query(`DELETE FROM games WHERE id = $1`, [gameId]);
       await client.query("COMMIT");
     } catch (err) {
@@ -783,6 +789,55 @@ export class PgGameRepository implements GameRepository {
     } finally {
       client.release();
     }
+  }
+
+  async saveAnswer(a: StoredAnswer): Promise<void> {
+    await this.db.query(
+      `INSERT INTO question_answers
+         (game_id, scene_index, question_id, question_version, kind, answer, skipped, shown_at, answered_at)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9)
+       ON CONFLICT (game_id, scene_index, question_id) DO UPDATE SET
+         question_version = EXCLUDED.question_version,
+         kind             = EXCLUDED.kind,
+         answer           = EXCLUDED.answer,
+         skipped          = EXCLUDED.skipped,
+         shown_at         = EXCLUDED.shown_at,
+         answered_at      = EXCLUDED.answered_at
+       WHERE question_answers.skipped OR NOT EXCLUDED.skipped`,
+      [
+        a.gameId,
+        a.sceneIndex,
+        a.questionId,
+        a.questionVersion,
+        a.kind,
+        a.answer === null || a.answer === undefined ? null : JSON.stringify(a.answer),
+        a.skipped,
+        a.shownAt,
+        a.answeredAt,
+      ],
+    );
+  }
+
+  async listAnswers(gameId: string): Promise<StoredAnswer[]> {
+    const { rows } = await this.db.query<{
+      game_id: string; scene_index: number; question_id: string; question_version: number;
+      kind: StoredAnswer["kind"]; answer: unknown; skipped: boolean; shown_at: string | number; answered_at: string | number;
+    }>(
+      `SELECT game_id, scene_index, question_id, question_version, kind, answer, skipped, shown_at, answered_at
+         FROM question_answers WHERE game_id = $1 ORDER BY scene_index, answered_at`,
+      [gameId],
+    );
+    return rows.map((r) => ({
+      gameId: r.game_id,
+      sceneIndex: r.scene_index,
+      questionId: r.question_id,
+      questionVersion: r.question_version,
+      kind: r.kind,
+      answer: r.answer ?? null,
+      skipped: r.skipped,
+      shownAt: Number(r.shown_at),
+      answeredAt: Number(r.answered_at),
+    }));
   }
 
   async recordAccessSecretHash(gameId: string, hash: string): Promise<void> {
@@ -905,6 +960,7 @@ export class InMemoryGameRepository implements GameRepository {
   // Self-reported age classification; under-18 entries carry birthYear null.
   private gameAges = new Map<string, { birthYear: number | null; isAdult: boolean }>();
   private accessSecretHashes = new Map<string, string>();
+  private answers = new Map<string, StoredAnswer>();
   private escalationFlags: Array<{
     ipAddress: string;
     gameId: string;
@@ -1242,6 +1298,23 @@ export class InMemoryGameRepository implements GameRepository {
     this.gameIpAddresses.delete(gameId);
     this.gameAges.delete(gameId);
     this.accessSecretHashes.delete(gameId);
+    for (const [key, a] of [...this.answers]) {
+      if (a.gameId === gameId) this.answers.delete(key);
+    }
+  }
+
+  async saveAnswer(a: StoredAnswer): Promise<void> {
+    const key = JSON.stringify([a.gameId, a.sceneIndex, a.questionId]);
+    const existing = this.answers.get(key);
+    if (existing && !existing.skipped && a.skipped) return;
+    this.answers.set(key, { ...a });
+  }
+
+  async listAnswers(gameId: string): Promise<StoredAnswer[]> {
+    return [...this.answers.values()]
+      .filter((a) => a.gameId === gameId)
+      .map((a) => ({ ...a }))
+      .sort((x, y) => x.sceneIndex - y.sceneIndex || x.answeredAt - y.answeredAt);
   }
 
   async recordAccessSecretHash(gameId: string, hash: string): Promise<void> {

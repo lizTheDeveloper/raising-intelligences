@@ -193,6 +193,8 @@ export function createGameRoutes(
       highestRungFired,
       cpsOutcome,
       parentPersonalities,
+      parentContext,
+      repairNote,
       ...publicState
     } = state;
     res.json({
