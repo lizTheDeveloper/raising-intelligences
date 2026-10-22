@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { saveGameSecret, saveResearchHint } from "./gameSecret";
+import { readMemorySummary } from "../memorySummary";
 import { track, mark, secondsSince, bucketSeconds, bucketHours } from "../analytics";
 
 export interface SavedKid {
@@ -574,16 +575,14 @@ export function useGame() {
       // renders. Best effort: any failure just means no memory section.
       if (data.phase === "debrief") {
         let summary = "";
-        try {
-          const stateRes = await fetch(`${API}/game/${gameId}/state`);
-          if (stateRes.ok) {
-            const stateData = await stateRes.json();
-            const fromServer = typeof stateData.memorySummary === "string" ? stateData.memorySummary : "";
-            if (fromServer !== lastServerSummaryRef.current) summary = fromServer;
-            lastServerSummaryRef.current = fromServer;
-          }
-        } catch {
-          /* no memory section */
+        const fromServer = await readMemorySummary(`${API}/game/${gameId}/state`);
+        // Only a successful read advances the "last seen" summary. An identical
+        // text is hidden on purpose: when the Memory Keeper fails for a scene
+        // the server keeps the previous scene's summary, so an unchanged
+        // summary means there is nothing new from this scene.
+        if (fromServer !== null) {
+          if (fromServer !== lastServerSummaryRef.current) summary = fromServer;
+          lastServerSummaryRef.current = fromServer;
         }
         setMemorySummary(summary);
       }

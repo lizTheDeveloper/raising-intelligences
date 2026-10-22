@@ -1129,6 +1129,11 @@ body::after {
   animation-delay: 2200ms;
 }
 
+.debrief-kept:focus-visible {
+  outline: 1px solid var(--warm);
+  outline-offset: 4px;
+}
+
 .debrief-kept-label {
   font-size: 11px;
   color: var(--fg-dim);

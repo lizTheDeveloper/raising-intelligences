@@ -22,7 +22,14 @@ export function Debrief({ onContinue, extraButton, memorySummary = "", hoped }: 
         <p className="debrief-line-2">they are a little different now</p>
       </div>
       {(kept || hopedText) && (
-        <div className="debrief-kept" data-testid="debrief-kept">
+        <div
+          className="debrief-kept"
+          data-testid="debrief-kept"
+          role="region"
+          tabIndex={0}
+          /* Scrolls when long, so it must be reachable by keyboard. COPY: pending Liz review */
+          aria-label="what stayed with them, and what you hoped"
+        >
           {hopedText && (
             <div className="debrief-kept-item">
               {/* COPY: pending Liz review */}
