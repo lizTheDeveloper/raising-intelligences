@@ -259,7 +259,7 @@ describe.skipIf(!process.env.DATABASE_URL)("deleteGameData covers every game_id 
     const gameId = randomUUID();
     try {
       await pool.query(
-        `INSERT INTO games (id, child_name, relationship_type) VALUES ($1, 'Kai', 'co-parents')`,
+        `INSERT INTO games (id, child_name, relationship_type, phase) VALUES ($1, 'Kai', 'co-parents', 'event_intro')`,
         [gameId],
       );
       const { rows: tables } = await pool.query<{ table_name: string }>(
@@ -305,11 +305,11 @@ describe.skipIf(!process.env.DATABASE_URL)("deleteGameData covers every game_id 
       const { rows: linkRows } = await pool.query<{ pseudonym_id: string }>(
         `SELECT pseudonym_id FROM followup_links WHERE game_id = $1`, [gameId]);
       const pseudonym = linkRows[0]?.pseudonym_id;
-      if (pseudonym) {
-        await pool.query(
-          `INSERT INTO followup_contacts (pseudonym_id, email, consent_followup, consent_ai_analysis, consented_at)
-           VALUES ($1, 'x@example.com', true, true, 1)`, [pseudonym]);
-      }
+      // Fail loudly: a missing link row would make every pseudonym assertion vacuous.
+      expect(pseudonym, "followup_links row was not seeded for the game").toBeTruthy();
+      await pool.query(
+        `INSERT INTO followup_contacts (pseudonym_id, email, consent_followup, consent_ai_analysis, consented_at)
+         VALUES ($1, 'x@example.com', true, true, 1)`, [pseudonym]);
       // Any table that references followup_links(pseudonym_id) must be cleaned too.
       const { rows: refs } = await pool.query<{ table_name: string; column_name: string }>(
         `SELECT cl.relname AS table_name, a.attname AS column_name
@@ -317,17 +317,16 @@ describe.skipIf(!process.env.DATABASE_URL)("deleteGameData covers every game_id 
            JOIN pg_class cl ON cl.oid = con.conrelid
            JOIN pg_class ft ON ft.oid = con.confrelid
            JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = ANY (con.conkey)
-          WHERE con.contype = 'f' AND ft.relname = 'followup_links'
+           JOIN pg_attribute fa ON fa.attrelid = con.confrelid AND fa.attnum = ANY (con.confkey)
+          WHERE con.contype = 'f' AND ft.relname = 'followup_links' AND fa.attname = 'pseudonym_id'
             AND cl.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = current_schema())`);
       expect(refs.map((r) => r.table_name).sort()).toContain("followup_contacts");
 
       await repo.deleteGameData(gameId);
 
-      if (pseudonym) {
-        for (const r of refs) {
-          const { rows } = await pool.query(`SELECT 1 FROM "${r.table_name}" WHERE "${r.column_name}" = $1`, [pseudonym]);
-          expect(rows, `table ${r.table_name} still has a row for the deleted game's pseudonym`).toHaveLength(0);
-        }
+      for (const r of refs) {
+        const { rows } = await pool.query(`SELECT 1 FROM "${r.table_name}" WHERE "${r.column_name}" = $1`, [pseudonym]);
+        expect(rows, `table ${r.table_name} still has a row for the deleted game's pseudonym`).toHaveLength(0);
       }
 
       for (const t of seeded) {
