@@ -12,6 +12,13 @@ import type { Question, WaitKind } from "./researchTypes";
  * what keeps a slow response from one wait out of the next.
  */
 
+/**
+ * How long a wait must have lasted before a card is shown. A near-instant wait
+ * (a prefetched scene) would otherwise flash a card for a moment and count as
+ * "shown" without the player ever having a chance to read it.
+ */
+export const SHOW_AFTER_MS = 1500;
+
 export interface WaitSessionDeps {
   gameId: string;
   secret: string;
@@ -26,6 +33,12 @@ export interface WaitSessionDeps {
   base: string;
   fetchFn: typeof fetch;
   now: () => number;
+  /** The server's hint for this game: false means make no requests at all. null/undefined = unknown, ask once. */
+  research?: boolean | null;
+  /** Overridable for tests; defaults to SHOW_AFTER_MS. */
+  showAfterMs?: number;
+  setTimer?: (fn: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
   /** Receives the card to show, or null for none. Never called after dispose(). */
   onCurrent: (q: Question | null) => void;
   /** Analytics. Props are ids only, never answer text. */
@@ -55,6 +68,11 @@ function isQuestion(q: unknown): q is Question {
 
 export function createWaitSession(deps: WaitSessionDeps): WaitSession {
   const { gameId, secret, wait, sceneIndex, base, fetchFn, now, onCurrent, onEvent } = deps;
+  const showAfterMs = deps.showAfterMs ?? SHOW_AFTER_MS;
+  const setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+  const clearTimer = deps.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
+  let showTimer: unknown = null;
+  let startedAt = 0;
   const controller = new AbortController();
   let disposed = false;
   let started = false;
@@ -123,6 +141,8 @@ export function createWaitSession(deps: WaitSessionDeps): WaitSession {
     start() {
       if (started || disposed) return;
       started = true;
+      if (deps.research === false) return;
+      startedAt = now();
       const qs = new URLSearchParams({ wait, sceneIndex: String(sceneIndex) });
       let request: Promise<Response>;
       try {
@@ -140,7 +160,16 @@ export function createWaitSession(deps: WaitSessionDeps): WaitSession {
           // Re-checked after the await: the wait may have ended while the body streamed.
           if (disposed || !Array.isArray(data.questions)) return;
           queue = data.questions.filter(isQuestion).slice(0, 2);
-          showNext();
+          // Hold the card until the wait has lasted long enough to be worth it.
+          const remaining = showAfterMs - (now() - startedAt);
+          if (remaining > 0) {
+            showTimer = setTimer(() => {
+              showTimer = null;
+              if (!disposed) showNext();
+            }, remaining);
+          } else {
+            showNext();
+          }
         })
         .catch(() => {});
     },
@@ -152,6 +181,8 @@ export function createWaitSession(deps: WaitSessionDeps): WaitSession {
     },
     dispose() {
       disposed = true;
+      if (showTimer !== null) clearTimer(showTimer);
+      showTimer = null;
       current = null;
       queue = [];
       controller.abort();

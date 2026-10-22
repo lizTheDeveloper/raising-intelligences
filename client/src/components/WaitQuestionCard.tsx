@@ -55,12 +55,12 @@ export function WaitQuestionCard({ question, onAnswer, onSkip }: CardProps) {
   return (
     <div
       className={`wait-card${leaving ? " wait-card-leaving" : ""}`}
+      key={shown.id}
       role="group"
       aria-labelledby={promptId}
-      aria-live="polite"
       data-testid="wait-question-card"
     >
-      <p className="wait-card-prompt" id={promptId}>
+      <p className="wait-card-prompt" id={promptId} aria-live="polite">
         {shown.prompt}
       </p>
       {spec.type === "tap" ? (
@@ -70,7 +70,7 @@ export function WaitQuestionCard({ question, onAnswer, onSkip }: CardProps) {
               key={o.value}
               type="button"
               className="btn dim wait-card-option"
-              disabled={!live}
+              aria-disabled={!live}
               onClick={() => live && onAnswer(o.value)}
             >
               {o.label}
@@ -85,13 +85,14 @@ export function WaitQuestionCard({ question, onAnswer, onSkip }: CardProps) {
             rows={3}
             maxLength={spec.maxLength}
             value={text}
-            disabled={!live}
+            readOnly={!live}
             onChange={(e) => setText(e.target.value)}
           />
           <button
             type="button"
             className="btn dim"
-            disabled={!live || text.trim().length === 0}
+            disabled={text.trim().length === 0}
+            aria-disabled={!live}
             onClick={() => live && onAnswer(text)}
           >
             {/* COPY: pending Liz review */}
@@ -99,7 +100,7 @@ export function WaitQuestionCard({ question, onAnswer, onSkip }: CardProps) {
           </button>
         </div>
       )}
-      <button type="button" className="wait-card-skip" disabled={!live} onClick={() => live && onSkip()}>
+      <button type="button" className="wait-card-skip" aria-disabled={!live} onClick={() => live && onSkip()}>
         {/* COPY: pending Liz review */}
         skip
       </button>

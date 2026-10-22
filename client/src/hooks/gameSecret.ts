@@ -23,3 +23,27 @@ export function getGameSecret(gameId: string): string | null {
     return null;
   }
 }
+
+// The server also says, at creation, whether wait-time research can run for
+// this game (`research` in the create response). It is a hint that lets the
+// client skip the requests entirely; the server enforces the same gates
+// itself. Absent (a game made before the hint existed) reads as null, and the
+// caller then tries once as it always did.
+const researchKeyFor = (gameId: string) => `ri_game_research:${gameId}`;
+
+export function saveResearchHint(gameId: string, research: boolean): void {
+  try {
+    localStorage.setItem(researchKeyFor(gameId), research ? "1" : "0");
+  } catch {
+    /* non-fatal: with no hint the client just asks and gets its answer from the server */
+  }
+}
+
+export function getResearchHint(gameId: string): boolean | null {
+  try {
+    const v = localStorage.getItem(researchKeyFor(gameId));
+    return v === "1" ? true : v === "0" ? false : null;
+  } catch {
+    return null;
+  }
+}

@@ -38,6 +38,7 @@ import {
 } from "../game/scene-end.js";
 import { UUID_RE } from "../lib/validation.js";
 import { classifyBirthYear } from "../research/age.js";
+import { isResearchEnabled } from "../research/config.js";
 import { newGameSecret, requireGameSecret } from "../security/game-secret.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
@@ -119,7 +120,9 @@ export function createGameRoutes(
     // Per-game secret: only its hash is stored; the plaintext is returned once.
     const { secret, hash } = newGameSecret();
     await repo.recordAccessSecretHash(state.id, hash);
-    res.json({ gameId: state.id, secret });
+    // `research` is only a hint so the client can skip wait-question requests
+    // outright; the research routes enforce the same gates themselves.
+    res.json({ gameId: state.id, secret, research: isResearchEnabled() && age?.ok === true && age.isAdult });
     // Kick off gender inference and portrait generation in parallel. Scene 1 is
     // deliberately not prefetched here: it must be built after the personality
     // seed exists, so /next-event generates it via engine.startEvent.

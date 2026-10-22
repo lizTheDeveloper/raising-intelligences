@@ -40,6 +40,7 @@ export function SoloGame() {
     childName,
     childGender,
     currentEvent,
+    serverEventNumber,
     messages,
     messagesRemaining,
     streamingMessage,
@@ -72,7 +73,13 @@ export function SoloGame() {
   // next-scene wait begins, but the server's event number stays at this scene
   // until the next one lands, so this is the number wait questions file under.
   const lastSceneRef = useRef(0);
+  // Event numbers are server-stamped, so a scene's number is the server's
+  // counter. On a resume that lands between scenes there is no currentEvent;
+  // the counter /state reported covers that case.
   if (currentEvent) lastSceneRef.current = currentEvent.eventNumber;
+  else if (serverEventNumber !== null && serverEventNumber > lastSceneRef.current) {
+    lastSceneRef.current = serverEventNumber;
+  }
   const [showGuardian, setShowGuardian] = useState(false);
   const [matrixUser, setMatrixUser] = useState<string | null>(
     () => window.matrixAuth?.getUserId() ?? null

@@ -1,6 +1,6 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { saveGameSecret, getGameSecret } from "../src/hooks/gameSecret.js";
+import { saveGameSecret, getGameSecret, saveResearchHint, getResearchHint } from "../src/hooks/gameSecret.js";
 
 const g = globalThis as { localStorage?: unknown };
 const original = g.localStorage;
@@ -40,4 +40,24 @@ test("does not throw and returns null when localStorage is absent", () => {
   delete g.localStorage;
   assert.doesNotThrow(() => saveGameSecret("abc", "x"));
   assert.equal(getGameSecret("abc"), null);
+});
+
+test("research hint round-trips true/false and is null when absent", () => {
+  g.localStorage = memoryStorage();
+  assert.equal(getResearchHint("abc"), null);
+  saveResearchHint("abc", false);
+  assert.equal(getResearchHint("abc"), false);
+  saveResearchHint("abc", true);
+  assert.equal(getResearchHint("abc"), true);
+});
+
+test("research hint never throws when storage is blocked or absent", () => {
+  const boom = () => {
+    throw new Error("blocked");
+  };
+  g.localStorage = { getItem: boom, setItem: boom };
+  assert.doesNotThrow(() => saveResearchHint("abc", true));
+  assert.equal(getResearchHint("abc"), null);
+  delete g.localStorage;
+  assert.equal(getResearchHint("abc"), null);
 });

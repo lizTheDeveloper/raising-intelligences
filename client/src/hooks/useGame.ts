@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { saveGameSecret } from "./gameSecret";
+import { saveGameSecret, saveResearchHint } from "./gameSecret";
 import { track, mark, secondsSince, bucketSeconds, bucketHours } from "../analytics";
 
 export interface SavedKid {
@@ -138,6 +138,8 @@ export function useGame() {
   const [childName, setChildName] = useState("");
   const [childGender, setChildGender] = useState<"boy" | "girl" | "nonbinary">("nonbinary");
   const [currentEvent, setCurrentEvent] = useState<GameEvent | null>(null);
+  /** The server's own scene counter as of the last resume; null until a game is loaded. */
+  const [serverEventNumber, setServerEventNumber] = useState<number | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [messagesRemaining, setMessagesRemaining] = useState(12);
   const [streamingMessage, setStreamingMessage] = useState("");
@@ -209,6 +211,7 @@ export function useGame() {
       setChildGender(data.childGender ?? "nonbinary");
       setPhase(data.phase);
       setCurrentEvent(data.currentEvent ?? null);
+      setServerEventNumber(typeof data.currentEventNumber === "number" ? data.currentEventNumber : null);
       setMessages(data.messages ?? []);
       setMessagesRemaining(data.messagesRemaining ?? 12 - (data.parentMessageCount ?? 0));
       setInterventionText(data.interventionText ?? null);
@@ -253,6 +256,7 @@ export function useGame() {
       }
       const data = await res.json();
       if (typeof data.secret === "string") saveGameSecret(data.gameId, data.secret);
+      if (typeof data.research === "boolean") saveResearchHint(data.gameId, data.research);
       setGameId(data.gameId);
       setChildName(name);
       setPhase("event_intro");
@@ -821,6 +825,7 @@ export function useGame() {
     childName,
     childGender,
     currentEvent,
+    serverEventNumber,
     messages,
     messagesRemaining,
     streamingMessage,

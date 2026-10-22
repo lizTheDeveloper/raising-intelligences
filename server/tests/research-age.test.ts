@@ -76,13 +76,13 @@ describe("POST /api/game birthYear", () => {
       headers: { "Content-Type": "application/json", "X-Forwarded-For": `10.77.0.${n}` },
       body: JSON.stringify({ childName: "Wren", ...body }),
     });
-    return { status: res.status, json: (await res.json()) as { gameId?: string; error?: string } };
+    return { status: res.status, json: (await res.json()) as { gameId?: string; research?: boolean; error?: string } };
   }
 
   it("missing birthYear stores nothing and still works", async () => {
     const { status, json } = await create({});
     expect(status).toBe(200);
-    expect(Object.keys(json)).toEqual(["gameId", "secret"]);
+    expect(Object.keys(json)).toEqual(["gameId", "secret", "research"]);
     expect(await repo.getIsAdult(json.gameId!)).toBeNull();
   });
 
@@ -101,6 +101,32 @@ describe("POST /api/game birthYear", () => {
     expect(await repo.getIsAdult(json.gameId!)).toBe(false);
     expect(spy.calls).toEqual([{ gameId: json.gameId, age: { birthYear: null, isAdult: false } }]);
     spy.restore();
+  });
+
+  describe("research hint", () => {
+    const original = process.env.RI_RESEARCH_ENABLED;
+    afterEach(() => {
+      if (original === undefined) delete process.env.RI_RESEARCH_ENABLED;
+      else process.env.RI_RESEARCH_ENABLED = original;
+    });
+
+    it("is true for an adult when research is enabled", async () => {
+      process.env.RI_RESEARCH_ENABLED = "true";
+      expect((await create({ birthYear: 2000 })).json.research).toBe(true);
+    });
+
+    it("is false for an under-18 even when research is enabled", async () => {
+      process.env.RI_RESEARCH_ENABLED = "true";
+      const year = new Date().getFullYear() - 10;
+      expect((await create({ birthYear: year })).json.research).toBe(false);
+    });
+
+    it("is false with no birth year, and when the flag is off", async () => {
+      process.env.RI_RESEARCH_ENABLED = "true";
+      expect((await create({})).json.research).toBe(false);
+      delete process.env.RI_RESEARCH_ENABLED;
+      expect((await create({ birthYear: 2000 })).json.research).toBe(false);
+    });
   });
 
   it("rejects a numeric string", async () => {

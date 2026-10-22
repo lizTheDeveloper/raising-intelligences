@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { track } from "../analytics";
 import { createWaitSession, type WaitSession } from "../researchClient";
 import type { Question, WaitKind } from "../researchTypes";
-import { getGameSecret } from "./gameSecret";
+import { getGameSecret, getResearchHint } from "./gameSecret";
 
 /**
  * Wait-time questions for one wait. Thin on purpose: the cycle, stale-response
@@ -35,10 +35,14 @@ export function useWaitQuestions(
     if (!active || !gameId) return;
     const secret = getGameSecret(gameId);
     if (!secret) return;
+    // The server said research is off for this game: make no requests at all.
+    // No hint (an older game) falls through and asks once.
+    const research = getResearchHint(gameId);
     const session = createWaitSession({
       gameId,
       secret,
       wait,
+      research,
       sceneIndex: sceneRef.current,
       base: import.meta.env.BASE_URL,
       fetchFn: (input, init) => fetch(input, init),
