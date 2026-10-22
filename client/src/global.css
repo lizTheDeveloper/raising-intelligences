@@ -112,6 +112,12 @@ body::after {
   font-size: 12px;
   margin-top: 8px;
 }
+.birth-year-hint {
+  font-size: 11px;
+  color: var(--fg-dim);
+  margin: -4px 0 0;
+}
+.birth-year-hint-error { color: var(--warm); }
 .birth-year-input {
   width: 80px;
   letter-spacing: 2px;

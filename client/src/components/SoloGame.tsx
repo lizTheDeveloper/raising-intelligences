@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { parseBirthYear } from "../birthYear";
+import { PRIVACY_URL } from "../links";
 import { track, mark, secondsSince, bucketSeconds } from "../analytics";
 import {
   useGame,
@@ -29,15 +31,6 @@ const RUNG_BY_PHASE: Record<string, number> = { consult: 1, therapy: 2, cps_revi
 /** Where the saved-kids picker parks its intent across the reload it triggers.
  *  `handleResume` navigates rather than loading in place, so the resume lands
  *  on the `?game=` path and would otherwise be indistinguishable from a link. */
-const PRIVACY_URL = import.meta.env.BASE_URL + "privacy.html";
-
-/** A 4-digit year from 1900 to this year, or null. */
-function parseBirthYear(input: string): number | null {
-  if (!/^\d{4}$/.test(input)) return null;
-  const year = Number(input);
-  return year >= 1900 && year <= new Date().getFullYear() ? year : null;
-}
-
 const RESUME_SOURCE_KEY = "ri_resume_source";
 
 export function SoloGame() {
@@ -175,9 +168,9 @@ export function SoloGame() {
     };
   }, [syncOnLogin]);
 
-  // Client-side convenience only; the server validates again. Deliberately
-  // not persisted and not passed to track().
+  // Deliberately not persisted and not passed to track().
   const birthYear = parseBirthYear(birthYearInput);
+  const birthYearInvalid = birthYearInput !== "" && birthYear === null;
 
   const handleStart = async () => {
     if (!nameInput.trim() || birthYear === null) return;
@@ -361,7 +354,18 @@ export function SoloGame() {
               onChange={(e) => setBirthYearInput(e.target.value.replace(/\D/g, ""))}
               className="name-input birth-year-input"
               data-testid="birth-year"
+              aria-describedby="birth-year-hint"
+              aria-invalid={birthYearInvalid}
             />
+            {/* COPY: pending Liz review */}
+            <p
+              id="birth-year-hint"
+              className={`birth-year-hint${birthYearInvalid ? " birth-year-hint-error" : ""}`}
+              data-testid="birth-year-hint"
+              role={birthYearInvalid ? "alert" : undefined}
+            >
+              {birthYearInvalid ? "enter a 4-digit year from 1900 to this year" : "4 digits, e.g. 1990"}
+            </p>
             <button
               type="submit"
               className="btn"

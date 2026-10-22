@@ -21,3 +21,5 @@ scripts/.adversarial-results/
 # The global ignore has `*secret*`; these paths are real source and must be tracked
 !server/src/**/*secret*
 !server/tests/**/*secret*
+!client/src/**/*secret*
+!client/tests/**/*secret*
