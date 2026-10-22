@@ -86,12 +86,30 @@ describe("POST /api/game birthYear", () => {
     expect(await repo.getIsAdult(json.gameId!)).toBeNull();
   });
 
-  it("adult birth year is stored with isAdult true", async () => {
-    const spy = await spyRecordAge();
-    const { json } = await create({ birthYear: 2000 });
-    expect(await repo.getIsAdult(json.gameId!)).toBe(true);
-    expect(spy.calls).toEqual([{ gameId: json.gameId, age: { birthYear: 2000, isAdult: true } }]);
-    spy.restore();
+  describe("adult birth year storage", () => {
+    const original = process.env.RI_RESEARCH_ENABLED;
+    afterEach(() => {
+      if (original === undefined) delete process.env.RI_RESEARCH_ENABLED;
+      else process.env.RI_RESEARCH_ENABLED = original;
+    });
+
+    it("flag on + adult: year stored with isAdult true", async () => {
+      process.env.RI_RESEARCH_ENABLED = "true";
+      const spy = await spyRecordAge();
+      const { json } = await create({ birthYear: 2000 });
+      expect(await repo.getIsAdult(json.gameId!)).toBe(true);
+      expect(spy.calls).toEqual([{ gameId: json.gameId, age: { birthYear: 2000, isAdult: true } }]);
+      spy.restore();
+    });
+
+    it("flag off + adult: isAdult true but the year is never stored", async () => {
+      delete process.env.RI_RESEARCH_ENABLED;
+      const spy = await spyRecordAge();
+      const { json } = await create({ birthYear: 2000 });
+      expect(await repo.getIsAdult(json.gameId!)).toBe(true);
+      expect(spy.calls).toEqual([{ gameId: json.gameId, age: { birthYear: null, isAdult: true } }]);
+      spy.restore();
+    });
   });
 
   it("under-18 stores isAdult false and never the birth year", async () => {

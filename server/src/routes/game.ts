@@ -101,8 +101,9 @@ export function createGameRoutes(
       res.status(400).json({ error: `relationshipType must be ${MAX_RELATIONSHIP_TYPE_LENGTH} characters or fewer` });
       return;
     }
-    // Optional (legacy clients omit it). Under-18 players: only the flag is
-    // stored, never the year.
+    // Optional (legacy clients omit it). The flag is always stored; the year
+    // only for an adult while research is enabled (data minimisation). Under-18
+    // players never have a year stored.
     const age = birthYear === undefined ? null : classifyBirthYear(birthYear);
     if (age && !age.ok) {
       res.status(400).json({ error: age.error });
@@ -113,7 +114,7 @@ export function createGameRoutes(
     await repo.saveGame(state);
     if (age?.ok) {
       await repo.recordAge(state.id, {
-        birthYear: age.isAdult ? age.birthYear : null,
+        birthYear: age.isAdult && isResearchEnabled() ? age.birthYear : null,
         isAdult: age.isAdult,
       });
     }
