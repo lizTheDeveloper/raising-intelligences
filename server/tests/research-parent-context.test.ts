@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import type { AddressInfo } from "net";
 import { buildServer, type BuiltServer } from "../src/app.js";
 import { InMemoryGameRepository } from "../src/db/repository.js";
@@ -136,6 +136,8 @@ describe("context assembly", () => {
 });
 
 class RecordingMock extends MockLLMClient {
+  seedHold: Promise<void> | null = null;
+  seedEntered: (() => void) | null = null;
   hold: Promise<void> | null = null;
   entered: (() => void) | null = null;
   worldManagerPrompts: string[] = [];
@@ -146,7 +148,7 @@ class RecordingMock extends MockLLMClient {
     return super.completeJson<T>(system, userMessage, role);
   }
   override async completeResponse(system: string, userMessage: string, maxTokens?: number, role?: LLMRole, onChunk?: (c: string) => void): Promise<string> {
-    if (role === "personality_seed") return SEED;
+    if (role === "personality_seed") { this.seedEntered?.(); if (this.seedHold) await this.seedHold; return SEED; }
     if (role === "psychologist") this.psychologistPrompts.push(`${system}\n${userMessage}`);
     return super.completeResponse(system, userMessage, maxTokens, role, onChunk);
   }
@@ -164,7 +166,7 @@ describe("parent context through the HTTP flow", () => {
   beforeAll(async () => {
     process.env.DISABLE_PORTRAITS = "1";
     mock = new RecordingMock();
-    mock.events = Array.from({ length: 6 }, (_, i) => ({
+    mock.events = Array.from({ length: 20 }, (_, i) => ({
       eventNumber: i + 1, age: 4, description: `Scenario ${i + 1}.`, setting: "Home", trigger: "Test",
     }));
     repo = new InMemoryGameRepository();
@@ -207,6 +209,52 @@ describe("parent context through the HTTP flow", () => {
     expect(p).not.toContain("MOMENT-SENTINEL");
     const state = await (await fetch(`${baseUrl}/game/${g.gameId}/state`)).json();
     expect(state).not.toHaveProperty("parentContext");
+  });
+
+  it("REAL ORDER: an answer posted while the seed is generating reaches scene 1's prompt", async () => {
+    const g = await create(1985);
+    let releaseSeed!: () => void;
+    let seedEntered!: () => void;
+    const entered = new Promise<void>((r) => (seedEntered = r));
+    mock.seedHold = new Promise<void>((r) => (releaseSeed = r));
+    mock.seedEntered = seedEntered;
+    // The answer's write is slow, so a /next-event that skips the lock barrier
+    // would build scene 1's context before the answer is applied.
+    const realSave = repo.saveAnswer.bind(repo);
+    const slow = vi.spyOn(repo, "saveAnswer").mockImplementation(async (a) => {
+      await new Promise((r) => setTimeout(r, 80));
+      return realSave(a);
+    });
+    try {
+      const pers = personality(g.gameId); // takes the per-game lock and waits on the seed
+      await entered;
+      const ans = answer(g.gameId, g.secret, "worry_for_child", "REAL-ORDER-SENTINEL"); // queues behind the lock
+      await new Promise((r) => setTimeout(r, 30));
+      releaseSeed();
+      expect((await pers).status).toBe(200);
+      // The client fires /next-event as soon as the seed lands.
+      const next = await post(`/game/${g.gameId}/next-event`, {});
+      expect(next.status).toBe(200);
+      expect((await ans).status).toBe(204);
+      expect(mock.worldManagerPrompts).toHaveLength(1);
+      expect(mock.worldManagerPrompts[0]).toContain("REAL-ORDER-SENTINEL");
+    } finally {
+      releaseSeed();
+      slow.mockRestore();
+      mock.seedHold = null;
+      mock.seedEntered = null;
+    }
+  });
+
+  it("the lock barrier does not deadlock with no pending work and leaves non-research games alone", async () => {
+    const adult = await create(1985);
+    await personality(adult.gameId);
+    expect((await post(`/game/${adult.gameId}/next-event`, {})).status).toBe(200);
+    const legacy = await create();
+    await personality(legacy.gameId);
+    expect((await post(`/game/${legacy.gameId}/next-event`, {})).status).toBe(200);
+    expect(mock.worldManagerPrompts).toHaveLength(2);
+    expect(mock.worldManagerPrompts[1]).not.toContain(PARENT_CONTEXT_OPEN);
   });
 
   it("an answer that arrives after scene 1 shapes the next scene, and survives eviction", async () => {

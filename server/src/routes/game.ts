@@ -237,6 +237,12 @@ export function createGameRoutes(
   router.post("/game/:id/next-event", async (req: Request, res: Response) => {
     const gameId = req.params.id as string;
 
+    // Lock barrier (FIFO): handlers already queued for this game, such as a
+    // first-wait about_you answer behind /personality, apply before scene 1's
+    // context is read below. The lock is released at once and not held across
+    // generation, so this waits only for work queued ahead of it.
+    await lock(gameId, async () => {});
+
     const state = await resolveGame(gameId);
     if (!state) {
       res.status(404).json({ error: "Game not found" });
