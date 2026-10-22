@@ -1,5 +1,6 @@
 import { kidParentContext } from "../research/parent-context.js";
-import { formatRepairBlock } from "../research/repair.js";
+import { formatRepairBlock, MAX_REPAIR_LENGTH } from "../research/repair.js";
+import { cleanUntrustedText } from "../research/sanitize.js";
 import type { GameState, Message } from "../types.js";
 import {
   PSYCHOLOGIST_SYSTEM_PROMPT,
@@ -188,6 +189,13 @@ export function buildSceneTranscript(state: GameState): string {
   const eventMessages = currentEventMessages(state);
 
   let transcript = `## Event: ${state.currentEvent?.description}\nAge: ${state.currentEvent?.age}\n\n`;
+
+  if (state.sceneRepairLine) {
+    // The parent really said this to the child before the scene; scene-level
+    // review and the concern checks must see it. Attributed, and cleaned again.
+    const line = cleanUntrustedText(state.sceneRepairLine, MAX_REPAIR_LENGTH, { neutralizeDelimiters: true });
+    if (line) transcript += `[Parent, before this scene]: ${line}\n`;
+  }
 
   let currentSection = "shared";
   for (const m of eventMessages) {

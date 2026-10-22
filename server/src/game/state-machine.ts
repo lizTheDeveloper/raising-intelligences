@@ -228,7 +228,9 @@ function applyTransition(state: GameState, action: GameAction): GameState {
         events: [...state.events, event],
         pendingGuidance: null,
         // A repair note applies to exactly one scene: the one starting now.
+        // The text moves to sceneRepairLine so that scene's review sees it.
         repairNote: null,
+        sceneRepairLine: null,
       };
     }
 
@@ -248,6 +250,7 @@ function applyTransition(state: GameState, action: GameAction): GameState {
         events: [...state.events, event],
         pendingGuidance: null,
         repairNote: null,
+        sceneRepairLine: state.repairNote ?? null,
       };
     }
 

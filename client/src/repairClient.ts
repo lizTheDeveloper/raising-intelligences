@@ -17,10 +17,17 @@ export interface RepairDeps {
   fetchFn: typeof fetch;
 }
 
-export async function sendRepair(deps: RepairDeps): Promise<boolean> {
+/**
+ * "sent": accepted. "failed": did not go through, carry on without it.
+ * "ended": the server refused it on safety grounds and ended the session (403),
+ * which the screen must treat like a moderation block in chat, not as a failure.
+ */
+export type RepairResult = "sent" | "failed" | "ended";
+
+export async function sendRepair(deps: RepairDeps): Promise<RepairResult> {
   try {
     const message = deps.message.trim();
-    if (!message || Array.from(message).length > REPAIR_MAX_LENGTH) return false;
+    if (!message || Array.from(message).length > REPAIR_MAX_LENGTH) return "failed";
     const res = await deps.fetchFn(`${deps.base}api/game/${encodeURIComponent(deps.gameId)}/repair`, {
       method: "POST",
       headers: {
@@ -29,8 +36,9 @@ export async function sendRepair(deps: RepairDeps): Promise<boolean> {
       },
       body: JSON.stringify({ message }),
     });
-    return res.status === 204;
+    if (res.status === 204) return "sent";
+    return res.status === 403 ? "ended" : "failed";
   } catch {
-    return false;
+    return "failed";
   }
 }

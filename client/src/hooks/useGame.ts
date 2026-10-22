@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { saveGameSecret, saveResearchHint, getGameSecret } from "./gameSecret";
-import { sendRepair } from "../repairClient";
+import { sendRepair, type RepairResult } from "../repairClient";
 import { readMemorySummary } from "../memorySummary";
 import { track, mark, secondsSince, bucketSeconds, bucketHours } from "../analytics";
 
@@ -632,15 +632,21 @@ export function useGame() {
   // Optional: say something to the child about the scene just debriefed. Never
   // throws; false means it did not reach the server and the player simply
   // carries on without it.
-  const repair = useCallback(async (message: string): Promise<boolean> => {
-    if (!gameId) return false;
-    return sendRepair({
+  const repair = useCallback(async (message: string): Promise<RepairResult> => {
+    if (!gameId) return "failed";
+    const result = await sendRepair({
       gameId,
       secret: getGameSecret(gameId),
       message,
       base: import.meta.env.BASE_URL,
       fetchFn: (input, init) => fetch(input, init),
     });
+    if (result === "ended") {
+      // Same outcome as a moderation block on /message.
+      setPhase("ended");
+      setTrackedError("This session has ended.", "moderation");
+    }
+    return result;
   }, [gameId]);
 
   // Dark Play Plan 3, Rung 1 — conclude a consult beat. Plain JSON (not SSE),

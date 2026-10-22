@@ -1,15 +1,16 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { REPAIR_MAX_LENGTH } from "../repairClient";
+import { REPAIR_MAX_LENGTH, type RepairResult } from "../repairClient";
 
 interface Props {
   /** `repaired` is true only when the player went back to the moment first. */
   onContinue: (repaired?: boolean) => void;
   /**
-   * Optional. Sends what the parent said to the child; resolves false if it did
-   * not go through. Absent means the control is not offered.
+   * Optional. Sends what the parent said to the child. "failed" means it did
+   * not go through; "ended" means the session was ended (the parent screen
+   * changes, so nothing more is done here). Absent means the control is not offered.
    */
-  onRepair?: (message: string) => Promise<boolean>;
+  onRepair?: (message: string) => Promise<RepairResult>;
   extraButton?: ReactNode;
   /**
    * The child's own first-person memory of the scene. Plain text. Empty renders
@@ -28,6 +29,9 @@ export function Debrief({ onContinue, onRepair, extraButton, memorySummary = "",
   const fieldRef = useRef<HTMLTextAreaElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const wasOpen = useRef(false);
+  // Set once the player has pressed continue, so a repair that finishes later
+  // never starts a second continue.
+  const continued = useRef(false);
   const fieldId = useId();
 
   // Focus follows the control: into the box when it opens, back to the
@@ -43,15 +47,25 @@ export function Debrief({ onContinue, onRepair, extraButton, memorySummary = "",
     if (!onRepair || !message || sending) return;
     setSending(true);
     setFailed(false);
-    let ok = false;
+    let result: RepairResult = "failed";
     try {
-      ok = await onRepair(message);
+      result = await onRepair(message);
     } catch {
-      ok = false;
+      result = "failed";
     }
     setSending(false);
-    if (ok) onContinue(true);
-    else setFailed(true);
+    if (continued.current || result === "ended") return;
+    if (result === "sent") {
+      continued.current = true;
+      onContinue(true);
+    } else {
+      setFailed(true);
+    }
+  };
+  const continueNow = () => {
+    if (continued.current) return;
+    continued.current = true;
+    onContinue();
   };
 
   const kept = memorySummary.trim();
@@ -95,7 +109,6 @@ export function Debrief({ onContinue, onRepair, extraButton, memorySummary = "",
               type="button"
               className="btn btn-secondary debrief-repair-toggle"
               data-testid="btn-repair-open"
-              aria-expanded={false}
               onClick={() => setOpen(true)}
             >
               {/* COPY: pending Liz review */}
@@ -145,7 +158,7 @@ export function Debrief({ onContinue, onRepair, extraButton, memorySummary = "",
           )}
         </div>
       )}
-      <button onClick={() => onContinue()} className="btn" data-testid="btn-next-event">
+      <button onClick={continueNow} className="btn" data-testid="btn-next-event">
         next event
       </button>
       {extraButton}

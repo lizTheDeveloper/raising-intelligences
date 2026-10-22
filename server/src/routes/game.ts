@@ -201,6 +201,7 @@ export function createGameRoutes(
       parentPersonalities,
       parentContext,
       repairNote,
+      sceneRepairLine,
       ...publicState
     } = state;
     res.json({

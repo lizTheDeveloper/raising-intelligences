@@ -39,7 +39,7 @@ const VALID_TIERS: SceneSafetyTier[] = ["block", "concern", "none"];
  * Scene-level safety routing. Fails open to "none" on any error or empty scene.
  */
 export async function classifyScene(llm: LLMClient, state: GameState): Promise<SceneSafetyResult> {
-  if (currentEventMessages(state).length === 0) return { tier: "none", reason: "" };
+  if (currentEventMessages(state).length === 0 && !state.sceneRepairLine) return { tier: "none", reason: "" };
 
   try {
     const transcript = buildSceneTranscript(state);
