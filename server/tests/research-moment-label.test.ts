@@ -53,7 +53,6 @@ describe("labelMoment", () => {
     ["malformed", "not json"],
     ["empty", ""],
     ["wrong enum", '{"label":"great","rationale":"x"}'],
-    ["array", '[{"label":"match"}]'],
     ["non-string label", '{"label":1}'],
     ["non-string rationale", '{"label":"match","rationale":{"a":1}}'],
   ])("%s output is unclear", async (_n, reply) => {
@@ -281,6 +280,7 @@ describe("endFamilyChat labelling", () => {
     expect(out.state.phase).toBe(baseline.state.phase);
     expect(out.state.memorySummary).toBeTruthy();
     expect(out.state.identitySnapshots.length).toBe(baseline.state.identitySnapshots.length);
+    await flush();
     expect(llm.labelCalls).toHaveLength(1);
   });
 
@@ -342,14 +342,15 @@ describe.skipIf(process.env.LLM_CACHE_MODE !== "record")("moment label eval (rec
     const count = (l: string) => fixtures.filter((f) => f.expected === l).length;
     expect([count("match"), count("partial"), count("mismatch"), count("unclear")]).toEqual([2, 1, 2, 1]);
   });
-  it("agrees with the hand labels on most fixtures", async () => {
+  // Each tier's moment_comparison model, via the same tier selection the app uses.
+  it.each(["standard", "cerebras", "premium"] as const)("%s tier agrees with the hand labels on most fixtures", async (tier) => {
     const { RoutingLLMClient } = await import("../src/llm/routing-client.js");
-    const llm = new RoutingLLMClient("standard", () => {}, "kid_family_chat", 424242);
+    const llm = new RoutingLLMClient(tier, () => {}, "kid_family_chat", 424242);
     let agree = 0;
     for (const f of fixtures) {
       const out = await labelMoment(llm, { kind: f.kind, hoped: f.hoped ?? null, repair: f.repair ?? null, memorySummary: f.memorySummary });
       if (out.label === f.expected) agree++;
     }
     expect(agree).toBeGreaterThanOrEqual(4);
-  });
+  }, 120_000);
 });

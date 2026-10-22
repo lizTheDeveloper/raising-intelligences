@@ -17,7 +17,9 @@ export const CHILD_MEMORY_CLOSE = "CHILD_MEMORY>>>";
 const MAX_PARENT_TEXT = 1000;
 const MAX_MEMORY = 2000;
 export const MAX_RATIONALE = 500;
-const LABEL_MAX_TOKENS = 400;
+// gender_inference runs these same models at 256 with the same prose-tolerant parse; a
+// label is one short sentence, so this leaves room for a model that reasons aloud first.
+const LABEL_MAX_TOKENS = 1000;
 const LABEL_TIMEOUT_MS = 30_000;
 const LABELS: readonly MomentLabelValue[] = ["match", "partial", "mismatch", "unclear"];
 
@@ -50,13 +52,33 @@ export function buildLabelPrompt(input: {
   return [question(input.kind), PARENT_TEXT_OPEN, parent, PARENT_TEXT_CLOSE, CHILD_MEMORY_OPEN, memory, CHILD_MEMORY_CLOSE].join("\n");
 }
 
+/** The first balanced `{...}` in the text (string- and escape-aware), or null. */
+function firstJsonObject(text: string): string | null {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (c === "\\") escaped = true;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return text.slice(start, i + 1);
+  }
+  return null;
+}
+
 function parse(kind: MomentLabelKind, raw: string): MomentLabel {
-  let text = raw.trim();
-  const fenced = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  if (fenced) text = fenced[1].trim();
+  // Reasoning models may talk before or after the JSON, or fence it: take the first object.
+  const objectText = firstJsonObject(raw);
+  if (!objectText) return UNCLEAR(kind);
   let value: unknown;
   try {
-    value = JSON.parse(text);
+    value = JSON.parse(objectText);
   } catch {
     return UNCLEAR(kind);
   }
@@ -97,10 +119,60 @@ function textAnswer(a: { answer: unknown; skipped: boolean } | undefined): strin
   return a.answer;
 }
 
+// The most recent scene summary per game, held in process only so an answer that
+// arrives after end-of-scene processing can still be labeled. Never persisted or
+// logged. Losing it (restart) only means a missed research label.
+const MAX_RECORDS = 500;
+const sceneSummaries = new Map<string, { sceneIndex: number; memorySummary: string }>();
+
+/** Called by endFamilyChat with text the summarizer produced for this scene. */
+export function recordSceneSummary(gameId: string, sceneIndex: number, memorySummary: string): void {
+  if (!isResearchEnabled() || !memorySummary.trim()) return;
+  sceneSummaries.delete(gameId);
+  sceneSummaries.set(gameId, { sceneIndex, memorySummary });
+  while (sceneSummaries.size > MAX_RECORDS) {
+    const oldest = sceneSummaries.keys().next().value;
+    if (oldest === undefined) break;
+    sceneSummaries.delete(oldest);
+  }
+}
+
+export function peekSceneSummary(gameId: string): { sceneIndex: number; memorySummary: string } | undefined {
+  return sceneSummaries.get(gameId);
+}
+
+export function forgetSceneSummary(gameId: string): void {
+  sceneSummaries.delete(gameId);
+}
+
+/** Research on, adult flag recorded, no player seats (solo). */
+async function isEligible(repo: GameRepository, gameId: string): Promise<boolean> {
+  if (!isResearchEnabled()) return false;
+  if ((await repo.getIsAdult(gameId)) !== true) return false;
+  return (await repo.loadPlayers(gameId)).length === 0;
+}
+
+async function labelAndSave(
+  llm: LLMClient,
+  repo: GameRepository,
+  gameId: string,
+  sceneIndex: number,
+  job: { kind: MomentLabelKind; hoped: string | null; repair: string | null },
+  memorySummary: string,
+): Promise<void> {
+  try {
+    const label = await labelMoment(llm, { ...job, memorySummary });
+    await repo.saveMomentLabel(gameId, sceneIndex, label);
+  } catch (err) {
+    // A game deleted mid-flight makes the insert fail on its FK; that is the intended outcome.
+    logger.warn("moment_label_failed", { gameId, sceneIndex, kind: job.kind, error: err instanceof Error ? err.name : "error" });
+  }
+}
+
 /**
- * Labels the scene that just ended. Research-eligible games only: research on,
- * adult flag recorded, no player seats (solo). Stores labels, returns nothing,
- * never throws. Meant to be fire-and-forget; logs ids only, never text.
+ * Labels the scene that just ended (called by endFamilyChat after the summary
+ * exists). Stores labels, returns nothing, never throws; fire-and-forget; logs
+ * ids only, never text.
  */
 export async function labelSceneMoments(
   llm: LLMClient,
@@ -110,9 +182,7 @@ export async function labelSceneMoments(
 ): Promise<void> {
   const gameId = state.id;
   try {
-    if (!memorySummary.trim() || !isResearchEnabled()) return;
-    if ((await repo.getIsAdult(gameId)) !== true) return;
-    if ((await repo.loadPlayers(gameId)).length > 0) return;
+    if (!memorySummary.trim() || !(await isEligible(repo, gameId))) return;
     const scene = state.currentEventNumber;
     const answers = await repo.listAnswers(gameId);
     const latest = (pred: (a: (typeof answers)[number]) => boolean) =>
@@ -122,17 +192,34 @@ export async function labelSceneMoments(
     const jobs: Array<{ kind: MomentLabelKind; hoped: string | null; repair: string | null }> = [];
     if (hoped) jobs.push({ kind: "hope_vs_kept", hoped, repair: null });
     if (repair) jobs.push({ kind: "repair_kept", hoped: null, repair });
-    await Promise.all(
-      jobs.map(async (job) => {
-        try {
-          const label = await labelMoment(llm, { ...job, memorySummary });
-          await repo.saveMomentLabel(gameId, scene, label);
-        } catch (err) {
-          // A game deleted mid-flight makes the insert fail on its FK; that is the intended outcome.
-          logger.warn("moment_label_failed", { gameId, sceneIndex: scene, kind: job.kind, error: err instanceof Error ? err.name : "error" });
-        }
-      }),
+    await Promise.all(jobs.map((job) => labelAndSave(llm, repo, gameId, scene, job, memorySummary)));
+  } catch (err) {
+    logger.warn("moment_label_failed", { gameId, error: err instanceof Error ? err.name : "error" });
+  }
+}
+
+/**
+ * Answer-side trigger: call AFTER the about_moment answer is stored. If
+ * endFamilyChat has already recorded this scene's summary, label now. Each side
+ * writes before it reads, so at least one sees the other; a double label is an
+ * upsert. Never throws; fire-and-forget; no lock.
+ */
+export async function labelHopeFromAnswer(
+  llm: LLMClient,
+  repo: GameRepository,
+  gameId: string,
+  sceneIndex: number,
+): Promise<void> {
+  try {
+    const record = sceneSummaries.get(gameId);
+    if (!record || record.sceneIndex !== sceneIndex) return;
+    if (!(await isEligible(repo, gameId))) return;
+    const answers = await repo.listAnswers(gameId);
+    const hoped = textAnswer(
+      answers.filter((a) => a.kind === "about_moment" && a.sceneIndex === sceneIndex).sort((x, y) => y.answeredAt - x.answeredAt)[0],
     );
+    if (!hoped) return;
+    await labelAndSave(llm, repo, gameId, sceneIndex, { kind: "hope_vs_kept", hoped, repair: null }, record.memorySummary);
   } catch (err) {
     logger.warn("moment_label_failed", { gameId, error: err instanceof Error ? err.name : "error" });
   }

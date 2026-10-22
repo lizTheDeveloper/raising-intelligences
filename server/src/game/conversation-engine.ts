@@ -20,7 +20,7 @@ import type { SceneSafetyResult } from "../safety/moderation.js";
 import type { TrajectoryResult } from "../safety/pattern-detection.js";
 import { logger } from "../logger.js";
 import type { GameRepository } from "../db/repository.js";
-import { labelSceneMoments } from "../research/moment-label.js";
+import { labelSceneMoments, recordSceneSummary } from "../research/moment-label.js";
 
 /**
  * How often, in parent messages, to run the mid-scene abuse check within a
@@ -282,6 +282,9 @@ export class ConversationEngine {
     // summarizer's own output, not next.memorySummary, which falls back to the
     // previous scene's summary when the summarizer failed.
     if (researchRepo && memorySummary) {
+      // Recorded BEFORE answers are read, so an answer saved after that read is
+      // picked up by the answer route (it writes the answer, then reads this).
+      recordSceneSummary(next.id, next.currentEventNumber, memorySummary);
       void labelSceneMoments(this.llm, researchRepo, { id: next.id, currentEventNumber: next.currentEventNumber }, memorySummary);
     }
 

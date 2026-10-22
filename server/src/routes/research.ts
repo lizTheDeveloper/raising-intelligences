@@ -7,6 +7,8 @@ import { isResearchEnabled } from "../research/config.js";
 import { withGameLock } from "../lib/game-lock.js";
 import { loadParentContext } from "../research/parent-context.js";
 import { cleanUntrustedText } from "../research/sanitize.js";
+import type { LLMClient } from "../llm/client.js";
+import { labelHopeFromAnswer } from "../research/moment-label.js";
 import { requireGameSecret } from "../security/game-secret.js";
 import {
   QUESTION_BANK,
@@ -63,9 +65,9 @@ function validateBody(body: unknown, state: GameState): Validated {
 export function createResearchRoutes(
   games: Map<string, GameState>,
   repo: GameRepository,
-  options: { gameLocks?: Map<string, Promise<void>>; hasSeat?: (gameId: string) => boolean } = {},
+  options: { gameLocks?: Map<string, Promise<void>>; hasSeat?: (gameId: string) => boolean; llm?: LLMClient } = {},
 ): Router {
-  const { gameLocks = new Map<string, Promise<void>>(), hasSeat = () => false } = options;
+  const { gameLocks = new Map<string, Promise<void>>(), hasSeat = () => false, llm } = options;
   const router = Router();
 
   // Check order: secret first (403 regardless of anything else), then the
@@ -151,6 +153,11 @@ export function createResearchRoutes(
       if (v.question.kind !== "about_you") {
         // The repository enforces "a skip never overwrites an answer".
         await repo.saveAnswer(stored);
+        // Fire-and-forget, after the answer is stored: pairs with endFamilyChat's
+        // record-then-read. Never throws, takes no lock, logs ids only.
+        if (llm && v.question.kind === "about_moment" && !v.skipped) {
+          void labelHopeFromAnswer(llm, repo, gameId, v.sceneIndex);
+        }
       } else {
         // An about_you row changes the parent context, so save, rebuild and
         // publish under the per-game lock, serialized with the other handlers

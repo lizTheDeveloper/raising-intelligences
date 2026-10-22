@@ -41,6 +41,7 @@ import { classifyBirthYear } from "../research/age.js";
 import { isResearchEnabled } from "../research/config.js";
 import { newGameSecret, requireGameSecret, verifyGameSecret, GAME_SECRET_HEADER } from "../security/game-secret.js";
 import { cleanRepairMessage } from "../research/repair.js";
+import { forgetSceneSummary } from "../research/moment-label.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -159,6 +160,7 @@ export function createGameRoutes(
     await lock(gameId, async () => {
       await repo.deleteGameData(gameId);
       games.delete(gameId);
+      forgetSceneSummary(gameId);
       prefetchedEvents.delete(gameId);
       // Best effort: generated portraits live on disk under the game id.
       if (UUID_RE.test(gameId)) {
