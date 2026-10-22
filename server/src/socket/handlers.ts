@@ -796,7 +796,11 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       // landed in between cannot leave one behind.
       const clearParentContext = () => {
         const live = games.get(gameId);
-        if (live) live.parentContext = undefined;
+        if (live) {
+          live.parentContext = undefined;
+          // Repair is solo/REST only: a seated game carries no pending note.
+          live.repairNote = null;
+        }
       };
       clearParentContext();
 

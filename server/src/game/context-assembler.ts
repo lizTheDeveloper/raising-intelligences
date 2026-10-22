@@ -1,4 +1,5 @@
 import { kidParentContext } from "../research/parent-context.js";
+import { formatRepairBlock } from "../research/repair.js";
 import type { GameState, Message } from "../types.js";
 import {
   PSYCHOLOGIST_SYSTEM_PROMPT,
@@ -547,7 +548,8 @@ export function buildWorldManagerContext(state: GameState): {
     previousEvents,
     familyStructure: familyStructureText(state.relationshipType),
     landmineSection,
-  }) + (state.parentContext ? `\n\n${state.parentContext}` : "");
+  }) + (state.parentContext ? `\n\n${state.parentContext}` : "")
+    + (state.repairNote ? `\n\n${formatRepairBlock(state.repairNote)}` : "");
 
   let userMessage = `Generate the next event (event #${state.currentEventNumber + 1}).`;
   if (state.identityDocument) {

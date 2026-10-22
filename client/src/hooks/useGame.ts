@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { saveGameSecret, saveResearchHint } from "./gameSecret";
+import { saveGameSecret, saveResearchHint, getGameSecret } from "./gameSecret";
+import { sendRepair } from "../repairClient";
 import { readMemorySummary } from "../memorySummary";
 import { track, mark, secondsSince, bucketSeconds, bucketHours } from "../analytics";
 
@@ -628,6 +629,20 @@ export function useGame() {
     return data.phase as string;
   }, [gameId, loadGame]);
 
+  // Optional: say something to the child about the scene just debriefed. Never
+  // throws; false means it did not reach the server and the player simply
+  // carries on without it.
+  const repair = useCallback(async (message: string): Promise<boolean> => {
+    if (!gameId) return false;
+    return sendRepair({
+      gameId,
+      secret: getGameSecret(gameId),
+      message,
+      base: import.meta.env.BASE_URL,
+      fetchFn: (input, init) => fetch(input, init),
+    });
+  }, [gameId]);
+
   // Dark Play Plan 3, Rung 1 — conclude a consult beat. Plain JSON (not SSE),
   // mirroring endDebrief. END_INTERVENTION on the server always routes back
   // to event_intro (consult never terminates the game), so there is no
@@ -881,6 +896,7 @@ export function useGame() {
     sendMessage,
     endChat,
     endDebrief,
+    repair,
     endConsult,
     sendTherapyMessage,
     endTherapy,

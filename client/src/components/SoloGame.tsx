@@ -54,6 +54,7 @@ export function SoloGame() {
     sendMessage,
     endChat,
     endDebrief,
+    repair,
     interventionText,
     therapyMessages,
     endConsult,
@@ -252,7 +253,7 @@ export function SoloGame() {
   // cps_review instead of event_intro; only advance to the next event when
   // no rung fired (phase came back "event_intro"), otherwise let the phase
   // dispatch below render the intervention screen.
-  const handleDebrief = async () => {
+  const handleDebrief = async (repaired = false) => {
     setLoadingEvent(true);
     // Captured before the call: endDebrief clears currentEvent on the
     // non-intervention path, so reading it afterwards would report zeroes.
@@ -264,6 +265,7 @@ export function SoloGame() {
       eventNumber,
       age,
       exit: "continue",
+      repaired,
       messagesSentThisScene,
       interventionQueued:
         resultPhase === "consult" || resultPhase === "therapy" || resultPhase === "cps_review",
@@ -552,6 +554,7 @@ export function SoloGame() {
           memorySummary={memorySummary}
           hoped={hopedAnswer && hopedAnswer.scene === currentEvent?.eventNumber ? hopedAnswer.text : undefined}
           onContinue={handleDebrief}
+          onRepair={repair}
           // Deliberate early exit — KEPT. A parent may end childhood before the
           // arc runs out, and the auto-advance in useGame's nextEvent does not
           // replace it. Wrapped in an arrow rather than passed directly:

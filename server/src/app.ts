@@ -183,7 +183,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   // endgame.ts, and socket handlers operating on the same game concurrently.
   const gameLocks = new Map<string, Promise<void>>();
 
-  app.use("/api", createGameRoutes(conversationEngine, endgameEngine, games, repo, { llmRateLimit, gameCreateLimit, gameLocks, llm }));
+  app.use("/api", createGameRoutes(conversationEngine, endgameEngine, games, repo, { llmRateLimit, gameCreateLimit, gameLocks, llm, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0 }));
   app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit, gameLocks }));
   app.use("/api", createResearchRoutes(games, repo, { gameLocks, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0 }));
   app.use("/api", createUserRoutes());

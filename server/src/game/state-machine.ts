@@ -227,6 +227,8 @@ function applyTransition(state: GameState, action: GameAction): GameState {
         currentEventNumber: event.eventNumber,
         events: [...state.events, event],
         pendingGuidance: null,
+        // A repair note applies to exactly one scene: the one starting now.
+        repairNote: null,
       };
     }
 
@@ -245,6 +247,7 @@ function applyTransition(state: GameState, action: GameAction): GameState {
         currentEventNumber: event.eventNumber,
         events: [...state.events, event],
         pendingGuidance: null,
+        repairNote: null,
       };
     }
 

@@ -39,7 +39,8 @@ import {
 import { UUID_RE } from "../lib/validation.js";
 import { classifyBirthYear } from "../research/age.js";
 import { isResearchEnabled } from "../research/config.js";
-import { newGameSecret, requireGameSecret } from "../security/game-secret.js";
+import { newGameSecret, requireGameSecret, verifyGameSecret, GAME_SECRET_HEADER } from "../security/game-secret.js";
+import { cleanRepairMessage } from "../research/repair.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -60,6 +61,8 @@ interface GameRouteOptions {
    * routes directly with a plain mock engine) keep working: falls back to
    * `engine.llm` when absent or when it doesn't implement `withChildSeed`. */
   llm?: LLMClient & { withChildSeed?: (gameId: string) => LLMClient };
+  /** Whether the game has player seats (multiplayer). Repair is solo-only. */
+  hasSeat?: (gameId: string) => boolean;
 }
 
 export function createGameRoutes(
@@ -69,7 +72,7 @@ export function createGameRoutes(
   repo: GameRepository,
   options: GameRouteOptions = {}
 ): Router {
-  const { llmRateLimit, gameCreateLimit, gameLocks = new Map<string, Promise<void>>(), llm } = options;
+  const { llmRateLimit, gameCreateLimit, gameLocks = new Map<string, Promise<void>>(), llm, hasSeat = () => false } = options;
   const router = Router();
 
   // Prefetched event promises — kicked off at game creation (event 1) and after
@@ -611,6 +614,92 @@ export function createGameRoutes(
       await repo.saveGame(next);
       res.json({ phase: next.phase });
     });
+  });
+
+  // Optional repair: after a scene's debrief the parent may go back to that
+  // moment and say something to the child; the next scene opens on the child's
+  // reaction. A gameplay feature for every player, so it needs no secret. It is
+  // kept as research data only when research is on, the game is adult and the
+  // secret is valid; otherwise the note lives in memory and is cleared when the
+  // next scene starts.
+  router.post("/game/:id/repair", ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
+    const gameId = req.params.id as string;
+    const body = req.body as { message?: unknown } | undefined;
+    const cleaned = cleanRepairMessage(body?.message);
+    if (!cleaned.ok) {
+      res.status(400).json({ error: "message must be 1 to 1000 characters" });
+      return;
+    }
+    if (!(await resolveGame(gameId))) {
+      res.status(404).json({ error: "Game not found" });
+      return;
+    }
+    const givenSecret = req.header(GAME_SECRET_HEADER);
+
+    try {
+      await lock(gameId, async () => {
+        const state = await resolveGame(gameId);
+        if (!state) {
+          res.status(404).json({ error: "Game not found" });
+          return;
+        }
+        if (state.phase !== "debrief") {
+          res.status(409).json({ error: `Cannot repair from the ${state.phase} phase` });
+          return;
+        }
+        if (hasSeat(gameId)) {
+          res.status(409).json({ error: "Not available in a shared game" });
+          return;
+        }
+
+        // The same pre-send content check the chat route applies to a parent's
+        // words to the child (classifier, flag, IP ban, session end).
+        const moderation = await moderateParentMessage({
+          repo,
+          games,
+          state,
+          sender: "parent1",
+          content: cleaned.message,
+          ipAddress: req.ip ?? null,
+        });
+        if (moderation.blocked) {
+          res.status(403).json({ error: "This session has ended" });
+          return;
+        }
+
+        // Mutated in place, like other in-memory-only fields, so a generation
+        // already reducing from this object sees it. Last repair wins.
+        state.repairNote = cleaned.message;
+        const stale = prefetchedEvents.get(gameId);
+        if (stale) {
+          prefetchedEvents.delete(gameId);
+          stale.catch(() => {});
+        }
+
+        // Research storage is decided last and never turns into an error.
+        if (isResearchEnabled() && (await repo.getIsAdult(gameId)) === true) {
+          const hash = await repo.getAccessSecretHash(gameId);
+          if (verifyGameSecret(givenSecret, hash)) {
+            const now = Date.now();
+            await repo.saveAnswer({
+              gameId,
+              sceneIndex: state.currentEventNumber,
+              questionId: "repair",
+              questionVersion: 1,
+              kind: "repair",
+              answer: cleaned.message,
+              skipped: false,
+              shownAt: now,
+              answeredAt: now,
+            });
+          }
+        }
+        res.status(204).end();
+      });
+    } catch (err) {
+      logger.error("repair_error", { gameId, error: err instanceof Error ? err.stack : String(err) });
+      if (!res.headersSent) res.status(500).json({ error: "An internal error occurred" });
+    }
   });
 
   // Dark Play Plan 3 — advance out of Rung 1 (consult). Decays concernLevel
