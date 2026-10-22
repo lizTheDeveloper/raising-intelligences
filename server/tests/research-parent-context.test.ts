@@ -344,7 +344,9 @@ describe("parent context through the HTTP flow", () => {
     const joined = c.once(E.JOINED);
     c.emit(E.JOIN_GAME, { gameId: g.gameId });
     await joined;
-    expect((await answer(g.gameId, g.secret, "worry_for_child", "SEATED-ANSWER")).status).toBe(204);
+    // Research is solo-only: the shared gate refuses a seated game outright.
+    expect((await answer(g.gameId, g.secret, "worry_for_child", "SEATED-ANSWER")).status).toBe(404);
+    expect(await repo.listAnswers(g.gameId)).toEqual([]);
     expect(built.games.get(g.gameId)!.parentContext).toBeUndefined();
     expect(await loadParentContext(g.gameId, repo)).toBe("");
   });

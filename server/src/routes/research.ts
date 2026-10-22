@@ -9,6 +9,7 @@ import { loadParentContext } from "../research/parent-context.js";
 import { cleanUntrustedText } from "../research/sanitize.js";
 import type { LLMClient } from "../llm/client.js";
 import { labelHopeFromAnswer } from "../research/moment-label.js";
+import { isSeatedGame } from "../research/seats.js";
 import { normalizeEmail } from "../research/email.js";
 import { requireGameSecret } from "../security/game-secret.js";
 import {
@@ -84,7 +85,10 @@ export function createResearchRoutes(
   // fails is the same opaque 404 so a forged request learns nothing.
   async function requireResearchAccess(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      if (!isResearchEnabled() || (await repo.getIsAdult(req.params.id as string)) !== true) {
+      const id = req.params.id as string;
+      // Research is solo-only: a seated (shared) game is refused here too,
+      // after the secret, flag and adult checks so the ordering is unchanged.
+      if (!isResearchEnabled() || (await repo.getIsAdult(id)) !== true || (await isSeatedGame(id, repo, hasSeat))) {
         notAvailable(res);
         return;
       }
@@ -191,17 +195,10 @@ export function createResearchRoutes(
     }
   });
 
-  // Follow-up contact: secret, research enabled, adult, and NOT seated. A seated
-  // game is a shared (multiplayer) game; one player must not be able to leave an
-  // email on behalf of the table. Same opaque 404 as the other research gates.
-  function requireSoloFollowup(req: Request, res: Response, next: NextFunction): void {
-    if (hasSeat(req.params.id as string)) {
-      notAvailable(res);
-      return;
-    }
-    next();
-  }
-  const followupGate = [requireGameSecret(repo), requireResearchAccess, requireSoloFollowup];
+  // Follow-up contact: secret, research enabled, adult and solo. The shared
+  // gate above already refuses seated games, so one player cannot leave an
+  // email on behalf of the table.
+  const followupGate = [requireGameSecret(repo), requireResearchAccess];
 
   // The body and the email are deliberately never logged, echoed or passed to
   // anything but the repository. Responses are always empty.

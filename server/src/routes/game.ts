@@ -43,6 +43,7 @@ import { newGameSecret, requireGameSecret, verifyGameSecret, GAME_SECRET_HEADER 
 import { cleanRepairMessage } from "../research/repair.js";
 import { forgetSceneSummary } from "../research/moment-label.js";
 import { requireAdmin } from "./admin.js";
+import { isSeatedGame } from "../research/seats.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -182,6 +183,10 @@ export function createGameRoutes(
   // answers 503 when ADMIN_TOKEN is unset and 401 for a missing/wrong token.
   router.delete("/admin/games/:id", requireAdmin, async (req: Request, res: Response) => {
     const gameId = req.params.id as string;
+    if (!UUID_RE.test(gameId)) {
+      res.status(404).json({ error: "Game not found" });
+      return;
+    }
     const exists = (await resolveGame(gameId)) !== null;
     if (!exists) {
       res.status(404).json({ error: "Game not found" });
@@ -678,7 +683,7 @@ export function createGameRoutes(
           res.status(409).json({ error: `Cannot repair from the ${state.phase} phase` });
           return;
         }
-        if (hasSeat(gameId)) {
+        if (await isSeatedGame(gameId, repo, hasSeat)) {
           res.status(409).json({ error: "Not available in a shared game" });
           return;
         }
