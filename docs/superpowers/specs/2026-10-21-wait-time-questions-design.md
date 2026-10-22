@@ -112,6 +112,8 @@ Order A, B, C, D; 18+ gate and counsel review before email; question kinds and w
 
 Answered by the code: the solo scene-1 bug is real. `POST /game` (`server/src/routes/game.ts:116`) prefetches scene 1 from the empty initial state, `/next-event` consumes it (`game.ts:207-212`), and the `/personality` handler (`game.ts:755`) never discards it. Fixing it is therefore a **prerequisite of Part B**, not a side issue: scene 1 must be built after the seed, as multiplayer already does.
 
+Also answered by the code: the `/state` exposure of `parentPersonalities` flagged in the August compliance review is already fixed (`server/src/routes/game.ts:118-155`, #139), so Part A needs only a regression test for it. The plan covers the solo path only; multiplayer has no birth-year step, so multiplayer games get no research features and per-parent attribution is deferred.
+
 My calls, to be checked:
 
 - **Scope.** Full plan for A, B and C. D is planned up to a hand-off point and gated on counsel review, scale licensing and ethics review.
