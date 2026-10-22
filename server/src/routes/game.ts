@@ -42,6 +42,7 @@ import { isResearchEnabled } from "../research/config.js";
 import { newGameSecret, requireGameSecret, verifyGameSecret, GAME_SECRET_HEADER } from "../security/game-secret.js";
 import { cleanRepairMessage } from "../research/repair.js";
 import { forgetSceneSummary } from "../research/moment-label.js";
+import { requireAdmin } from "./admin.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -154,10 +155,11 @@ export function createGameRoutes(
   });
 
   // Right-to-erasure: removes the game and everything keyed to it, then evicts
-  // the in-memory copies (the `games` map and the prefetched-event promise;
-  // the per-game lock entry clears itself when the lock settles).
-  router.delete("/game/:id", requireGameSecret(repo), async (req: Request, res: Response) => {
-    const gameId = req.params.id as string;
+  // the in-memory copies (the `games` map, the prefetched-event promise and the
+  // scene-summary state; the per-game lock entry clears itself when the lock
+  // settles). Shared by the player route and the admin route so both erase the
+  // same things.
+  async function deleteGameCompletely(gameId: string): Promise<void> {
     await lock(gameId, async () => {
       await repo.deleteGameData(gameId);
       games.delete(gameId);
@@ -168,6 +170,25 @@ export function createGameRoutes(
         await rm(path.join(PORTRAITS_DIR, gameId), { recursive: true, force: true }).catch(() => {});
       }
     });
+  }
+
+  router.delete("/game/:id", requireGameSecret(repo), async (req: Request, res: Response) => {
+    await deleteGameCompletely(req.params.id as string);
+    res.status(204).end();
+  });
+
+  // Staff deletion on a player's request (the player's secret lives only in
+  // their browser, and staff hold only its hash). Fails closed: requireAdmin
+  // answers 503 when ADMIN_TOKEN is unset and 401 for a missing/wrong token.
+  router.delete("/admin/games/:id", requireAdmin, async (req: Request, res: Response) => {
+    const gameId = req.params.id as string;
+    const exists = (await resolveGame(gameId)) !== null;
+    if (!exists) {
+      res.status(404).json({ error: "Game not found" });
+      return;
+    }
+    await deleteGameCompletely(gameId);
+    logger.info("admin_game_deleted", { gameId });
     res.status(204).end();
   });
 
