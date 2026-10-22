@@ -12,6 +12,7 @@ import type {
 import { pool } from "./pool.js";
 import type pg from "pg";
 import type { StoredAnswer } from "../research/questions.js";
+import type { MomentLabel } from "../research/moment-label.js";
 import { ESCALATION_DARK_CONCERN } from "../safety/escalation.js";
 
 export interface IdentitySnapshot {
@@ -131,6 +132,13 @@ export interface GameRepository {
    * answered row; an answer always overwrites. */
   saveAnswer(a: StoredAnswer): Promise<void>;
   listAnswers(gameId: string): Promise<StoredAnswer[]>;
+  /**
+   * Research label for a scene; upsert on (gameId, sceneIndex, kind). Fails
+   * (rejects) for a game that no longer exists, so a label finishing after
+   * deleteGameData cannot bring rows back. Never read by gameplay code.
+   */
+  saveMomentLabel(gameId: string, sceneIndex: number, label: MomentLabel): Promise<void>;
+  listMomentLabels(gameId: string): Promise<Array<MomentLabel & { sceneIndex: number }>>;
   /**
    * The IP's cross-game play profile: how many games total, how many were
    * dark, how many showed ordinary range. THE safety-critical query — see
@@ -781,6 +789,7 @@ export class PgGameRepository implements GameRepository {
       await client.query(`DELETE FROM concern_events WHERE game_id = $1`, [gameId]);
       await client.query(`DELETE FROM escalation_flags WHERE game_id = $1`, [gameId]);
       await client.query(`DELETE FROM question_answers WHERE game_id = $1`, [gameId]);
+      await client.query(`DELETE FROM moment_labels WHERE game_id = $1`, [gameId]);
       await client.query(`DELETE FROM games WHERE id = $1`, [gameId]);
       await client.query("COMMIT");
     } catch (err) {
@@ -838,6 +847,26 @@ export class PgGameRepository implements GameRepository {
       shownAt: Number(r.shown_at),
       answeredAt: Number(r.answered_at),
     }));
+  }
+
+  async saveMomentLabel(gameId: string, sceneIndex: number, label: MomentLabel): Promise<void> {
+    await this.db.query(
+      `INSERT INTO moment_labels (game_id, scene_index, kind, label, rationale, labeled_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (game_id, scene_index, kind) DO UPDATE SET
+         label      = EXCLUDED.label,
+         rationale  = EXCLUDED.rationale,
+         labeled_at = EXCLUDED.labeled_at`,
+      [gameId, sceneIndex, label.kind, label.label, label.rationale, Date.now()],
+    );
+  }
+
+  async listMomentLabels(gameId: string): Promise<Array<MomentLabel & { sceneIndex: number }>> {
+    const { rows } = await this.db.query<{ scene_index: number; kind: MomentLabel["kind"]; label: MomentLabel["label"]; rationale: string }>(
+      `SELECT scene_index, kind, label, rationale FROM moment_labels WHERE game_id = $1 ORDER BY scene_index, kind`,
+      [gameId],
+    );
+    return rows.map((r) => ({ sceneIndex: r.scene_index, kind: r.kind, label: r.label, rationale: r.rationale }));
   }
 
   async recordAccessSecretHash(gameId: string, hash: string): Promise<void> {
@@ -961,6 +990,7 @@ export class InMemoryGameRepository implements GameRepository {
   private gameAges = new Map<string, { birthYear: number | null; isAdult: boolean }>();
   private accessSecretHashes = new Map<string, string>();
   private answers = new Map<string, StoredAnswer>();
+  private momentLabels = new Map<string, MomentLabel & { gameId: string; sceneIndex: number }>();
   private escalationFlags: Array<{
     ipAddress: string;
     gameId: string;
@@ -1301,6 +1331,9 @@ export class InMemoryGameRepository implements GameRepository {
     for (const [key, a] of [...this.answers]) {
       if (a.gameId === gameId) this.answers.delete(key);
     }
+    for (const [key, l] of [...this.momentLabels]) {
+      if (l.gameId === gameId) this.momentLabels.delete(key);
+    }
   }
 
   async saveAnswer(a: StoredAnswer): Promise<void> {
@@ -1315,6 +1348,19 @@ export class InMemoryGameRepository implements GameRepository {
       .filter((a) => a.gameId === gameId)
       .map((a) => ({ ...a }))
       .sort((x, y) => x.sceneIndex - y.sceneIndex || x.answeredAt - y.answeredAt);
+  }
+
+  async saveMomentLabel(gameId: string, sceneIndex: number, label: MomentLabel): Promise<void> {
+    // Mirrors the Postgres foreign key: no game, no label.
+    if (!this.games.has(gameId)) throw new Error("moment_labels: game does not exist");
+    this.momentLabels.set(JSON.stringify([gameId, sceneIndex, label.kind]), { gameId, sceneIndex, ...label });
+  }
+
+  async listMomentLabels(gameId: string): Promise<Array<MomentLabel & { sceneIndex: number }>> {
+    return [...this.momentLabels.values()]
+      .filter((l) => l.gameId === gameId)
+      .map(({ gameId: _g, ...rest }) => ({ ...rest }))
+      .sort((x, y) => x.sceneIndex - y.sceneIndex || x.kind.localeCompare(y.kind));
   }
 
   async recordAccessSecretHash(gameId: string, hash: string): Promise<void> {

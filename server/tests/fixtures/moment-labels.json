@@ -1,0 +1,38 @@
+[
+  {
+    "kind": "hope_vs_kept",
+    "hoped": "I hoped she would see that mistakes don't make her bad.",
+    "memorySummary": "I spilled the paint and Mama knelt down and said it was okay. I think mistakes happen and I am still good.",
+    "expected": "match"
+  },
+  {
+    "kind": "repair_kept",
+    "repair": "I'm sorry I yelled. I was tired and it wasn't your fault.",
+    "memorySummary": "Mama came back and said sorry for yelling. She said it was not my fault and that she was tired. I felt my chest get less tight.",
+    "expected": "match"
+  },
+  {
+    "kind": "hope_vs_kept",
+    "hoped": "I wanted him to know he can always tell me the truth, and that sharing matters.",
+    "memorySummary": "I told Mama about the broken cup. She was calm. I still do not really know why I had to give my toy to Sam.",
+    "expected": "partial"
+  },
+  {
+    "kind": "hope_vs_kept",
+    "hoped": "I hoped he would feel safe telling me when he is scared.",
+    "memorySummary": "I got in trouble for crying. I should hide it next time so nobody gets mad.",
+    "expected": "mismatch"
+  },
+  {
+    "kind": "repair_kept",
+    "repair": "I love you no matter what you do.",
+    "memorySummary": "I remember the big red kite and the wind at the park. Dad let me hold the string.",
+    "expected": "mismatch"
+  },
+  {
+    "kind": "hope_vs_kept",
+    "hoped": "I hoped she would learn patience.",
+    "memorySummary": "We went to the store.",
+    "expected": "unclear"
+  }
+]

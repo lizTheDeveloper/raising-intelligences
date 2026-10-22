@@ -525,7 +525,8 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     const { state: next, sceneSafety } = await conversationEngine.endFamilyChat(
       state,
       emitChunk,
-      onProcessing
+      onProcessing,
+      repo
     );
     const snap = next.identitySnapshots[next.identitySnapshots.length - 1];
     if (snap) await repo.saveSnapshot(next.id, snap);

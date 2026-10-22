@@ -14,7 +14,7 @@ const STRIPPED_CHARS = new RegExp(
 // Characters a delimiter could be built from, ASCII or look-alike.
 const BRACKET_CHARS = /[`<>\u00ab\u00bb\u2039\u203a\u226a\u226b]/g;
 // Every delimiter token used by an untrusted-text block (parent notes, repair message).
-const DELIMITER_TOKEN = /PARENT_NOTES|REPAIR_MESSAGE/gi;
+const DELIMITER_TOKEN = /PARENT_NOTES|REPAIR_MESSAGE|PARENT_TEXT|CHILD_MEMORY/gi;
 
 export interface CleanOptions {
   /** Also remove backticks, angle-bracket look-alikes and the delimiter token. */

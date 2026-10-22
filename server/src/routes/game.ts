@@ -495,7 +495,7 @@ export function createGameRoutes(
           // Note: the prefetch above already kicked off using the pre-scene-end state, so
           // any guidance queued by *this* scene's trajectory check won't be picked up until
           // the following scene's prefetch — a natural one-scene delay, not a bug.
-          const { state: next, sceneSafety } = await engine.endFamilyChat(state);
+          const { state: next, sceneSafety } = await engine.endFamilyChat(state, undefined, undefined, repo);
           const latestSnapshot = next.identitySnapshots[next.identitySnapshots.length - 1];
           if (latestSnapshot) await repo.saveSnapshot(next.id, latestSnapshot);
 
