@@ -15,9 +15,11 @@ import {
 } from "../research/questions.js";
 
 const MAX_QUESTIONS_PER_WAIT = 2;
-// C0 and C1 control characters, including newline and tab.
+// Whitespace controls become a space so words do not run together.
+const WHITESPACE_CONTROLS = /[\t\n\v\f\r\u0085\u2028\u2029]/g;
+// Other C0/C1 controls, and invisible formatting / bidi characters, are removed.
 // eslint-disable-next-line no-control-regex
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
+const STRIPPED_CHARS = /[\u0000-\u0008\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
 
 function notAvailable(res: Response): void {
   res.status(404).json({ error: "Not available" });
@@ -28,7 +30,11 @@ type Validated =
   | { ok: false; error: string };
 
 function cleanText(raw: string, maxLength: number): string {
-  const stripped = raw.replace(CONTROL_CHARS, "").trim();
+  const stripped = raw
+    .replace(WHITESPACE_CONTROLS, " ")
+    .replace(STRIPPED_CHARS, "")
+    .replace(/ {2,}/g, " ")
+    .trim();
   // Cap by code point so a surrogate pair is never split.
   return Array.from(stripped).slice(0, maxLength).join("").trim();
 }
@@ -45,7 +51,7 @@ function validateBody(body: unknown, state: GameState): Validated {
     return { ok: false, error: "Invalid sceneIndex" };
   }
   if (sceneIndex > state.currentEventNumber) return { ok: false, error: "sceneIndex is in the future" };
-  if (typeof b.shownAt !== "number" || !Number.isFinite(b.shownAt)) {
+  if (typeof b.shownAt !== "number" || !Number.isSafeInteger(b.shownAt) || b.shownAt < 0) {
     return { ok: false, error: "Invalid shownAt" };
   }
   if (b.skipped !== undefined && typeof b.skipped !== "boolean") {
@@ -93,9 +99,32 @@ export function createResearchRoutes(games: Map<string, GameState>, repo: GameRe
         res.status(400).json({ error: "Invalid wait" });
         return;
       }
-      const answers = await repo.listAnswers(req.params.id as string);
-      // Skipped questions count as answered: never re-ask.
-      const answeredIds = new Set(answers.map((a) => a.questionId));
+      const gameId = req.params.id as string;
+      const state = await resolveGame(gameId, games, repo);
+      if (!state) {
+        notAvailable(res);
+        return;
+      }
+      let sceneIndex = state.currentEventNumber;
+      if (req.query.sceneIndex !== undefined) {
+        const raw = req.query.sceneIndex;
+        const n = typeof raw === "string" && /^\d{1,9}$/.test(raw) ? Number(raw) : NaN;
+        if (!Number.isInteger(n) || n > state.currentEventNumber) {
+          res.status(400).json({ error: "Invalid sceneIndex" });
+          return;
+        }
+        sceneIndex = n;
+      }
+      const answers = await repo.listAnswers(gameId);
+      // Skipped questions count as answered: never re-ask. about_you and scale
+      // questions are asked once per game; about_moment questions repeat each
+      // scene, so only a row for THIS scene excludes them.
+      const kindById = new Map(QUESTION_BANK.map((q) => [q.id, q.kind]));
+      const answeredIds = new Set(
+        answers
+          .filter((a) => kindById.get(a.questionId) !== "about_moment" || a.sceneIndex === sceneIndex)
+          .map((a) => a.questionId),
+      );
       const questions = selectQuestions({ wait: wait as WaitKind, answeredIds, limit: MAX_QUESTIONS_PER_WAIT });
       res.json({ questions });
     } catch (err) {

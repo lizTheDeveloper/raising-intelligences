@@ -67,6 +67,7 @@ describe("PgGameRepository answers (mock db)", () => {
     await repo.saveAnswer({ gameId: "g", sceneIndex: 3, questionId: "q", questionVersion: 2, kind: "about_you", answer: { v: 1 }, skipped: false, shownAt: 10, answeredAt: 20 });
     expect(calls[0].sql).toMatch(/INSERT INTO question_answers/);
     expect(calls[0].sql).toMatch(/ON CONFLICT \(game_id, scene_index, question_id\) DO UPDATE/);
+    expect(calls[0].sql).toContain("WHERE question_answers.skipped OR NOT EXCLUDED.skipped");
     expect(calls[0].params).toContain(JSON.stringify({ v: 1 }));
   });
   it("listAnswers maps rows", async () => {
@@ -201,6 +202,28 @@ describe("research routes", () => {
       }
       expect(await (await get(g.gameId, "first", g.secret)).json()).toEqual({ questions: [] });
     });
+    it("repeats about_moment per scene but asks about_you once per game", async () => {
+      const g = await adult();
+      built.games.set(g.gameId, { ...built.games.get(g.gameId)!, currentEventNumber: 2 });
+      const ids = async (wait: string, scene?: number) =>
+        ((await (await fetch(`${baseUrl}/game/${g.gameId}/questions?wait=${wait}${scene === undefined ? "" : `&sceneIndex=${scene}`}`, { headers: { "x-game-secret": g.secret } })).json()) as { questions: Question[] }).questions.map((q) => q.id);
+      expect(await ids("post_scene", 1)).toContain(MOMENT_Q.id);
+      await post(g.gameId, valid({ questionId: MOMENT_Q.id, version: MOMENT_Q.version, sceneIndex: 1, answer: "kindness" }), g.secret);
+      expect(await ids("post_scene", 1)).not.toContain(MOMENT_Q.id);
+      expect(await ids("post_scene", 2)).toContain(MOMENT_Q.id);
+      expect(await ids("post_scene")).toContain(MOMENT_Q.id); // default = currentEventNumber (2)
+      const opt = (TAP_Q.answer as { options: { value: string }[] }).options[0].value;
+      await post(g.gameId, valid({ sceneIndex: 1, answer: opt }), g.secret);
+      expect(await ids("first", 2)).not.toContain(TAP_Q.id);
+      expect(await ids("first", 1)).not.toContain(TAP_Q.id);
+    });
+    it("rejects an invalid sceneIndex with 400", async () => {
+      const g = await adult();
+      for (const v of ["abc", "-1", "1.5", "99", ""]) {
+        const r = await fetch(`${baseUrl}/game/${g.gameId}/questions?wait=first&sceneIndex=${v}`, { headers: { "x-game-secret": g.secret } });
+        expect(r.status, v).toBe(400);
+      }
+    });
     it("rejects an invalid wait with 400", async () => {
       const g = await adult();
       expect((await get(g.gameId, "bogus", g.secret)).status).toBe(400);
@@ -227,10 +250,10 @@ describe("research routes", () => {
       expect((row.answer as string).length).toBe(cap);
       expect(row.answer).not.toMatch(/[\u0000-\u001f]/);
     });
-    it("keeps newlines out of stored text (control chars stripped)", async () => {
+    it("turns newlines/tabs into single spaces and strips invisible/bidi characters", async () => {
       const g = await adult();
-      await post(g.gameId, valid({ questionId: TEXT_Q.id, version: TEXT_Q.version, answer: "a\nb\tc" }), g.secret);
-      expect((await repo.listAnswers(g.gameId))[0].answer).toBe("abc");
+      await post(g.gameId, valid({ questionId: TEXT_Q.id, version: TEXT_Q.version, answer: "a\nb\tc  d\u200bE\u202eF\ufeffG" }), g.secret);
+      expect((await repo.listAnswers(g.gameId))[0].answer).toBe("a b c dEFG");
     });
     it("rejects bad input with 400 and writes nothing", async () => {
       const g = await adult();
@@ -245,6 +268,11 @@ describe("research routes", () => {
         valid({ shownAt: "now" }),
         valid({ shownAt: null }),
         valid({ shownAt: undefined }),
+        valid({ shownAt: 1.5 }),
+        valid({ shownAt: 1e300 }),
+        valid({ shownAt: -1 }),
+        valid({ shownAt: "123" }),
+        { ...valid(), shownAt: NaN },
         valid({ sceneIndex: 99 }),
         valid({ sceneIndex: -1 }),
         valid({ sceneIndex: 1.5 }),

@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import type { Request, Response, NextFunction, RequestHandler } from "express";
 import type { GameRepository } from "../db/repository.js";
+import { UUID_RE } from "../lib/validation.js";
 
 export const GAME_SECRET_HEADER = "x-game-secret";
 
@@ -29,6 +30,12 @@ export function requireGameSecret(repo: GameRepository): RequestHandler {
   return (req: Request, res: Response, next: NextFunction) => {
     const header = req.header(GAME_SECRET_HEADER);
     const gameId = req.params.id as string;
+    // games.id is a UUID column: a malformed id can never match, and must not
+    // reach the database (the cast would throw and surface as a 500).
+    if (!UUID_RE.test(gameId)) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
     repo
       .getAccessSecretHash(gameId)
       .then((hash) => {

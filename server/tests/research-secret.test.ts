@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { AddressInfo } from "net";
 import express from "express";
 import { createHash } from "crypto";
@@ -32,6 +32,9 @@ describe("newGameSecret / verifyGameSecret", () => {
   });
 });
 
+const SECURED = "11111111-1111-4111-8111-111111111111";
+const LEGACY = "22222222-2222-4222-8222-222222222222";
+
 describe("requireGameSecret middleware", () => {
   let server: ReturnType<express.Express["listen"]>;
   let baseUrl: string;
@@ -39,7 +42,7 @@ describe("requireGameSecret middleware", () => {
   const good = newGameSecret();
 
   beforeAll(async () => {
-    await repo.recordAccessSecretHash("g-secured", good.hash);
+    await repo.recordAccessSecretHash(SECURED, good.hash);
     const app = express();
     app.get("/g/:id", requireGameSecret(repo), (_req, res) => res.json({ ok: true }));
     await new Promise<void>((resolve) => {
@@ -55,20 +58,29 @@ describe("requireGameSecret middleware", () => {
     fetch(`${baseUrl}/g/${id}`, { headers: secret ? { "x-game-secret": secret } : {} });
 
   it("passes with the right secret", async () => {
-    const res = await get("g-secured", good.secret);
+    const res = await get(SECURED, good.secret);
     expect(res.status).toBe(200);
   });
 
   it("403s with a wrong or missing secret", async () => {
     for (const s of [newGameSecret().secret, undefined]) {
-      const res = await get("g-secured", s);
+      const res = await get(SECURED, s);
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual({ error: "Forbidden" });
     }
   });
 
+  it("403s for a non-UUID id without touching the repo", async () => {
+    const spy = vi.spyOn(repo, "getAccessSecretHash");
+    const res = await get("not-a-uuid", good.secret);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "Forbidden" });
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
   it("403s for a legacy game with no stored hash even when a header is sent", async () => {
-    const res = await get("g-legacy", newGameSecret().secret);
+    const res = await get(LEGACY, newGameSecret().secret);
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: "Forbidden" });
   });
