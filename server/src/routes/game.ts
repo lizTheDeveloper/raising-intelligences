@@ -37,7 +37,7 @@ import {
 } from "../game/scene-end.js";
 import { UUID_RE } from "../lib/validation.js";
 import { classifyBirthYear } from "../research/age.js";
-import { newGameSecret } from "../security/game-secret.js";
+import { newGameSecret, requireGameSecret } from "../security/game-secret.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -134,6 +134,19 @@ export function createGameRoutes(
     }).catch(() => {
       generateFirstPortrait(state.id).catch(() => {});
     });
+  });
+
+  // Right-to-erasure: removes the game and everything keyed to it, then evicts
+  // the in-memory copies (the `games` map and the prefetched-event promise;
+  // the per-game lock entry clears itself when the lock settles).
+  router.delete("/game/:id", requireGameSecret(repo), async (req: Request, res: Response) => {
+    const gameId = req.params.id as string;
+    await lock(gameId, async () => {
+      await repo.deleteGameData(gameId);
+      games.delete(gameId);
+      prefetchedEvents.delete(gameId);
+    });
+    res.status(204).end();
   });
 
   router.get("/game/:id/state", async (req: Request, res: Response) => {

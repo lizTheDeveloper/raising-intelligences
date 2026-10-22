@@ -120,6 +120,13 @@ export interface GameRepository {
   /** Null for unknown games and legacy games created before secrets existed. */
   getAccessSecretHash(gameId: string): Promise<string | null>;
   /**
+   * Removes the game and every row keyed to it (messages, events, snapshots,
+   * players, endgames, moderation/concern/escalation records, album moments,
+   * user links, ...). Idempotent. Any new table with a `game_id` column must
+   * be covered here; the Postgres test in research-privacy.test.ts enforces it.
+   */
+  deleteGameData(gameId: string): Promise<void>;
+  /**
    * The IP's cross-game play profile: how many games total, how many were
    * dark, how many showed ordinary range. THE safety-critical query — see
    * safety/escalation.ts `isEscalation` for why `ordinaryGames` must never
@@ -260,7 +267,7 @@ function reconstructState(input: {
 }
 
 export class PgGameRepository implements GameRepository {
-  constructor(private db: Pick<pg.Pool, "query"> = pool) {}
+  constructor(private db: Pick<pg.Pool, "query"> & Partial<Pick<pg.Pool, "connect">> = pool) {}
 
   async saveGame(state: GameState): Promise<void> {
     await this.db.query(
@@ -759,6 +766,25 @@ export class PgGameRepository implements GameRepository {
     return rows[0]?.is_adult ?? null;
   }
 
+  async deleteGameData(gameId: string): Promise<void> {
+    if (!this.db.connect) throw new Error("deleteGameData needs a pool with connect()");
+    const client = await this.db.connect();
+    try {
+      await client.query("BEGIN");
+      // Tables with ON DELETE CASCADE to games(id) go with the games row.
+      // These two have no foreign key, so they are deleted explicitly.
+      await client.query(`DELETE FROM concern_events WHERE game_id = $1`, [gameId]);
+      await client.query(`DELETE FROM escalation_flags WHERE game_id = $1`, [gameId]);
+      await client.query(`DELETE FROM games WHERE id = $1`, [gameId]);
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   async recordAccessSecretHash(gameId: string, hash: string): Promise<void> {
     await this.db.query(`UPDATE games SET access_secret_hash = $2 WHERE id = $1`, [gameId, hash]);
   }
@@ -1194,6 +1220,28 @@ export class InMemoryGameRepository implements GameRepository {
 
   async getIsAdult(gameId: string): Promise<boolean | null> {
     return this.gameAges.get(gameId)?.isAdult ?? null;
+  }
+
+  async deleteGameData(gameId: string): Promise<void> {
+    this.games.delete(gameId);
+    this.messages.delete(gameId);
+    this.events.delete(gameId);
+    this.snapshots.delete(gameId);
+    this.endgames.delete(gameId);
+    this.playerRecords.delete(gameId);
+    this.albumMoments.delete(gameId);
+    for (const [key, ug] of [...this.userGames]) {
+      if (ug.gameId === gameId) this.userGames.delete(key);
+    }
+    for (const key of [...this.partnerLinks.keys()]) {
+      if (key.endsWith(`:${gameId}`)) this.partnerLinks.delete(key);
+    }
+    this.moderationFlags = this.moderationFlags.filter((f) => f.gameId !== gameId);
+    this.concernEvents = this.concernEvents.filter((e) => e.gameId !== gameId);
+    this.escalationFlags = this.escalationFlags.filter((e) => e.gameId !== gameId);
+    this.gameIpAddresses.delete(gameId);
+    this.gameAges.delete(gameId);
+    this.accessSecretHashes.delete(gameId);
   }
 
   async recordAccessSecretHash(gameId: string, hash: string): Promise<void> {
