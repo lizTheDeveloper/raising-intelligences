@@ -132,6 +132,8 @@ Card layout, animation and copy for each question; the question bank wording (in
 
 ## Open items needing outside input
 
+- Production persistence: confirmed Postgres (`DATABASE_URL` is set in the running `raising-intelligences` container; presence test only, value not read).
+
 - Licensing of the chosen scales.
 - Counsel review of consent basis, retention, third-party model processing, COPPA/GDPR treatment, mandatory reporting.
 - Whether production uses Postgres or in-memory state (the compliance review lists this as open).
