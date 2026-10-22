@@ -123,15 +123,19 @@ export function createGameRoutes(
     // deliberately not prefetched here: it must be built after the personality
     // seed exists, so /next-event generates it via engine.startEvent.
     inferGender(engine.llm, childName).then(async (gender) => {
+      // The game may have been deleted while inference was in flight; saving
+      // here would resurrect it (saveGame upserts). Only touch live entries.
+      const current = games.get(state.id);
+      if (!current) return;
       // Re-read the live state: /next-event may have already transitioned to
       // family_chat by the time gender inference completes (especially on retry).
       // Spreading the stale `state` here would revert the phase to event_intro.
-      const current = games.get(state.id) ?? state;
       const updated = { ...current, childGender: gender };
       games.set(state.id, updated);
       await repo.saveGame(updated);
       generateFirstPortrait(state.id, gender).catch(() => {});
     }).catch(() => {
+      if (!games.has(state.id)) return;
       generateFirstPortrait(state.id).catch(() => {});
     });
   });

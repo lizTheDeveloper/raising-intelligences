@@ -45,7 +45,7 @@ describe("research privacy: /state and deletion", () => {
         sender: "parent1",
       }),
     });
-    expect(p.status).toBeLessThan(500);
+    expect(p.status).toBe(200);
     return body;
   }
 
@@ -83,6 +83,46 @@ describe("research privacy: /state and deletion", () => {
     expect(await repo.loadGame(gameId)).toBeNull();
     expect(built.games.has(gameId)).toBe(false);
     expect((await fetch(`${baseUrl}/game/${gameId}/state`)).status).toBe(404);
+  });
+});
+
+describe("deletion is not undone by in-flight gender inference", () => {
+  it("keeps a deleted game deleted when inference resolves afterwards", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    class GatedLLM extends MockLLMClient {
+      async completeResponse(...args: Parameters<MockLLMClient["completeResponse"]>): Promise<string> {
+        if (args[3] === "gender_inference") {
+          await gate;
+          return "girl";
+        }
+        return super.completeResponse(...args);
+      }
+    }
+    const repo = new InMemoryGameRepository();
+    const built = buildServer({ llm: new GatedLLM(), repo, enableEviction: false, allowedOrigin: "*" });
+    await new Promise<void>((resolve) => built.httpServer.listen(0, "127.0.0.1", () => resolve()));
+    const base = `http://127.0.0.1:${(built.httpServer.address() as AddressInfo).port}/api`;
+    try {
+      const res = await fetch(`${base}/game`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Forwarded-For": "203.0.113.21" },
+        body: JSON.stringify({ childName: "Kai" }),
+      });
+      const { gameId, secret } = (await res.json()) as { gameId: string; secret: string };
+      const del = await fetch(`${base}/game/${gameId}`, { method: "DELETE", headers: { "x-game-secret": secret } });
+      expect(del.status).toBe(204);
+
+      release();
+      await new Promise((r) => setTimeout(r, 50)); // let the callback settle
+
+      expect(built.games.has(gameId)).toBe(false);
+      expect(await repo.loadGame(gameId)).toBeNull();
+      expect((await fetch(`${base}/game/${gameId}/state`)).status).toBe(404);
+    } finally {
+      release();
+      await new Promise<void>((resolve) => built.httpServer.close(() => resolve()));
+    }
   });
 });
 
