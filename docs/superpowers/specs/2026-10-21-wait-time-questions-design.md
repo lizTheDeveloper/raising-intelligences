@@ -59,7 +59,7 @@ Four parts, built in this order **[my call]**. Each part is independently shippa
 
 - Close the `/state` exposure of parent personalities and any new sensitive fields; sensitive reads require the player's token, not just the game id.
 - Say on first screen that the child is an AI, and that this is a place to practice, not therapy. Crisis resources reachable from the same place.
-- An 18+ confirmation before any research step (email, scales, consent). Players who say they are under 18 can play but are never asked for email or research answers, and no new data about them is kept for research.
+- **Birth year, asked at the start [Liz]**, as part of the existing intake steps (`GuardianScreen.tsx` `STEPS`), before the quiz and before the first wait. Year only, never a full date. It is self-declared and we accept that. Players who are 18 or older have the year stored with the game (useful as a covariate). Players under 18 can play but are never shown research questions, the email step or scales, and for them only an under-18 flag is stored, not the year or any answers. Because the gate comes first, the first-wait "about you" questions are covered by it.
 - A privacy page and a deletion path covering the new tables.
 - Treat the above as the minimum; counsel reviews the consent basis and age handling before the first email is collected **[my call]**.
 
