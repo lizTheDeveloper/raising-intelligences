@@ -11,7 +11,17 @@ import type {
 } from "../types.js";
 import { pool } from "./pool.js";
 import type pg from "pg";
+import type { StoredAnswer } from "../research/questions.js";
+import type { MomentLabel } from "../research/moment-label.js";
 import { ESCALATION_DARK_CONCERN } from "../safety/escalation.js";
+
+export interface FollowupContact {
+  email: string | null;
+  consentFollowup: boolean;
+  consentAiAnalysis: boolean;
+  consentedAt: number | null;
+  withdrawnAt: number | null;
+}
 
 export interface IdentitySnapshot {
   eventNumber: number;
@@ -108,6 +118,59 @@ export interface GameRepository {
    * written directly to the `games.ip_address` column.
    */
   recordGameIp(gameId: string, ipAddress: string | null): Promise<void>;
+  /**
+   * Records the self-reported age classification. `birthYear` is null for
+   * under-18 players (their year is never stored). Games with no record read
+   * back as null from `getIsAdult` (unknown).
+   */
+  recordAge(gameId: string, age: { birthYear: number | null; isAdult: boolean }): Promise<void>;
+  getIsAdult(gameId: string): Promise<boolean | null>;
+  /** Stores the SHA-256 hash of the per-game secret (never the secret). */
+  recordAccessSecretHash(gameId: string, hash: string): Promise<void>;
+  /** Null for unknown games and legacy games created before secrets existed. */
+  getAccessSecretHash(gameId: string): Promise<string | null>;
+  /**
+   * Removes the game and every row keyed to it (messages, events, snapshots,
+   * players, endgames, moderation/concern/escalation records, album moments,
+   * user links, ...). Idempotent. Any new table with a `game_id` column must
+   * be covered here; the Postgres test in research-privacy.test.ts enforces it.
+   */
+  deleteGameData(gameId: string): Promise<void>;
+  /** Upsert on (gameId, sceneIndex, questionId). A skip never overwrites an
+   * answered row; an answer always overwrites. */
+  saveAnswer(a: StoredAnswer): Promise<void>;
+  listAnswers(gameId: string): Promise<StoredAnswer[]>;
+  /**
+   * Opt-in follow-up contact (adult research games only; the route enforces
+   * that). The email lives in followup_contacts under a random pseudonym that
+   * has no relationship to the game id, never beside answers. A second call
+   * replaces the email and refreshes consented_at; a call after a withdrawal
+   * re-opens consent. Rejects for a game that no longer exists.
+   */
+  saveFollowupContact(
+    gameId: string,
+    c: { email: string; consentFollowup: true; consentAiAnalysis: true },
+  ): Promise<void>;
+  /**
+   * Withdraws follow-up consent: removes the email value, sets both consents to
+   * false and records withdrawn_at. Idempotent; a no-op when nothing was stored.
+   */
+  withdrawFollowup(gameId: string): Promise<void>;
+  /**
+   * TEST-ORIENTED: reads the stored contact back. Nothing in the app calls
+   * this; only tests and, later, the follow-up sender may. Never serialize it
+   * into a response, a log line or a prompt.
+   */
+  getFollowupContact(gameId: string): Promise<FollowupContact | null>;
+  /**
+   * Research label for a scene; upsert on (gameId, sceneIndex, kind). Fails
+   * (rejects) for a game that no longer exists, so a label finishing after
+   * deleteGameData cannot bring rows back. Never read by gameplay code.
+   */
+  saveMomentLabel(gameId: string, sceneIndex: number, label: MomentLabel): Promise<void>;
+  listMomentLabels(gameId: string): Promise<Array<MomentLabel & { sceneIndex: number }>>;
+  /** Cheap existence check used before paying for a label. */
+  hasMomentLabel(gameId: string, sceneIndex: number, kind: MomentLabel["kind"]): Promise<boolean>;
   /**
    * The IP's cross-game play profile: how many games total, how many were
    * dark, how many showed ordinary range. THE safety-critical query — see
@@ -249,7 +312,7 @@ function reconstructState(input: {
 }
 
 export class PgGameRepository implements GameRepository {
-  constructor(private db: Pick<pg.Pool, "query"> = pool) {}
+  constructor(private db: Pick<pg.Pool, "query"> & Partial<Pick<pg.Pool, "connect">> = pool) {}
 
   async saveGame(state: GameState): Promise<void> {
     await this.db.query(
@@ -732,6 +795,204 @@ export class PgGameRepository implements GameRepository {
     await this.db.query(`UPDATE games SET ip_address = $2 WHERE id = $1`, [gameId, ipAddress]);
   }
 
+  async recordAge(gameId: string, age: { birthYear: number | null; isAdult: boolean }): Promise<void> {
+    await this.db.query(`UPDATE games SET birth_year = $2, is_adult = $3 WHERE id = $1`, [
+      gameId,
+      age.birthYear,
+      age.isAdult,
+    ]);
+  }
+
+  async getIsAdult(gameId: string): Promise<boolean | null> {
+    const { rows } = await this.db.query<{ is_adult: boolean | null }>(
+      `SELECT is_adult FROM games WHERE id = $1`,
+      [gameId],
+    );
+    return rows[0]?.is_adult ?? null;
+  }
+
+  async deleteGameData(gameId: string): Promise<void> {
+    if (!this.db.connect) throw new Error("deleteGameData needs a pool with connect()");
+    const client = await this.db.connect();
+    try {
+      await client.query("BEGIN");
+      // Tables with ON DELETE CASCADE to games(id) go with the games row.
+      // These two have no foreign key, so they are deleted explicitly.
+      await client.query(`DELETE FROM concern_events WHERE game_id = $1`, [gameId]);
+      await client.query(`DELETE FROM escalation_flags WHERE game_id = $1`, [gameId]);
+      await client.query(`DELETE FROM question_answers WHERE game_id = $1`, [gameId]);
+      await client.query(`DELETE FROM moment_labels WHERE game_id = $1`, [gameId]);
+      // The contact row is keyed by the pseudonym, not the game, so find the
+      // pseudonym first; deleting only the link would orphan the email.
+      const { rows: links } = await client.query<{ pseudonym_id: string }>(
+        `SELECT pseudonym_id FROM followup_links WHERE game_id = $1`,
+        [gameId],
+      );
+      for (const l of links) {
+        await client.query(`DELETE FROM followup_contacts WHERE pseudonym_id = $1`, [l.pseudonym_id]);
+      }
+      await client.query(`DELETE FROM followup_links WHERE game_id = $1`, [gameId]);
+      await client.query(`DELETE FROM games WHERE id = $1`, [gameId]);
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async saveAnswer(a: StoredAnswer): Promise<void> {
+    await this.db.query(
+      `INSERT INTO question_answers
+         (game_id, scene_index, question_id, question_version, kind, answer, skipped, shown_at, answered_at)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9)
+       ON CONFLICT (game_id, scene_index, question_id) DO UPDATE SET
+         question_version = EXCLUDED.question_version,
+         kind             = EXCLUDED.kind,
+         answer           = EXCLUDED.answer,
+         skipped          = EXCLUDED.skipped,
+         shown_at         = EXCLUDED.shown_at,
+         answered_at      = EXCLUDED.answered_at
+       WHERE question_answers.skipped OR NOT EXCLUDED.skipped`,
+      [
+        a.gameId,
+        a.sceneIndex,
+        a.questionId,
+        a.questionVersion,
+        a.kind,
+        a.answer === null || a.answer === undefined ? null : JSON.stringify(a.answer),
+        a.skipped,
+        a.shownAt,
+        a.answeredAt,
+      ],
+    );
+  }
+
+  async listAnswers(gameId: string): Promise<StoredAnswer[]> {
+    const { rows } = await this.db.query<{
+      game_id: string; scene_index: number; question_id: string; question_version: number;
+      kind: StoredAnswer["kind"]; answer: unknown; skipped: boolean; shown_at: string | number; answered_at: string | number;
+    }>(
+      `SELECT game_id, scene_index, question_id, question_version, kind, answer, skipped, shown_at, answered_at
+         FROM question_answers WHERE game_id = $1 ORDER BY scene_index, answered_at`,
+      [gameId],
+    );
+    return rows.map((r) => ({
+      gameId: r.game_id,
+      sceneIndex: r.scene_index,
+      questionId: r.question_id,
+      questionVersion: r.question_version,
+      kind: r.kind,
+      answer: r.answer ?? null,
+      skipped: r.skipped,
+      shownAt: Number(r.shown_at),
+      answeredAt: Number(r.answered_at),
+    }));
+  }
+
+  async saveFollowupContact(
+    gameId: string,
+    c: { email: string; consentFollowup: true; consentAiAnalysis: true },
+  ): Promise<void> {
+    // The link row is created once per game with a random pseudonym; a later
+    // call keeps the existing one. Rejects (FK) when the game is gone.
+    await this.db.query(
+      `INSERT INTO followup_links (game_id, pseudonym_id) VALUES ($1, $2)
+       ON CONFLICT (game_id) DO NOTHING`,
+      [gameId, crypto.randomUUID()],
+    );
+    const { rows } = await this.db.query<{ pseudonym_id: string }>(
+      `SELECT pseudonym_id FROM followup_links WHERE game_id = $1`,
+      [gameId],
+    );
+    const pseudonym = rows[0]?.pseudonym_id;
+    if (!pseudonym) throw new Error("followup: game does not exist");
+    await this.db.query(
+      `INSERT INTO followup_contacts
+         (pseudonym_id, email, consent_followup, consent_ai_analysis, consented_at, withdrawn_at)
+       VALUES ($1, $2, true, true, $3, NULL)
+       ON CONFLICT (pseudonym_id) DO UPDATE SET
+         email               = EXCLUDED.email,
+         consent_followup    = true,
+         consent_ai_analysis = true,
+         consented_at        = EXCLUDED.consented_at,
+         withdrawn_at        = NULL`,
+      [pseudonym, c.email, Date.now()],
+    );
+  }
+
+  async withdrawFollowup(gameId: string): Promise<void> {
+    await this.db.query(
+      `UPDATE followup_contacts
+          SET email = NULL, consent_followup = false, consent_ai_analysis = false,
+              withdrawn_at = COALESCE(withdrawn_at, $2)
+        WHERE pseudonym_id IN (SELECT pseudonym_id FROM followup_links WHERE game_id = $1)`,
+      [gameId, Date.now()],
+    );
+  }
+
+  async getFollowupContact(gameId: string): Promise<FollowupContact | null> {
+    const { rows } = await this.db.query<{
+      email: string | null; consent_followup: boolean; consent_ai_analysis: boolean;
+      consented_at: string | number | null; withdrawn_at: string | number | null;
+    }>(
+      `SELECT c.email, c.consent_followup, c.consent_ai_analysis, c.consented_at, c.withdrawn_at
+         FROM followup_contacts c JOIN followup_links l ON l.pseudonym_id = c.pseudonym_id
+        WHERE l.game_id = $1`,
+      [gameId],
+    );
+    const r = rows[0];
+    if (!r) return null;
+    return {
+      email: r.email,
+      consentFollowup: r.consent_followup,
+      consentAiAnalysis: r.consent_ai_analysis,
+      consentedAt: r.consented_at === null ? null : Number(r.consented_at),
+      withdrawnAt: r.withdrawn_at === null ? null : Number(r.withdrawn_at),
+    };
+  }
+
+  async saveMomentLabel(gameId: string, sceneIndex: number, label: MomentLabel): Promise<void> {
+    await this.db.query(
+      `INSERT INTO moment_labels (game_id, scene_index, kind, label, rationale, labeled_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (game_id, scene_index, kind) DO UPDATE SET
+         label      = EXCLUDED.label,
+         rationale  = EXCLUDED.rationale,
+         labeled_at = EXCLUDED.labeled_at`,
+      [gameId, sceneIndex, label.kind, label.label, label.rationale, Date.now()],
+    );
+  }
+
+  async hasMomentLabel(gameId: string, sceneIndex: number, kind: MomentLabel["kind"]): Promise<boolean> {
+    const { rows } = await this.db.query(
+      `SELECT 1 FROM moment_labels WHERE game_id = $1 AND scene_index = $2 AND kind = $3 LIMIT 1`,
+      [gameId, sceneIndex, kind],
+    );
+    return rows.length > 0;
+  }
+
+  async listMomentLabels(gameId: string): Promise<Array<MomentLabel & { sceneIndex: number }>> {
+    const { rows } = await this.db.query<{ scene_index: number; kind: MomentLabel["kind"]; label: MomentLabel["label"]; rationale: string }>(
+      `SELECT scene_index, kind, label, rationale FROM moment_labels WHERE game_id = $1 ORDER BY scene_index, kind`,
+      [gameId],
+    );
+    return rows.map((r) => ({ sceneIndex: r.scene_index, kind: r.kind, label: r.label, rationale: r.rationale }));
+  }
+
+  async recordAccessSecretHash(gameId: string, hash: string): Promise<void> {
+    await this.db.query(`UPDATE games SET access_secret_hash = $2 WHERE id = $1`, [gameId, hash]);
+  }
+
+  async getAccessSecretHash(gameId: string): Promise<string | null> {
+    const { rows } = await this.db.query<{ access_secret_hash: string | null }>(
+      `SELECT access_secret_hash FROM games WHERE id = $1`,
+      [gameId],
+    );
+    return rows[0]?.access_secret_hash ?? null;
+  }
+
   async getIpPlayProfile(ipAddress: string): Promise<{ totalGames: number; darkGames: number; ordinaryGames: number }> {
     // darkGames: the game got genuinely dark — highest rung of the
     // intervention ladder fired, or net concern reached ESCALATION_DARK_CONCERN.
@@ -837,6 +1098,14 @@ export class InMemoryGameRepository implements GameRepository {
   // because saveGame replaces that row wholesale on every checkpoint and
   // ip_address is deliberately NOT part of GameState (see recordGameIp).
   private gameIpAddresses = new Map<string, string | null>();
+  // Self-reported age classification; under-18 entries carry birthYear null.
+  private gameAges = new Map<string, { birthYear: number | null; isAdult: boolean }>();
+  private accessSecretHashes = new Map<string, string>();
+  private answers = new Map<string, StoredAnswer>();
+  private momentLabels = new Map<string, MomentLabel & { gameId: string; sceneIndex: number }>();
+  // Two maps, like the two tables: the contact is keyed by a random pseudonym.
+  private followupLinks = new Map<string, string>();
+  private followupContacts = new Map<string, FollowupContact>();
   private escalationFlags: Array<{
     ipAddress: string;
     gameId: string;
@@ -1144,6 +1413,136 @@ export class InMemoryGameRepository implements GameRepository {
 
   async recordGameIp(gameId: string, ipAddress: string | null): Promise<void> {
     this.gameIpAddresses.set(gameId, ipAddress);
+  }
+
+  async recordAge(gameId: string, age: { birthYear: number | null; isAdult: boolean }): Promise<void> {
+    this.gameAges.set(gameId, { ...age });
+  }
+
+  async getIsAdult(gameId: string): Promise<boolean | null> {
+    return this.gameAges.get(gameId)?.isAdult ?? null;
+  }
+
+  async deleteGameData(gameId: string): Promise<void> {
+    this.games.delete(gameId);
+    this.messages.delete(gameId);
+    this.events.delete(gameId);
+    this.snapshots.delete(gameId);
+    this.endgames.delete(gameId);
+    this.playerRecords.delete(gameId);
+    this.albumMoments.delete(gameId);
+    for (const [key, ug] of [...this.userGames]) {
+      if (ug.gameId === gameId) this.userGames.delete(key);
+    }
+    for (const key of [...this.partnerLinks.keys()]) {
+      if (key.endsWith(`:${gameId}`)) this.partnerLinks.delete(key);
+    }
+    this.moderationFlags = this.moderationFlags.filter((f) => f.gameId !== gameId);
+    this.concernEvents = this.concernEvents.filter((e) => e.gameId !== gameId);
+    this.escalationFlags = this.escalationFlags.filter((e) => e.gameId !== gameId);
+    this.gameIpAddresses.delete(gameId);
+    this.gameAges.delete(gameId);
+    this.accessSecretHashes.delete(gameId);
+    for (const [key, a] of [...this.answers]) {
+      if (a.gameId === gameId) this.answers.delete(key);
+    }
+    for (const [key, l] of [...this.momentLabels]) {
+      if (l.gameId === gameId) this.momentLabels.delete(key);
+    }
+    const pseudonym = this.followupLinks.get(gameId);
+    if (pseudonym) this.followupContacts.delete(pseudonym);
+    this.followupLinks.delete(gameId);
+  }
+
+  async saveAnswer(a: StoredAnswer): Promise<void> {
+    // Mirrors the Postgres foreign key: no game, no answer.
+    if (!this.games.has(a.gameId)) throw new Error("question_answers: game does not exist");
+    const key = JSON.stringify([a.gameId, a.sceneIndex, a.questionId]);
+    const existing = this.answers.get(key);
+    if (existing && !existing.skipped && a.skipped) return;
+    this.answers.set(key, { ...a });
+  }
+
+  async listAnswers(gameId: string): Promise<StoredAnswer[]> {
+    return [...this.answers.values()]
+      .filter((a) => a.gameId === gameId)
+      .map((a) => ({ ...a }))
+      .sort((x, y) => x.sceneIndex - y.sceneIndex || x.answeredAt - y.answeredAt);
+  }
+
+  async saveFollowupContact(
+    gameId: string,
+    c: { email: string; consentFollowup: true; consentAiAnalysis: true },
+  ): Promise<void> {
+    // Mirrors the Postgres foreign key: no game, no link.
+    if (!this.games.has(gameId)) throw new Error("followup: game does not exist");
+    let pseudonym = this.followupLinks.get(gameId);
+    if (!pseudonym) {
+      pseudonym = crypto.randomUUID();
+      this.followupLinks.set(gameId, pseudonym);
+    }
+    this.followupContacts.set(pseudonym, {
+      email: c.email,
+      consentFollowup: true,
+      consentAiAnalysis: true,
+      consentedAt: Date.now(),
+      withdrawnAt: null,
+    });
+  }
+
+  async withdrawFollowup(gameId: string): Promise<void> {
+    const pseudonym = this.followupLinks.get(gameId);
+    const existing = pseudonym ? this.followupContacts.get(pseudonym) : undefined;
+    if (!pseudonym || !existing) return;
+    this.followupContacts.set(pseudonym, {
+      ...existing,
+      email: null,
+      consentFollowup: false,
+      consentAiAnalysis: false,
+      withdrawnAt: existing.withdrawnAt ?? Date.now(),
+    });
+  }
+
+  async getFollowupContact(gameId: string): Promise<FollowupContact | null> {
+    const pseudonym = this.followupLinks.get(gameId);
+    const c = pseudonym ? this.followupContacts.get(pseudonym) : undefined;
+    return c ? { ...c } : null;
+  }
+
+  // Test-only inspection of the two follow-up tables.
+  followupPseudonymFor(gameId: string): string | null {
+    return this.followupLinks.get(gameId) ?? null;
+  }
+  followupHasContactRow(pseudonym: string): boolean {
+    return this.followupContacts.has(pseudonym);
+  }
+  followupRowCounts(): { links: number; contacts: number } {
+    return { links: this.followupLinks.size, contacts: this.followupContacts.size };
+  }
+
+  async saveMomentLabel(gameId: string, sceneIndex: number, label: MomentLabel): Promise<void> {
+    // Mirrors the Postgres foreign key: no game, no label.
+    if (!this.games.has(gameId)) throw new Error("moment_labels: game does not exist");
+    this.momentLabels.set(JSON.stringify([gameId, sceneIndex, label.kind]), { gameId, sceneIndex, ...label });
+  }
+
+  async hasMomentLabel(gameId: string, sceneIndex: number, kind: MomentLabel["kind"]): Promise<boolean> {
+    return this.momentLabels.has(JSON.stringify([gameId, sceneIndex, kind]));
+  }
+
+  async listMomentLabels(gameId: string): Promise<Array<MomentLabel & { sceneIndex: number }>> {
+    return [...this.momentLabels.values()]
+      .filter((l) => l.gameId === gameId)
+      .map(({ gameId: _g, ...rest }) => ({ ...rest }))
+      .sort((x, y) => x.sceneIndex - y.sceneIndex || x.kind.localeCompare(y.kind));
+  }
+
+  async recordAccessSecretHash(gameId: string, hash: string): Promise<void> {
+    this.accessSecretHashes.set(gameId, hash);
+  }
+
+  async getAccessSecretHash(gameId: string): Promise<string | null> {
+    return this.accessSecretHashes.get(gameId) ?? null;
   }
 
   async getIpPlayProfile(ipAddress: string): Promise<{ totalGames: number; darkGames: number; ordinaryGames: number }> {

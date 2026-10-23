@@ -1,14 +1,17 @@
 import { ChildPortrait } from "./ChildPortrait";
 import { ChildPresence } from "./ChildPresence";
+import { WaitQuestions } from "./WaitQuestionCard";
 
 interface Props {
   event: { age: number; description: string } | null;
   onReady: () => void;
   waiting: boolean;
   gameId?: string | null;
+  /** The last scene played (the server's current event number while this wait lasts). */
+  sceneIndex?: number;
 }
 
-export function EventIntro({ event, onReady, waiting, gameId }: Props) {
+export function EventIntro({ event, onReady, waiting, gameId, sceneIndex }: Props) {
   if (waiting) {
     return (
       <div className="event-intro">
@@ -17,6 +20,9 @@ export function EventIntro({ event, onReady, waiting, gameId }: Props) {
           <span className="event-spinner" aria-hidden="true" />
           <p className="dim">generating next event...</p>
         </div>
+        {sceneIndex !== undefined && (
+          <WaitQuestions gameId={gameId} wait="next_scene" sceneIndex={sceneIndex} />
+        )}
       </div>
     );
   }

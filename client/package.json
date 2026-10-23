@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "test": "node --import tsx --test tests/errorNoise.test.ts"
+    "test": "node --import tsx --test tests/errorNoise.test.ts tests/birthYear.test.ts tests/gameSecret.test.ts tests/researchClient.test.ts tests/memorySummary.test.ts tests/repairClient.test.ts tests/followupClient.test.ts"
   },
   "dependencies": {
     "@sentry/browser": "^10.68.0",

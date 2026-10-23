@@ -1,13 +1,19 @@
 import "../styles/endgame.css";
 import { SupportPrompt } from "./SupportPrompt";
 import { Credits } from "./Credits";
+import { FollowupOffer } from "./FollowupOffer";
 
 interface Props {
   epilogue: string;
   onContinue: () => void;
+  /** Solo games only: passing it enables the optional follow-up offer (itself hidden unless research is available). */
+  followupGameId?: string | null;
 }
 
-export function Endgame({ epilogue, onContinue }: Props) {
+/** The follow-up ask lands after the support prompt (+500ms) and before continue (+900ms). */
+const FOLLOWUP_DELAY_MS = 700;
+
+export function Endgame({ epilogue, onContinue, followupGameId }: Props) {
   const paragraphs = epilogue
     .split(/\n\s*\n/)
     .map((p) => p.trim())
@@ -33,6 +39,7 @@ export function Endgame({ epilogue, onContinue }: Props) {
         ))}
       </div>
       <SupportPrompt sourcePage="epilogue" style={{ animationDelay: `${lastParaDelay + 500}ms` }} />
+      {followupGameId ? <FollowupOffer gameId={followupGameId} style={{ animationDelay: `${lastParaDelay + FOLLOWUP_DELAY_MS}ms` }} /> : null}
       <div className="endgame-actions">
         <button
           onClick={onContinue}

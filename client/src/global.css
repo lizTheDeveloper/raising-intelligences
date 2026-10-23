@@ -102,6 +102,40 @@ body::after {
   width: 200px;
 }
 
+.start-form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.birth-year-label {
+  font-size: 12px;
+  margin-top: 8px;
+}
+.birth-year-hint {
+  font-size: 11px;
+  color: var(--fg-dim);
+  margin: -4px 0 0;
+}
+.birth-year-hint-error { color: var(--warm); }
+.birth-year-input {
+  width: 80px;
+  letter-spacing: 2px;
+}
+.practice-note {
+  max-width: 420px;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--fg-dim);
+}
+.practice-note p { margin: 0 0 6px; }
+.practice-note a {
+  color: var(--fg-dim);
+  text-decoration: underline;
+}
+.practice-note a:hover { color: var(--fg); }
+
 .saved-kids {
   margin-top: 32px;
   display: flex;
@@ -1078,6 +1112,87 @@ body::after {
   animation-delay: 1500ms;
 }
 
+/* What the child kept, and what the player hoped. Quiet: small, dim, no
+   emphasis. Capped and scrollable so the continue / end-childhood buttons
+   below stay on screen on a phone however long the memory is. */
+.debrief-kept {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 480px;
+  width: 100%;
+  max-height: 32dvh;
+  overflow-y: auto;
+  text-align: left;
+  opacity: 0;
+  animation: fadeIn 900ms ease both;
+  animation-delay: 2200ms;
+}
+
+.debrief-kept:focus-visible {
+  outline: 1px solid var(--warm);
+  outline-offset: 4px;
+}
+
+.debrief-kept-label {
+  font-size: 11px;
+  color: var(--fg-dim);
+  letter-spacing: 3px;
+  text-transform: lowercase;
+  margin-bottom: 4px;
+}
+
+.debrief-kept-text {
+  font-size: 14px;
+  line-height: 1.6;
+  font-style: italic;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 480px) {
+  .debrief-enhanced:has(.debrief-kept) { gap: 20px; }
+  .debrief-kept { max-height: 28dvh; }
+}
+
+/* Optional repair: a quiet way to say something to the child before moving on. */
+.debrief-repair {
+  max-width: 480px;
+  width: 100%;
+}
+.debrief-repair-toggle { margin-top: 0; }
+.debrief-repair-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+.debrief-repair-input {
+  width: 100%;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--fg-dim);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 8px;
+  resize: vertical;
+}
+.debrief-repair-input:focus-visible {
+  outline: 1px solid var(--warm);
+  outline-offset: 2px;
+}
+.debrief-repair-note {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.debrief-repair-actions {
+  display: flex;
+  gap: 12px;
+}
+.debrief-repair-actions .btn { margin-top: 0; }
+
 /* ─── Epilogue Staggered Reveal ──────────────────────────────── */
 
 .epilogue-para {
@@ -1499,4 +1614,80 @@ body::after {
   margin: 0 auto 20px;
   font-size: 13px;
   line-height: 1.65;
+}
+
+/* ─── Wait-time questions ────────────────────────────────────── */
+
+.wait-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 420px;
+  margin-top: 22px;
+  padding: 0 16px;
+  animation: fragmentAppear 0.6s ease both;
+  transition: opacity 0.4s ease;
+}
+
+.wait-card-leaving {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.wait-card-prompt {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--fg);
+  text-align: center;
+  margin: 0;
+}
+
+.wait-card-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.wait-card-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.wait-card-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 8px 10px;
+  resize: none;
+}
+
+.wait-card-input:focus-visible {
+  outline: 1px solid var(--warm);
+}
+
+.wait-card-skip {
+  font-family: var(--font);
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--fg-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 6px 10px;
+}
+
+.wait-card-skip:hover,
+.wait-card-skip:focus-visible {
+  color: var(--fg);
 }

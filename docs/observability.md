@@ -33,6 +33,13 @@ The wrapper calls `window.umami?.track(...)` — a no-op if the script hasn't lo
 | `guardian_not_ready` | `GuardianScreen` | — |
 | `portrait_loaded` | `ChildPortrait` | `ageBucket`, `attempts` |
 | `portrait_failed` | `ChildPortrait` | `ageBucket` |
+| `wait_question_shown` | `useWaitQuestions` | `questionId`, `wait` |
+| `wait_question_answered` | `useWaitQuestions` | `questionId`, `wait` |
+| `wait_question_skipped` | `useWaitQuestions` | `questionId`, `wait` |
+| `followup_offer_shown` | `FollowupOffer` | — |
+| `followup_opted_in` | `FollowupOffer` | — |
+| `followup_withdrawn` | `FollowupOffer` | — |
+| `followup_skipped` | `FollowupOffer` | — |
 | `error_occurred` | `useGame` | `step` |
 
 To add a new event, import `track` and call it. No registration needed — Umami creates new event names on first receipt.
@@ -140,6 +147,8 @@ server/src/
 ### API endpoints
 
 All endpoints require `Authorization: Bearer <ADMIN_TOKEN>`.
+
+The one write endpoint is `DELETE /api/admin/games/:id` (204, or 404 for an unknown game): it erases a game and everything keyed to it, through the same code as the player's own `DELETE /api/game/:id`. It is used when a player asks staff to delete their game.
 
 | Method | Path | Response |
 |--------|------|----------|

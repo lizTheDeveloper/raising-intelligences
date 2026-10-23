@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { parseBirthYear } from "../birthYear";
+import { PRIVACY_URL } from "../links";
 import { track, mark, secondsSince, bucketSeconds } from "../analytics";
 import {
   useGame,
@@ -13,6 +15,7 @@ import { GuardianScreen } from "./GuardianScreen";
 import { EventIntro } from "./EventIntro";
 import { Chat } from "./Chat";
 import { Debrief } from "./Debrief";
+import type { Question } from "../researchTypes";
 import { ConsultScreen } from "./ConsultScreen";
 import { TherapyScreen } from "./TherapyScreen";
 import { CpsScreen } from "./CpsScreen";
@@ -38,6 +41,7 @@ export function SoloGame() {
     childName,
     childGender,
     currentEvent,
+    serverEventNumber,
     messages,
     messagesRemaining,
     streamingMessage,
@@ -50,6 +54,7 @@ export function SoloGame() {
     sendMessage,
     endChat,
     endDebrief,
+    repair,
     interventionText,
     therapyMessages,
     endConsult,
@@ -59,12 +64,40 @@ export function SoloGame() {
     epilogue,
     reportCard,
     error,
+    memorySummary,
     generateEpilogue,
     generateReportCard,
   } = useGame();
 
   const [nameInput, setNameInput] = useState("");
+  const [birthYearInput, setBirthYearInput] = useState("");
   const [loadingEvent, setLoadingEvent] = useState(false);
+  // The last scene the player saw. endDebrief clears currentEvent before the
+  // next-scene wait begins, but the server's event number stays at this scene
+  // until the next one lands, so this is the number wait questions file under.
+  const lastSceneRef = useRef(0);
+  // Event numbers are server-stamped, so a scene's number is the server's
+  // counter. On a resume that lands between scenes there is no currentEvent;
+  // the counter /state reported covers that case.
+  if (currentEvent) lastSceneRef.current = currentEvent.eventNumber;
+  else if (serverEventNumber !== null && serverEventNumber > lastSceneRef.current) {
+    lastSceneRef.current = serverEventNumber;
+  }
+  // What the player said they hoped the child would take from the scene just
+  // played: their own answer to the "about_moment" wait card, held here only so
+  // the debrief can show it back. Never fetched, never saved, never tracked;
+  // keyed by scene so it cannot outlive that scene's debrief.
+  const [hopedAnswer, setHopedAnswer] = useState<{ scene: number; text: string } | null>(null);
+  const handleQuestionAnswered = (q: Question, answer: unknown, scene: number) => {
+    if (q.kind !== "about_moment" || typeof answer !== "string") return;
+    const text = answer.trim();
+    if (text) setHopedAnswer({ scene, text });
+  };
+  // Dropped as soon as the next scene begins or the game ends: it is kept only
+  // through the processing wait and the debrief that follow its own scene.
+  useEffect(() => {
+    if (phase !== "processing" && phase !== "debrief") setHopedAnswer(null);
+  }, [phase]);
   const [showGuardian, setShowGuardian] = useState(false);
   const [matrixUser, setMatrixUser] = useState<string | null>(
     () => window.matrixAuth?.getUserId() ?? null
@@ -165,8 +198,12 @@ export function SoloGame() {
     };
   }, [syncOnLogin]);
 
+  // Deliberately not persisted and not passed to track().
+  const birthYear = parseBirthYear(birthYearInput);
+  const birthYearInvalid = birthYearInput !== "" && birthYear === null;
+
   const handleStart = async () => {
-    if (!nameInput.trim()) return;
+    if (!nameInput.trim() || birthYear === null) return;
     // Emitted BEFORE the POST, deliberately: it is the numerator for the
     // mode_selected → game_started loss, and a create that fails server-side
     // must still count as an attempt. Without it, "abandoned the form" and
@@ -179,7 +216,7 @@ export function SoloGame() {
       ...(setupSeconds !== null ? { secondsOnSetup: bucketSeconds(setupSeconds) } : {}),
     });
     setShowGuardian(true);
-    const id = await createGame(nameInput.trim());
+    const id = await createGame(nameInput.trim(), undefined, birthYear);
     if (!id) {
       setShowGuardian(false);
       return;
@@ -216,7 +253,7 @@ export function SoloGame() {
   // cps_review instead of event_intro; only advance to the next event when
   // no rung fired (phase came back "event_intro"), otherwise let the phase
   // dispatch below render the intervention screen.
-  const handleDebrief = async () => {
+  const handleDebrief = async (repaired = false) => {
     setLoadingEvent(true);
     // Captured before the call: endDebrief clears currentEvent on the
     // non-intervention path, so reading it afterwards would report zeroes.
@@ -228,6 +265,7 @@ export function SoloGame() {
       eventNumber,
       age,
       exit: "continue",
+      repaired,
       messagesSentThisScene,
       interventionQueued:
         resultPhase === "consult" || resultPhase === "therapy" || resultPhase === "cps_review",
@@ -321,6 +359,7 @@ export function SoloGame() {
           <h1>raising intelligences</h1>
           <p className="dim">name your child</p>
           <form
+            className="start-form"
             onSubmit={(e) => {
               e.preventDefault();
               handleStart();
@@ -333,10 +372,52 @@ export function SoloGame() {
               autoFocus
               className="name-input"
             />
-            <button type="submit" className="btn" data-testid="btn-begin" disabled={!nameInput.trim()}>
+            <label className="birth-year-label dim" htmlFor="birth-year">
+              the year you were born
+            </label>
+            <input
+              id="birth-year"
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={4}
+              value={birthYearInput}
+              onChange={(e) => setBirthYearInput(e.target.value.replace(/\D/g, ""))}
+              className="name-input birth-year-input"
+              data-testid="birth-year"
+              aria-describedby="birth-year-hint"
+              aria-invalid={birthYearInvalid}
+            />
+            {/* COPY: pending Liz review */}
+            <p
+              id="birth-year-hint"
+              className={`birth-year-hint${birthYearInvalid ? " birth-year-hint-error" : ""}`}
+              data-testid="birth-year-hint"
+              role={birthYearInvalid ? "alert" : undefined}
+            >
+              {birthYearInvalid ? "enter a 4-digit year from 1900 to this year" : "4 digits, e.g. 1990"}
+            </p>
+            <button
+              type="submit"
+              className="btn"
+              data-testid="btn-begin"
+              disabled={!nameInput.trim() || birthYear === null}
+            >
               begin
             </button>
           </form>
+          {/* COPY: pending Liz review */}
+          <div className="practice-note" data-testid="practice-note">
+            <p>
+              your child is an AI. this is a place to practice, not therapy.{" "}
+              <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer">
+                privacy
+              </a>
+            </p>
+            <p>
+              If you're in crisis, call or text 988 in the US, or find a local line at findahelpline.com
+            </p>
+          </div>
           {savedKids.length > 0 && (
             <div className="saved-kids">
               <p className="dim">or continue raising...</p>
@@ -414,6 +495,7 @@ export function SoloGame() {
           onReady={currentEvent ? beginChat : handleNextEvent}
           waiting={loadingEvent}
           gameId={gameId}
+          sceneIndex={lastSceneRef.current}
         />
       </div>
     );
@@ -459,7 +541,7 @@ export function SoloGame() {
   if (phase === "processing") {
     return (
       <div className="app">
-        <ProcessingScreen childName={childName} age={currentEvent?.age} gameId={gameId} streamingText={streamingDocText} />
+        <ProcessingScreen childName={childName} age={currentEvent?.age} gameId={gameId} streamingText={streamingDocText} sceneIndex={currentEvent?.eventNumber} onQuestionAnswered={handleQuestionAnswered} />
       </div>
     );
   }
@@ -469,7 +551,10 @@ export function SoloGame() {
       <div className="app">
         {error && <p className="error-banner">{error}</p>}
         <Debrief
+          memorySummary={memorySummary}
+          hoped={hopedAnswer && hopedAnswer.scene === currentEvent?.eventNumber ? hopedAnswer.text : undefined}
           onContinue={handleDebrief}
+          onRepair={repair}
           // Deliberate early exit — KEPT. A parent may end childhood before the
           // arc runs out, and the auto-advance in useGame's nextEvent does not
           // replace it. Wrapped in an arrow rather than passed directly:
@@ -522,7 +607,7 @@ export function SoloGame() {
     return (
       <div className="app">
         {error && <p className="error-banner">{error}</p>}
-        <Endgame epilogue={epilogue} onContinue={() => generateReportCard(matrixUser ?? undefined)} />
+        <Endgame epilogue={epilogue} followupGameId={gameId} onContinue={() => generateReportCard(matrixUser ?? undefined)} />
       </div>
     );
   }

@@ -134,3 +134,65 @@
   left: 0;
   color: var(--fg-dim);
 }
+
+/* Optional follow-up offer, after the epilogue. Quiet by design. */
+.followup-offer {
+  opacity: 0;
+  animation: fadeIn 900ms ease both;
+  text-align: left;
+  padding: 0 8px;
+  max-width: 52ch;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.followup-title {
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.followup-line {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--fg-dim);
+}
+
+.followup-check {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg);
+}
+
+.followup-email {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+.followup-email input {
+  font: inherit;
+  font-size: 14px;
+  padding: 8px;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--fg-dim);
+  border-radius: 4px;
+}
+
+.followup-actions {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+}
+
+.followup-error {
+  font-size: 11px;
+  color: var(--fg-dim);
+}

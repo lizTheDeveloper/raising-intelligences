@@ -1,4 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { saveGameSecret, saveResearchHint, getGameSecret } from "./gameSecret";
+import { sendRepair, type RepairResult } from "../repairClient";
+import { readMemorySummary } from "../memorySummary";
 import { track, mark, secondsSince, bucketSeconds, bucketHours } from "../analytics";
 
 export interface SavedKid {
@@ -137,6 +140,8 @@ export function useGame() {
   const [childName, setChildName] = useState("");
   const [childGender, setChildGender] = useState<"boy" | "girl" | "nonbinary">("nonbinary");
   const [currentEvent, setCurrentEvent] = useState<GameEvent | null>(null);
+  /** The server's own scene counter as of the last resume; null until a game is loaded. */
+  const [serverEventNumber, setServerEventNumber] = useState<number | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [messagesRemaining, setMessagesRemaining] = useState(12);
   const [streamingMessage, setStreamingMessage] = useState("");
@@ -147,6 +152,18 @@ export function useGame() {
   const [epilogue, setEpilogue] = useState("");
   const [reportCard, setReportCard] = useState("");
   const [error, setError] = useState<string | null>(null);
+  /**
+   * The child's first-person memory of the scene just played, for the debrief.
+   * "" means nothing to show. It is set only on the way into the debrief and
+   * cleared the moment the debrief ends, so a later screen can never show it.
+   */
+  const [memorySummary, setMemorySummary] = useState("");
+  /**
+   * The summary the server held at the previous debrief. When the Memory Keeper
+   * fails for a scene the server keeps the OLD summary (it is also context for
+   * the next scene), so an unchanged text means "none for this scene".
+   */
+  const lastServerSummaryRef = useRef("");
 
   /**
    * How many scenes this session has actually seen, for the epilogue's
@@ -208,10 +225,16 @@ export function useGame() {
       setChildGender(data.childGender ?? "nonbinary");
       setPhase(data.phase);
       setCurrentEvent(data.currentEvent ?? null);
+      setServerEventNumber(typeof data.currentEventNumber === "number" ? data.currentEventNumber : null);
       setMessages(data.messages ?? []);
       setMessagesRemaining(data.messagesRemaining ?? 12 - (data.parentMessageCount ?? 0));
       setInterventionText(data.interventionText ?? null);
       setTherapyMessages(data.therapyMessages ?? []);
+      // Only a debrief screen shows the memory. Resuming into one has no
+      // earlier summary to compare against, so the server's is taken as is.
+      const resumedSummary = typeof data.memorySummary === "string" ? data.memorySummary : "";
+      lastServerSummaryRef.current = resumedSummary;
+      setMemorySummary(data.phase === "debrief" ? resumedSummary : "");
       const restoredEventNumber = data.currentEvent?.eventNumber ?? data.currentEventNumber ?? 0;
       if (restoredEventNumber > scenesPlayedRef.current) {
         scenesPlayedRef.current = restoredEventNumber;
@@ -237,11 +260,13 @@ export function useGame() {
   );
 
   const createGame = useCallback(
-    async (name: string, relationshipType = "solo parent") => {
+    async (name: string, relationshipType = "solo parent", birthYear?: number) => {
       const res = await fetch(`${API}/game`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ childName: name, relationshipType }),
+        // birthYear goes in this request only: it is never saved locally and
+        // never put in a track() event.
+        body: JSON.stringify({ childName: name, relationshipType, birthYear }),
       });
       if (!res.ok) {
         const body = await res.text().catch(() => "");
@@ -249,6 +274,8 @@ export function useGame() {
         return;
       }
       const data = await res.json();
+      if (typeof data.secret === "string") saveGameSecret(data.gameId, data.secret);
+      if (typeof data.research === "boolean") saveResearchHint(data.gameId, data.research);
       setGameId(data.gameId);
       setChildName(name);
       setPhase("event_intro");
@@ -285,6 +312,7 @@ export function useGame() {
   const generateEpilogue = useCallback(async (id?: string, route: "arc_complete" | "ended_early" = "ended_early") => {
     const gid = id ?? gameId;
     if (!gid) return;
+    setMemorySummary("");
     setPhase("processing");
     mark("processing");
     track("processing_started", {
@@ -542,6 +570,23 @@ export function useGame() {
       }
       // Psychologist output is internal — fragments show on processing screen instead.
       const data = await consumeSSE<{ phase: string }>(res, () => {});
+      // The Memory Keeper runs inside end-chat (alongside the Psychologist) and
+      // its result is saved before the response reports "debrief", so one
+      // /state read here is this scene's summary, in place before the debrief
+      // renders. Best effort: any failure just means no memory section.
+      if (data.phase === "debrief") {
+        let summary = "";
+        const fromServer = await readMemorySummary(`${API}/game/${gameId}/state`);
+        // Only a successful read advances the "last seen" summary. An identical
+        // text is hidden on purpose: when the Memory Keeper fails for a scene
+        // the server keeps the previous scene's summary, so an unchanged
+        // summary means there is nothing new from this scene.
+        if (fromServer !== null) {
+          if (fromServer !== lastServerSummaryRef.current) summary = fromServer;
+          lastServerSummaryRef.current = fromServer;
+        }
+        setMemorySummary(summary);
+      }
       setPhase(data.phase);
     } catch (err) {
       setTrackedError(`Failed to end chat: ${err instanceof Error ? err.message : String(err)}`, "end_chat");
@@ -565,6 +610,7 @@ export function useGame() {
       method: "POST",
     });
     const data = await res.json();
+    setMemorySummary("");
     // Dark Play Plan 3 — end-debrief's response carries only `phase`; when a
     // due rung reroutes into consult/therapy/cps_review, the generated
     // interventionText / therapyMessages live on the game state, not this
@@ -582,6 +628,26 @@ export function useGame() {
     }
     return data.phase as string;
   }, [gameId, loadGame]);
+
+  // Optional: say something to the child about the scene just debriefed. Never
+  // throws; false means it did not reach the server and the player simply
+  // carries on without it.
+  const repair = useCallback(async (message: string): Promise<RepairResult> => {
+    if (!gameId) return "failed";
+    const result = await sendRepair({
+      gameId,
+      secret: getGameSecret(gameId),
+      message,
+      base: import.meta.env.BASE_URL,
+      fetchFn: (input, init) => fetch(input, init),
+    });
+    if (result === "ended") {
+      // Same outcome as a moderation block on /message.
+      setPhase("ended");
+      setTrackedError("This session has ended.", "moderation");
+    }
+    return result;
+  }, [gameId]);
 
   // Dark Play Plan 3, Rung 1 — conclude a consult beat. Plain JSON (not SSE),
   // mirroring endDebrief. END_INTERVENTION on the server always routes back
@@ -817,6 +883,7 @@ export function useGame() {
     childName,
     childGender,
     currentEvent,
+    serverEventNumber,
     messages,
     messagesRemaining,
     streamingMessage,
@@ -827,6 +894,7 @@ export function useGame() {
     epilogue,
     reportCard,
     error,
+    memorySummary,
     loadGame,
     createGame,
     nextEvent,
@@ -834,6 +902,7 @@ export function useGame() {
     sendMessage,
     endChat,
     endDebrief,
+    repair,
     endConsult,
     sendTherapyMessage,
     endTherapy,

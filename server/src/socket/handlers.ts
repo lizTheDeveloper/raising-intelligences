@@ -62,6 +62,8 @@ import { buildSceneTranscript } from "../game/context-assembler.js";
 import { captureException } from "../observability/sentry.js";
 import { generateMultiplayerAlbums } from "../game/album-generator.js";
 import { logger } from "../logger.js";
+import { isResearchEnabled } from "../research/config.js";
+import { loadParentContext } from "../research/parent-context.js";
 
 export interface SocketDeps {
   io: Server;
@@ -661,10 +663,25 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       // Load game state if not in memory
       let state = games.get(gameId);
       if (!state) {
+        // The research lookup runs concurrently with loadGame and never
+        // delays registering the game: the state goes into `games` straight
+        // after loadGame resolves, and parentContext is filled into that
+        // registered object in place once the lookup lands.
+        const lookup = loadParentContext(gameId, repo).catch((err) => {
+          logger.warn("parent_context_rehydrate_failed", { gameId, error: err instanceof Error ? err.message : String(err) });
+          return "";
+        });
         const loaded = await repo.loadGame(gameId);
         if (loaded) {
-          games.set(gameId, loaded);
-          state = loaded;
+          state = games.get(gameId) ?? loaded;
+          games.set(gameId, state);
+          const registered = state;
+          void lookup.then((ctx) => {
+            const live = games.get(gameId) ?? registered;
+            // Fail closed: a seated game never takes a late-arriving context.
+            const seated = (sessions.get(gameId)?.players.length ?? 0) > 0;
+            if (ctx && !seated && isResearchEnabled() && !live.parentContext) live.parentContext = ctx;
+          });
         }
       }
       if (!state) return fail("Game not found");
@@ -774,6 +791,18 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       }
       session = added.session;
       sessions.set(gameId, session);
+      // Research context is solo-only: seating a player drops it, in place.
+      // Cleared again once the seat row is saved (below), so an answer that
+      // landed in between cannot leave one behind.
+      const clearParentContext = () => {
+        const live = games.get(gameId);
+        if (live) {
+          live.parentContext = undefined;
+          // Repair is solo/REST only: a seated game carries no pending note.
+          live.repairNote = null;
+        }
+      };
+      clearParentContext();
 
       data.gameId = gameId;
       data.slot = added.player.slot;
@@ -781,6 +810,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       await socket.join(slotRoom(gameId, added.player.slot));
 
       await repo.savePlayer(gameId, added.player.slot, added.player.displayName, added.player.token, added.player.userId);
+      clearParentContext();
       socket.emit(E.JOINED, { gameId, slot: added.player.slot, playerToken: added.player.token });
       broadcastLobby(gameId);
       socket.emit(

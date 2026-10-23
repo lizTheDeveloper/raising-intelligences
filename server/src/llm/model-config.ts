@@ -28,6 +28,7 @@ export type LLMRole =
   | "album"
   | "personality_seed"
   | "gender_inference"
+  | "moment_comparison"
   | "safety_check"
   | "psychologist_consult"
   | "family_therapist"
@@ -53,6 +54,8 @@ export const STANDARD_MODELS: ModelConfig = {
   album: "qwen/qwen3.7-max",
   personality_seed: "qwen/qwen3.7-max",
   gender_inference: "deepseek/deepseek-v4-flash",
+  // Research labelling of hoped-vs-kept; same cheap model as gender_inference.
+  moment_comparison: "deepseek/deepseek-v4-flash",
   // Safety classification is not a cost lever — same reliable model on every
   // tier, regardless of what the player is paying. See safety/pattern-detection.ts (grooming-pattern check, runs once per scene).
   safety_check: "anthropic/claude-haiku-4-5",
@@ -81,6 +84,7 @@ export const CEREBRAS_MODELS: ModelConfig = {
   album:           "cerebras:gpt-oss-120b",
   personality_seed: "cerebras:gpt-oss-120b",
   gender_inference: "cerebras:gpt-oss-120b",
+  moment_comparison: "cerebras:gpt-oss-120b",
   // Not routed through Cerebras — safety classification stays on the same
   // reliable model across every tier. See safety/pattern-detection.ts (grooming-pattern check, runs once per scene).
   safety_check: "anthropic/claude-haiku-4-5",
@@ -102,6 +106,7 @@ export const PREMIUM_MODELS: ModelConfig = {
   album: "anthropic/claude-opus-4-8",
   personality_seed: "google/gemini-2.5-flash",
   gender_inference: "deepseek/deepseek-v4-flash",
+  moment_comparison: "deepseek/deepseek-v4-flash",
   safety_check: "anthropic/claude-haiku-4-5",
   psychologist_consult: "google/gemini-2.5-flash",
   family_therapist: "google/gemini-2.5-flash",

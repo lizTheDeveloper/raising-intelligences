@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { PRIVACY_URL } from "../links";
 
 const STUDIO_URL = "https://multiversestudios.xyz";
 const COLLABORATOR_URL = "https://www.brynncaputo.com/";
@@ -20,6 +21,10 @@ export function Credits({ variant = "page", style }: Props) {
         and in collaboration with{" "}
         <a href={COLLABORATOR_URL} target="_blank" rel="noopener noreferrer">
           Brynn Caputo
+        </a>{" "}
+        &middot;{" "}
+        <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer">
+          privacy
         </a>
       </p>
     </footer>

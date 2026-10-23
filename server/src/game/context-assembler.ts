@@ -1,3 +1,6 @@
+import { kidParentContext } from "../research/parent-context.js";
+import { formatRepairBlock, MAX_REPAIR_LENGTH } from "../research/repair.js";
+import { cleanUntrustedText } from "../research/sanitize.js";
 import type { GameState, Message } from "../types.js";
 import {
   PSYCHOLOGIST_SYSTEM_PROMPT,
@@ -149,7 +152,8 @@ The parents have sent ${state.parentMessageCount} of ${PARENT_MESSAGE_CAP} messa
     + (temperamentSection ? `\n\n${temperamentSection}` : "")
     + `\n\n${scenePacing}\n\n${identitySection}`
     + (memorySection ? `\n\n${memorySection}` : "")
-    + `\n\nThe current situation: ${state.currentEvent?.description ?? ""}`;
+    + `\n\nThe current situation: ${state.currentEvent?.description ?? ""}`
+    + (state.parentContext ? `\n\n${kidParentContext(state.parentContext)}` : "");
 
   const eventMessages = currentEventMessages(state);
   const isInSidebar = state.phase === "sidebar";
@@ -186,6 +190,13 @@ export function buildSceneTranscript(state: GameState): string {
 
   let transcript = `## Event: ${state.currentEvent?.description}\nAge: ${state.currentEvent?.age}\n\n`;
 
+  if (state.sceneRepairLine) {
+    // The parent really said this to the child before the scene; scene-level
+    // review and the concern checks must see it. Attributed, and cleaned again.
+    const line = cleanUntrustedText(state.sceneRepairLine, MAX_REPAIR_LENGTH, { neutralizeDelimiters: true });
+    if (line) transcript += `[Parent, before this scene]: ${line}\n`;
+  }
+
   let currentSection = "shared";
   for (const m of eventMessages) {
     if (
@@ -217,6 +228,12 @@ export function buildPsychologistContext(state: GameState): {
   const transcript = buildSceneTranscript(state);
 
   let userMessage = "";
+  if (state.personalitySeed) {
+    userMessage += `## Temperament seed\n${state.personalitySeed}\n\n`;
+  }
+  if (state.parentContext) {
+    userMessage += `${state.parentContext}\n\n`;
+  }
   if (state.identityDocument) {
     userMessage += `## Current Identity Document\n${state.identityDocument}\n\n`;
   }
@@ -539,7 +556,8 @@ export function buildWorldManagerContext(state: GameState): {
     previousEvents,
     familyStructure: familyStructureText(state.relationshipType),
     landmineSection,
-  });
+  }) + (state.parentContext ? `\n\n${state.parentContext}` : "")
+    + (state.repairNote ? `\n\n${formatRepairBlock(state.repairNote)}` : "");
 
   let userMessage = `Generate the next event (event #${state.currentEventNumber + 1}).`;
   if (state.identityDocument) {

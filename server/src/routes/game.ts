@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import { existsSync } from "fs";
 import path from "path";
+import { rm } from "fs/promises";
 import { ConversationEngine } from "../game/conversation-engine.js";
 import type { EndgameEngine } from "../game/endgame-engine.js";
 import {
@@ -36,6 +37,13 @@ import {
   stripSceneEnd,
 } from "../game/scene-end.js";
 import { UUID_RE } from "../lib/validation.js";
+import { classifyBirthYear } from "../research/age.js";
+import { isResearchEnabled } from "../research/config.js";
+import { newGameSecret, requireGameSecret, verifyGameSecret, GAME_SECRET_HEADER } from "../security/game-secret.js";
+import { cleanRepairMessage } from "../research/repair.js";
+import { forgetSceneSummary } from "../research/moment-label.js";
+import { requireAdmin } from "./admin.js";
+import { isSeatedGame } from "../research/seats.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -56,6 +64,8 @@ interface GameRouteOptions {
    * routes directly with a plain mock engine) keep working: falls back to
    * `engine.llm` when absent or when it doesn't implement `withChildSeed`. */
   llm?: LLMClient & { withChildSeed?: (gameId: string) => LLMClient };
+  /** Whether the game has player seats (multiplayer). Repair is solo-only. */
+  hasSeat?: (gameId: string) => boolean;
 }
 
 export function createGameRoutes(
@@ -65,7 +75,7 @@ export function createGameRoutes(
   repo: GameRepository,
   options: GameRouteOptions = {}
 ): Router {
-  const { llmRateLimit, gameCreateLimit, gameLocks = new Map<string, Promise<void>>(), llm } = options;
+  const { llmRateLimit, gameCreateLimit, gameLocks = new Map<string, Promise<void>>(), llm, hasSeat = () => false } = options;
   const router = Router();
 
   // Prefetched event promises — kicked off at game creation (event 1) and after
@@ -76,9 +86,10 @@ export function createGameRoutes(
   const resolveGame = (id: string) => sharedResolveGame(id, games, repo);
 
   router.post("/game", ...(gameCreateLimit ? [gameCreateLimit] : []), async (req: Request, res: Response) => {
-    const { childName, relationshipType } = req.body as {
+    const { childName, relationshipType, birthYear } = req.body as {
       childName: string;
       relationshipType?: string;
+      birthYear?: unknown;
     };
     if (!childName) {
       res.status(400).json({ error: "childName is required" });
@@ -92,28 +103,98 @@ export function createGameRoutes(
       res.status(400).json({ error: `relationshipType must be ${MAX_RELATIONSHIP_TYPE_LENGTH} characters or fewer` });
       return;
     }
+    // Optional (legacy clients omit it). The flag is always stored; the year
+    // only for an adult while research is enabled (data minimisation). Under-18
+    // players never have a year stored.
+    const age = birthYear === undefined ? null : classifyBirthYear(birthYear);
+    if (age && !age.ok) {
+      res.status(400).json({ error: age.error });
+      return;
+    }
     const state = createGame(childName, relationshipType);
     games.set(state.id, state);
     await repo.saveGame(state);
+    if (age?.ok) {
+      await repo.recordAge(state.id, {
+        birthYear: age.isAdult && isResearchEnabled() ? age.birthYear : null,
+        isAdult: age.isAdult,
+      });
+    }
     // Dark Play Plan 4: record the creating IP — the denominator prerequisite
     // for escalation detection (see safety/escalation.ts). Not part of
     // GameState; written directly to the games row.
     await repo.recordGameIp(state.id, req.ip ?? null);
-    res.json({ gameId: state.id });
-    // Kick off gender inference, portrait, and first-event generation in parallel.
-    inferGender(engine.llm, childName).then(async (gender) => {
-      // Re-read the live state: /next-event may have already transitioned to
-      // family_chat by the time gender inference completes (especially on retry).
-      // Spreading the stale `state` here would revert the phase to event_intro.
-      const current = games.get(state.id) ?? state;
-      const updated = { ...current, childGender: gender };
-      games.set(state.id, updated);
-      await repo.saveGame(updated);
-      generateFirstPortrait(state.id, gender).catch(() => {});
-    }).catch(() => {
+    // Per-game secret: only its hash is stored; the plaintext is returned once.
+    const { secret, hash } = newGameSecret();
+    await repo.recordAccessSecretHash(state.id, hash);
+    // `research` is only a hint so the client can skip wait-question requests
+    // outright; the research routes enforce the same gates themselves.
+    res.json({ gameId: state.id, secret, research: isResearchEnabled() && age?.ok === true && age.isAdult });
+    // Kick off gender inference and portrait generation in parallel. Scene 1 is
+    // deliberately not prefetched here: it must be built after the personality
+    // seed exists, so /next-event generates it via engine.startEvent.
+    inferGender(engine.llm, childName).then((gender) =>
+      // The LLM call above runs outside the lock; only the check, save and
+      // portrait kickoff are serialized with DELETE (which holds the same
+      // lock), so a save can never land after a delete and recreate the row.
+      lock(state.id, async () => {
+        const current = games.get(state.id);
+        if (!current) return; // deleted while inference was in flight
+        // Re-read the live state: /next-event may have already transitioned to
+        // family_chat by the time gender inference completes (especially on retry).
+        // Spreading the stale `state` here would revert the phase to event_intro.
+        const updated = { ...current, childGender: gender };
+        games.set(state.id, updated);
+        await repo.saveGame(updated);
+        if (!games.has(state.id)) return;
+        generateFirstPortrait(state.id, gender).catch(() => {});
+      })
+    ).catch(() => {
+      if (!games.has(state.id)) return;
       generateFirstPortrait(state.id).catch(() => {});
     });
-    prefetchedEvents.set(state.id, engine.prefetchNextEvent(state));
+  });
+
+  // Right-to-erasure: removes the game and everything keyed to it, then evicts
+  // the in-memory copies (the `games` map, the prefetched-event promise and the
+  // scene-summary state; the per-game lock entry clears itself when the lock
+  // settles). Shared by the player route and the admin route so both erase the
+  // same things.
+  async function deleteGameCompletely(gameId: string): Promise<void> {
+    await lock(gameId, async () => {
+      await repo.deleteGameData(gameId);
+      games.delete(gameId);
+      forgetSceneSummary(gameId);
+      prefetchedEvents.delete(gameId);
+      // Best effort: generated portraits live on disk under the game id.
+      if (UUID_RE.test(gameId)) {
+        await rm(path.join(PORTRAITS_DIR, gameId), { recursive: true, force: true }).catch(() => {});
+      }
+    });
+  }
+
+  router.delete("/game/:id", requireGameSecret(repo), async (req: Request, res: Response) => {
+    await deleteGameCompletely(req.params.id as string);
+    res.status(204).end();
+  });
+
+  // Staff deletion on a player's request (the player's secret lives only in
+  // their browser, and staff hold only its hash). Fails closed: requireAdmin
+  // answers 503 when ADMIN_TOKEN is unset and 401 for a missing/wrong token.
+  router.delete("/admin/games/:id", requireAdmin, async (req: Request, res: Response) => {
+    const gameId = req.params.id as string;
+    if (!UUID_RE.test(gameId)) {
+      res.status(404).json({ error: "Game not found" });
+      return;
+    }
+    const exists = (await resolveGame(gameId)) !== null;
+    if (!exists) {
+      res.status(404).json({ error: "Game not found" });
+      return;
+    }
+    await deleteGameCompletely(gameId);
+    logger.info("admin_game_deleted", { gameId });
+    res.status(204).end();
   });
 
   router.get("/game/:id/state", async (req: Request, res: Response) => {
@@ -147,6 +228,9 @@ export function createGameRoutes(
       highestRungFired,
       cpsOutcome,
       parentPersonalities,
+      parentContext,
+      repairNote,
+      sceneRepairLine,
       ...publicState
     } = state;
     res.json({
@@ -157,6 +241,12 @@ export function createGameRoutes(
 
   router.post("/game/:id/next-event", async (req: Request, res: Response) => {
     const gameId = req.params.id as string;
+
+    // Lock barrier (FIFO): handlers already queued for this game, such as a
+    // first-wait about_you answer behind /personality, apply before scene 1's
+    // context is read below. The lock is released at once and not held across
+    // generation, so this waits only for work queued ahead of it.
+    await lock(gameId, async () => {});
 
     const state = await resolveGame(gameId);
     if (!state) {
@@ -440,7 +530,7 @@ export function createGameRoutes(
           // Note: the prefetch above already kicked off using the pre-scene-end state, so
           // any guidance queued by *this* scene's trajectory check won't be picked up until
           // the following scene's prefetch — a natural one-scene delay, not a bug.
-          const { state: next, sceneSafety } = await engine.endFamilyChat(state);
+          const { state: next, sceneSafety } = await engine.endFamilyChat(state, undefined, undefined, repo);
           const latestSnapshot = next.identitySnapshots[next.identitySnapshots.length - 1];
           if (latestSnapshot) await repo.saveSnapshot(next.id, latestSnapshot);
 
@@ -560,6 +650,92 @@ export function createGameRoutes(
       await repo.saveGame(next);
       res.json({ phase: next.phase });
     });
+  });
+
+  // Optional repair: after a scene's debrief the parent may go back to that
+  // moment and say something to the child; the next scene opens on the child's
+  // reaction. A gameplay feature for every player, so it needs no secret. It is
+  // kept as research data only when research is on, the game is adult and the
+  // secret is valid; otherwise the note lives in memory and is cleared when the
+  // next scene starts.
+  router.post("/game/:id/repair", ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
+    const gameId = req.params.id as string;
+    const body = req.body as { message?: unknown } | undefined;
+    const cleaned = cleanRepairMessage(body?.message);
+    if (!cleaned.ok) {
+      res.status(400).json({ error: "message must be 1 to 1000 characters" });
+      return;
+    }
+    if (!(await resolveGame(gameId))) {
+      res.status(404).json({ error: "Game not found" });
+      return;
+    }
+    const givenSecret = req.header(GAME_SECRET_HEADER);
+
+    try {
+      await lock(gameId, async () => {
+        const state = await resolveGame(gameId);
+        if (!state) {
+          res.status(404).json({ error: "Game not found" });
+          return;
+        }
+        if (state.phase !== "debrief") {
+          res.status(409).json({ error: `Cannot repair from the ${state.phase} phase` });
+          return;
+        }
+        if (await isSeatedGame(gameId, repo, hasSeat)) {
+          res.status(409).json({ error: "Not available in a shared game" });
+          return;
+        }
+
+        // The same pre-send content check the chat route applies to a parent's
+        // words to the child (classifier, flag, IP ban, session end).
+        const moderation = await moderateParentMessage({
+          repo,
+          games,
+          state,
+          sender: "parent1",
+          content: cleaned.message,
+          ipAddress: req.ip ?? null,
+        });
+        if (moderation.blocked) {
+          res.status(403).json({ error: "This session has ended" });
+          return;
+        }
+
+        // Mutated in place, like other in-memory-only fields, so a generation
+        // already reducing from this object sees it. Last repair wins.
+        state.repairNote = cleaned.message;
+        const stale = prefetchedEvents.get(gameId);
+        if (stale) {
+          prefetchedEvents.delete(gameId);
+          stale.catch(() => {});
+        }
+
+        // Research storage is decided last and never turns into an error.
+        if (isResearchEnabled() && (await repo.getIsAdult(gameId)) === true) {
+          const hash = await repo.getAccessSecretHash(gameId);
+          if (verifyGameSecret(givenSecret, hash)) {
+            const now = Date.now();
+            await repo.saveAnswer({
+              gameId,
+              sceneIndex: state.currentEventNumber,
+              questionId: "repair",
+              questionVersion: 1,
+              kind: "repair",
+              answer: cleaned.message,
+              skipped: false,
+              shownAt: now,
+              answeredAt: now,
+            });
+          }
+        }
+        res.status(204).end();
+      });
+    } catch (err) {
+      logger.error("repair_error", { gameId, error: err instanceof Error ? err.stack : String(err) });
+      if (!res.headersSent) res.status(500).json({ error: "An internal error occurred" });
+    }
   });
 
   // Dark Play Plan 3 — advance out of Rung 1 (consult). Decays concernLevel

@@ -202,16 +202,37 @@ export function transition(state: GameState, action: GameAction): GameState {
   return { ...applyTransition(state, action), lastActivityAt: Date.now() };
 }
 
+/**
+ * The event number is the server's, never the model's. The world manager's JSON
+ * carries an `eventNumber` it was only asked to echo, and it can be wrong (0,
+ * stale, huge). Everything keyed on a scene number — message filtering, the
+ * research answer rows — assumes `currentEvent.eventNumber ===
+ * currentEventNumber` for as long as the scene is current, so the number is
+ * stamped here, where an event becomes the current one. Prefetched events come
+ * through START_EVENT too, so they are stamped against the state they are
+ * applied to, not the one they were generated from.
+ */
+function stampEvent(state: GameState, event: GameEvent): GameEvent {
+  const eventNumber = state.currentEventNumber + 1;
+  return event.eventNumber === eventNumber ? event : { ...event, eventNumber };
+}
+
 function applyTransition(state: GameState, action: GameAction): GameState {
   switch (action.type) {
-    case "LOAD_EVENT":
+    case "LOAD_EVENT": {
+      const event = stampEvent(state, action.event);
       return {
         ...state,
-        currentEvent: action.event,
-        currentEventNumber: state.currentEventNumber + 1,
-        events: [...state.events, action.event],
+        currentEvent: event,
+        currentEventNumber: event.eventNumber,
+        events: [...state.events, event],
         pendingGuidance: null,
+        // A repair note applies to exactly one scene: the one starting now.
+        // The text moves to sceneRepairLine so that scene's review sees it.
+        repairNote: null,
+        sceneRepairLine: null,
       };
+    }
 
     case "BEGIN_FAMILY_CHAT":
       return {
@@ -219,15 +240,19 @@ function applyTransition(state: GameState, action: GameAction): GameState {
         phase: "family_chat",
       };
 
-    case "START_EVENT":
+    case "START_EVENT": {
+      const event = stampEvent(state, action.event);
       return {
         ...state,
         phase: "family_chat",
-        currentEvent: action.event,
-        currentEventNumber: state.currentEventNumber + 1,
-        events: [...state.events, action.event],
+        currentEvent: event,
+        currentEventNumber: event.eventNumber,
+        events: [...state.events, event],
         pendingGuidance: null,
+        repairNote: null,
+        sceneRepairLine: state.repairNote ?? null,
       };
+    }
 
     case "PARENT_MESSAGE": {
       // The debrief is the one room in the game where the two humans talk to
@@ -347,7 +372,8 @@ function applyTransition(state: GameState, action: GameAction): GameState {
         epilogue: action.epilogue,
       };
 
-    case "START_ADULT_CHAT":
+    case "START_ADULT_CHAT": {
+      const event = stampEvent(state, action.event);
       // Advances currentEventNumber and appends to `events` exactly like
       // START_EVENT, because the adult conversation IS another scene.
       //
@@ -361,11 +387,12 @@ function applyTransition(state: GameState, action: GameAction): GameState {
       return {
         ...state,
         phase: "adult_chat",
-        currentEvent: action.event,
-        currentEventNumber: state.currentEventNumber + 1,
-        events: [...state.events, action.event],
+        currentEvent: event,
+        currentEventNumber: event.eventNumber,
+        events: [...state.events, event],
         parentMessageCount: 0,
       };
+    }
 
     case "SHOW_REPORT_CARD":
       return {

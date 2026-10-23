@@ -43,6 +43,28 @@ export function isBenignDisconnect(params: {
   return /operation was aborted|request aborted|\baborted\b/i.test(message);
 }
 
+const RESEARCH_URL = /\/(game\/[^/?#]+\/(answers|repair)|research\/followup)(\/|\?|#|$)/;
+
+/**
+ * Removes everything a research request could carry (body, cookies, query
+ * string, headers, and exception/message text that may quote a body fragment)
+ * from an event whose request URL is one of the research routes. Events for
+ * other URLs are left untouched. Mutates and returns the event.
+ */
+export function scrubResearchEvent<E extends Sentry.ErrorEvent>(event: E): E {
+  const url = event.request?.url;
+  if (!url || !RESEARCH_URL.test(url)) return event;
+  if (event.request) {
+    delete event.request.data;
+    delete event.request.cookies;
+    delete event.request.query_string;
+    delete event.request.headers;
+  }
+  for (const v of event.exception?.values ?? []) v.value = "redacted (research route)";
+  if (event.message) event.message = "redacted (research route)";
+  return event;
+}
+
 /**
  * Initializes Sentry when `SENTRY_DSN` is set. Idempotent: safe to call more
  * than once (subsequent calls are no-ops). Returns whether reporting is active.
@@ -67,9 +89,14 @@ export function initSentry(): boolean {
     // Error reporting only — no performance/trace sampling. GlitchTip is an
     // error tracker; tracing spans are unnecessary overhead here.
     tracesSampleRate: 0,
+    // Never capture incoming request bodies: research routes carry parents'
+    // free-text answers, repair messages and an email. beforeSend below scrubs
+    // those routes again as defense in depth.
+    integrations: [Sentry.httpIntegration({ maxIncomingRequestBodySize: "none" })],
     // Drop benign client-disconnect noise (aborted SSE/fetch) so it doesn't
     // bury real server errors. See isBenignDisconnect.
     beforeSend(event, hint) {
+      scrubResearchEvent(event);
       const err = hint?.originalException as
         | { name?: string; message?: string; code?: string }
         | undefined;

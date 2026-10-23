@@ -19,6 +19,8 @@ import {
 import type { SceneSafetyResult } from "../safety/moderation.js";
 import type { TrajectoryResult } from "../safety/pattern-detection.js";
 import { logger } from "../logger.js";
+import type { GameRepository } from "../db/repository.js";
+import { labelSceneMoments, recordSceneSummary } from "../research/moment-label.js";
 
 /**
  * How often, in parent messages, to run the mid-scene abuse check within a
@@ -238,11 +240,15 @@ export class ConversationEngine {
    * visually dead for the ~60s of that call, with `ProcessingScreen` (written
    * to cover it) never rendering on any client. Fired synchronously, before the
    * first await, so the phase is on the wire before the latency starts.
+   *
+   * `researchRepo`, when given, lets research-eligible games have the scene's
+   * hope/repair labelled in the background after the memory summary exists.
    */
   async endFamilyChat(
     state: GameState,
     onChunk?: (chunk: string) => void,
-    onProcessing?: (state: GameState) => void
+    onProcessing?: (state: GameState) => void,
+    researchRepo?: GameRepository
   ): Promise<{ state: GameState; sceneSafety: SceneSafetyResult; trajectory: TrajectoryResult }> {
     let next = transition(state, { type: "END_FAMILY_CHAT" });
     onProcessing?.(next);
@@ -270,6 +276,17 @@ export class ConversationEngine {
     ]);
 
     next = transition(next, { type: "IDENTITY_UPDATED", document: updatedDoc, memorySummary });
+
+    // Research labels (stored only, never shown or prompted). Fire-and-forget:
+    // not awaited, holds no lock, and labelSceneMoments never rejects. Uses the
+    // summarizer's own output, not next.memorySummary, which falls back to the
+    // previous scene's summary when the summarizer failed.
+    if (researchRepo && memorySummary) {
+      // Recorded BEFORE answers are read, so an answer saved after that read is
+      // picked up by the answer route (it writes the answer, then reads this).
+      recordSceneSummary(next.id, next.currentEventNumber, memorySummary);
+      void labelSceneMoments(this.llm, researchRepo, { id: next.id, currentEventNumber: next.currentEventNumber }, memorySummary);
+    }
 
     // Needs the just-updated document, so this runs after the transition
     // above rather than in the same Promise.all as the other three.

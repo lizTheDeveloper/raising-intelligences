@@ -129,4 +129,15 @@ export interface GameState {
   pendingGuidance: string | null;
   /** Unix ms of the last state transition; used for TTL eviction. */
   lastActivityAt: number;
+  /** In-memory only: parent-supplied context for the scene writer. Never
+   * persisted by saveGame and stripped from GET /state. */
+  parentContext?: string;
+  /** In-memory only: pending repair note for the next scene. Never persisted
+   * by saveGame and stripped from GET /state. */
+  repairNote?: string | null;
+  /** In-memory only: the sanitized repair text the parent said before the
+   * CURRENT scene. Lets scene-level review and the transcript consumers see the
+   * parent's own words. Never persisted, stripped from GET /state, replaced when
+   * the next scene starts. */
+  sceneRepairLine?: string | null;
 }
