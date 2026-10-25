@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import { InMemoryGameRepository } from "../src/db/repository.js";
 import {
   confirmCase,
   dismissCase,
+  includeParticipant,
   logIp,
   markReported,
   preserveEvidence,
@@ -110,7 +111,10 @@ describe("child-safety evidence vault", () => {
     expect(evidence.context).toHaveLength(20); // default prior-N turns
     expect(evidence.context.at(-1)?.content).toBe("turn 24");
     expect(evidence.identifiers).toEqual(
-      expect.arrayContaining([{ kind: "ip", value: "203.0.113.7" }, { kind: "matrix", value: "@someone:matrix.example" }]),
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "ip", value: "203.0.113.7", role: "flagged", verified: true }),
+        expect.objectContaining({ kind: "matrix", value: "@someone:matrix.example", role: "flagged", verified: false }),
+      ]),
     );
     // The per-message IP log write happened before the classifier ran.
     expect(evidence.ipHistory.some((e) => e.event === "message" && e.ip === "203.0.113.7")).toBe(true);
@@ -120,26 +124,29 @@ describe("child-safety evidence vault", () => {
     expect(flag.content).toBe(`[withheld: child-safety case ${caseId}]`);
   });
 
-  it("a scene-reader flag raised later still gets the IPs from the IP log", async () => {
+  it("a scene-reader flag raised later still gets the sender's IPs from the IP log, and keeps the co-player's apart", async () => {
     const repo = new InMemoryGameRepository();
     const state = gameWithHistory(4);
     await repo.saveGame(state);
-    await logIp(repo.childSafety, { ip: "198.51.100.1", gameRef: state.id, event: "game_create", userAgent: "UA-1" });
-    await logIp(repo.childSafety, { ip: "198.51.100.2", gameRef: state.id, event: "message", userAgent: "UA-2" });
+    await logIp(repo.childSafety, { ip: "198.51.100.1", gameRef: state.id, event: "socket_create", slot: "parent1", userAgent: "UA-1" });
+    await logIp(repo.childSafety, { ip: "198.51.100.2", gameRef: state.id, event: "socket_join", slot: "parent2", userAgent: "UA-2" });
+    // The co-player's request ended the scene; the flagged content is parent1's.
     const { caseId } = await applyModerationBlock({
       repo, games: new Map([[state.id, state]]), state, sender: "parent1",
       content: "scene transcript fixture", reason: "parent directed sexual content at the child (fixture)",
-      ipAddress: null, banIp: false,
+      ipAddress: "198.51.100.2", userAgent: "UA-2", banIp: false,
     });
     expect(caseId).toBeTruthy();
     const { evidence } = await viewEvidence(repo.childSafety, caseId!, "r", null);
     expect(evidence.source).toBe("ri_scene");
     expect(evidence.categories).toEqual(["scene_reader:sexualization"]);
     expect(evidence.ipHistory.map((e) => e.ip)).toEqual(["198.51.100.1", "198.51.100.2"]);
-    expect(evidence.userAgent).toBe("UA-2");
-    expect(repo.childSafety.cases.get(caseId!)!.identifiers.map((i) => i.value)).toEqual(
-      expect.arrayContaining(["198.51.100.1", "198.51.100.2"]),
-    );
+    expect(evidence.ipAddress).toBe("198.51.100.1");
+    expect(evidence.requestIp).toBe("198.51.100.2");
+    expect(evidence.userAgent).toBe("UA-1");
+    const ids = repo.childSafety.cases.get(caseId!)!.identifiers;
+    expect(ids.find((i) => i.value === "198.51.100.1")).toMatchObject({ role: "flagged", slot: "parent1" });
+    expect(ids.find((i) => i.value === "198.51.100.2")).toMatchObject({ role: "participant", slot: "parent2" });
   });
 
   it("deleting the game keeps the evidence", async () => {
@@ -196,7 +203,7 @@ describe("child-safety evidence vault", () => {
     expect(repo.childSafety.ipLog).toHaveLength(0);
   });
 
-  it("a confirmed case is locked from purge, bans its identifiers, and holds for at least a year", async () => {
+  it("a confirmed case is locked from purge, bans the sender's IP, and holds for at least a year", async () => {
     const repo = new InMemoryGameRepository();
     const { caseId } = await flaggedGame(repo, "203.0.113.50");
     await repo.unbanIp("203.0.113.50"); // isolate: the per-message flag already banned it
@@ -206,8 +213,6 @@ describe("child-safety evidence vault", () => {
     expect(confirmed.locked).toBe(true);
     expect(confirmed.retainUntil).toBeGreaterThanOrEqual(t0 + 365 * DAY);
     expect(await repo.isIpBanned("203.0.113.50")).toBe(true);
-    expect(await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: "@someone:matrix.example" })).toBe(true);
-
     await purgeExpired(repo.childSafety, t0 + 3650 * DAY);
     expect(repo.childSafety.cases.has(caseId)).toBe(true);
     await expect(dismissCase(repo.childSafety, caseId, "r", null, "oops", t0)).rejects.toThrow(/confirmed/);
@@ -250,6 +255,83 @@ describe("child-safety evidence vault", () => {
     } finally {
       process.env.CHILD_SAFETY_EVIDENCE_KEY = saved;
     }
+  });
+
+  it("multiplayer: confirm bans only the flagged sender; a co-player's IP is not banned or reported", async () => {
+    const repo = new InMemoryGameRepository();
+    const state = gameWithHistory(4);
+    await repo.saveGame(state);
+    await repo.savePlayer(state.id, "parent1", "P1", "t1", "@flagged:matrix.example");
+    await repo.savePlayer(state.id, "parent2", "P2", "t2", "@coplayer:matrix.example");
+    await logIp(repo.childSafety, { ip: "198.51.100.11", gameRef: state.id, event: "socket_create", slot: "parent1", accountId: "@flagged:matrix.example" });
+    await logIp(repo.childSafety, { ip: "198.51.100.22", gameRef: state.id, event: "socket_join", slot: "parent2", accountId: "@coplayer:matrix.example" });
+    mockOpenAi({ "sexual/minors": true, sexual: true });
+    await moderateParentMessage({
+      repo, games: new Map([[state.id, state]]), state, sender: "parent1", content: FIXTURE, ipAddress: "198.51.100.11",
+    });
+    await repo.unbanIp("198.51.100.11");
+    const caseId = [...repo.childSafety.cases.values()].find((c) => c.gameRef === state.id)!.id;
+
+    const confirmed = await confirmCase(repo.childSafety, caseId, "r", null, (ip, reason) => repo.banIp(ip, reason));
+    expect(confirmed.banned.map((b) => b.value)).toEqual(["198.51.100.11"]);
+    expect(await repo.isIpBanned("198.51.100.11")).toBe(true);
+    expect(await repo.isIpBanned("198.51.100.22")).toBe(false);
+    expect(await repo.childSafety.isIdentifierBanned({ kind: "ip", value: "198.51.100.22" })).toBe(false);
+
+    const { buildReportPackage, reporterInfoFromEnv } = await import("../src/safety/child-safety/report.js");
+    const { case: c, evidence } = await viewEvidence(repo.childSafety, caseId, "r", null);
+    const pkg = buildReportPackage(c, evidence, reporterInfoFromEnv());
+    const reported = JSON.stringify(pkg.reportedPerson);
+    expect(reported).toContain("198.51.100.11");
+    expect(reported).not.toContain("198.51.100.22");
+    expect(reported).not.toContain("@coplayer:matrix.example");
+    expect(pkg.reportedPerson.claimedUnverified).toEqual([{ kind: "matrix", value: "@flagged:matrix.example" }]);
+    expect(pkg.internal.otherParticipantsOmitted).toBeGreaterThan(0);
+  });
+
+  it("a reviewer-selected co-player is banned, reported and logged with the reason", async () => {
+    const repo = new InMemoryGameRepository();
+    const state = gameWithHistory(2);
+    await repo.saveGame(state);
+    await logIp(repo.childSafety, { ip: "198.51.100.31", gameRef: state.id, event: "socket_create", slot: "parent1" });
+    await logIp(repo.childSafety, { ip: "198.51.100.32", gameRef: state.id, event: "socket_join", slot: "parent2" });
+    const { caseId } = await preserveEvidence(repo.childSafety, {
+      source: "ri_message", content: FIXTURE, context: [], categories: ["sexual/minors"], gameRef: state.id,
+      ipAddress: "198.51.100.31", userAgent: null, sender: "parent1",
+    });
+    await confirmCase(repo.childSafety, caseId, "r", null, (ip, reason) => repo.banIp(ip, reason));
+    expect(await repo.isIpBanned("198.51.100.32")).toBe(false);
+
+    const ban = (ip: string, reason: string) => repo.banIp(ip, reason);
+    await expect(includeParticipant(repo.childSafety, caseId, "reviewer-d", null, { kind: "ip", value: "198.51.100.32" }, "", ban))
+      .rejects.toThrow(/reason/);
+    await includeParticipant(repo.childSafety, caseId, "reviewer-d", "10.0.0.4", { kind: "ip", value: "198.51.100.32" }, "co-player sent the same content in the transcript", ban);
+    expect(await repo.isIpBanned("198.51.100.32")).toBe(true);
+    const log = await repo.childSafety.listAccess(caseId);
+    expect(log.find((l) => l.action === "include_participant")).toMatchObject({
+      actor: "reviewer-d", actorIp: "10.0.0.4", detail: expect.stringContaining("co-player sent the same content"),
+    });
+    const { buildReportPackage, reporterInfoFromEnv } = await import("../src/safety/child-safety/report.js");
+    const { case: c, evidence } = await viewEvidence(repo.childSafety, caseId, "r", null);
+    const pkg = buildReportPackage(c, evidence, reporterInfoFromEnv());
+    expect(pkg.reportedPerson.identifiers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "ip", value: "198.51.100.32", includedBy: "reviewer-d" }),
+    ]));
+  });
+
+  it("an unverified (client-claimed) userId is never banned, even by a reviewer", async () => {
+    const repo = new InMemoryGameRepository();
+    const { caseId } = await flaggedGame(repo, "203.0.113.70");
+    const ban = (ip: string, reason: string) => repo.banIp(ip, reason);
+    const confirmed = await confirmCase(repo.childSafety, caseId, "r", null, ban);
+    expect(confirmed.banned.some((b) => b.kind === "matrix")).toBe(false);
+    expect(await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: "@someone:matrix.example" })).toBe(false);
+    // A co-player's claimed id cannot be included either.
+    const c = repo.childSafety.cases.get(caseId)!;
+    c.identifiers.push({ kind: "matrix", value: "@other:matrix.example", role: "participant", verified: false, slot: "parent2" });
+    await expect(includeParticipant(repo.childSafety, caseId, "r", null, { kind: "matrix", value: "@other:matrix.example" }, "because", ban))
+      .rejects.toThrow(/unverified/);
+    expect(await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: "@other:matrix.example" })).toBe(false);
   });
 
   it("preserveEvidence is idempotent on externalRef", async () => {
@@ -388,6 +470,16 @@ describe("child-safety review queue (HTTP)", () => {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${INGEST}` }, body: JSON.stringify(body),
     });
     expect(res.status).toBe(200); // idempotent
+
+    // Caller-supplied identifiers are unverified unless the caller says so: confirm never bans them.
+    res = await fetch(`${server.baseUrl}/api/internal/child-safety/evidence`, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${INGEST}` },
+      body: JSON.stringify({ ...body, externalRef: "msg-2", ipAddress: "198.51.100.78", identifiers: [{ kind: "account", value: "claimed-user" }] }),
+    });
+    const second = (await res.json()).caseId;
+    const conf = await (await fetch(`${server.baseUrl}/api/admin/child-safety/cases/${second}/confirm`, { method: "POST", headers: h() })).json();
+    expect(conf.banned.map((b: { value: string }) => b.value)).toEqual(["198.51.100.78"]);
+    expect(await server.memRepo.childSafety.isIdentifierBanned({ kind: "account", value: "claimed-user" })).toBe(false);
   });
 });
 
@@ -412,8 +504,10 @@ describe("held Langfuse traces are excluded from bulk readers", () => {
     expect(filterHeldObservations(obs, held)).toEqual([{ traceId: "t3", input: "y" }]);
   });
 
-  it("scripts/model-search.ts applies the exclusion to its Langfuse pull", () => {
-    const src = readFileSync(path.join(__dirname, "..", "..", "scripts", "model-search.ts"), "utf8");
+  // scripts/ is not copied into the Docker test stage; the check runs wherever the repo is whole.
+  const modelSearch = path.join(__dirname, "..", "..", "scripts", "model-search.ts");
+  it.skipIf(!existsSync(modelSearch))("scripts/model-search.ts applies the exclusion to its Langfuse pull", () => {
+    const src = readFileSync(modelSearch, "utf8");
     expect(src).toContain("fetchHeldTraceIds");
     expect(src).toContain("filterHeldObservations");
   });

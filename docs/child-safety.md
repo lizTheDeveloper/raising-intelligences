@@ -38,14 +38,27 @@ Each case holds:
 | The prior N turns of chat, N = `CHILD_SAFETY_CONTEXT_TURNS` (default 20) | encrypted payload |
 | Incident time and preservation time | payload and `incident_at` |
 | IP address of the flagged request | `ip_address` and payload |
-| Every IP, user agent and Matrix ID in the game's IP log | payload `ipHistory` and `identifiers` |
+| Every IP, user agent and Matrix ID in the game's IP log, each tagged with the seat (parent1/parent2) that produced it | payload `ipHistory` and `identifiers` |
 | User agent | encrypted payload |
-| Matrix IDs of the game's players (unverified: RI has no accounts) | `identifiers` |
+| Matrix IDs of the game's players, marked **claimed, unverified** (RI has no accounts) | `identifiers` |
 | Game id (text, **not** a foreign key) | `game_ref` |
 | Classifier categories, every score, and the exact model version | payload, `categories` |
 | SHA-256 of the flagged content | `content_sha256` and payload |
 
 The `moderation_flags` row for the same block now stores `[withheld: child-safety case <id>]` in place of the content. That row still cascades with the game, but the vault copy does not.
+
+### Whose identifiers: the flagged sender vs other participants
+
+RI games can be multiplayer, and a device can be shared, so a case never treats everyone in a game as the offender:
+
+- Every IP-log row records the **seat** that produced it: game create, join, rejoin, or message.
+- The case marks each identifier as **flagged** (the sender of the flagged content) or **other participant** (any other seat, or no known seat).
+  - For a per-message flag, the request IP is the sender's.
+  - For a scene-reader flag, the request that ended the scene may have come from the co-player. In that case the sender's IPs come from their seat's IP-log rows.
+- **Confirm bans only the flagged sender's verified identifiers.** Only those go in the report package.
+- Other participants appear separately in the review page, marked "not banned, not in the report". A reviewer can **Include** one, with a required reason. That choice is logged as `include_participant`, and the identifier is then banned and reported.
+- **Only verified identifiers can be banned or reported.** In RI the only verified identifiers are IPs the server observed. A Matrix `userId` is client-supplied: it is kept as evidence and labelled "claimed, unverified" in the report, but it never drives a ban, and a reviewer cannot include one. Ingest callers mark an identifier `verified: true` only when their own service authenticated it.
+- A shared device means a shared IP. If both seats used the same IP, banning the sender's IP also blocks that device. The reviewer sees this in the IP log.
 
 ### Storage and access
 
@@ -83,14 +96,14 @@ Open **Admin → Child Safety** at `https://multiversegames.ai/raising-intellige
 2. **View evidence** decrypts the case and is logged. Read the flagged text, the context and the IP log.
 3. Decide:
    - **Dismiss**: a false positive. A reason is required. The evidence is purged 90 days later.
-   - **Confirm & report**: reportable. This locks the case (one-year minimum hold) and bans every linked IP. Those IPs can no longer be unbanned from the Moderation tab: the unban returns 409. Linked Matrix IDs are blocked from creating or joining games.
+   - **Confirm & report**: reportable. This locks the case (one-year minimum hold) and bans the **flagged sender's** IPs. Those IPs can no longer be unbanned from the Moderation tab: the unban returns 409. Co-players are not banned unless you **Include** them, with a reason. Unverified Matrix IDs are never banned.
 4. **Report package** (confirmed cases only, and logged as an export) opens a CyberTipline-ready HTML page with the incident type and time, reporting-ESP block, IPs with capture times, user agent, identifiers, content, SHA-256, context transcript, classifier scores and a filing checklist. The JSON form is `POST /api/admin/child-safety/cases/:id/report`.
 5. **File it** (see "Filing step by step").
 6. **Mark reported**: enter the CyberTipline report number. The one-year hold restarts from that date.
 7. After the hold ends, a human may **release** the case (`POST .../release`, which is refused before `retain_until`). It is then purged on the next sweep.
 
 The API is under `/api/admin/child-safety/` and every call needs `Authorization: Bearer $ADMIN_TOKEN` and `X-Reviewer: <name>`:
-`GET cases?status=open`, `POST cases/:id/view`, `POST cases/:id/dismiss {reason}`, `POST cases/:id/confirm`, `POST cases/:id/report[?format=html]`, `POST cases/:id/reported {cybertipReportId}`, `POST cases/:id/release`, `GET cases/:id/access-log`.
+`GET cases?status=open`, `POST cases/:id/view`, `POST cases/:id/include-participant {kind, value, reason}`, `POST cases/:id/dismiss {reason}`, `POST cases/:id/confirm`, `POST cases/:id/report[?format=html]`, `POST cases/:id/reported {cybertipReportId}`, `POST cases/:id/release`, `GET cases/:id/access-log`.
 
 ### Test hook
 
@@ -127,7 +140,7 @@ Get counsel to confirm this reading once. After that, the reviewer decides case 
 3. **Incident type:** choose the closest match. For text chat that is usually Online Enticement of Children for Sexual Acts; for imagery, Child Pornography.
 4. **Incident date/time:** use `incidentDateTime` (UTC) from the package.
 5. **Reporter / ESP:** fill in from the reporting-ESP block.
-6. **Reported person:** enter every IP with its capture time and event, the user agent, and the Matrix IDs. Note that the IDs are unverified.
+6. **Reported person:** enter every IP in the package with its capture time and event, plus the user agent. These belong to the flagged sender only. List any Matrix ID only as "claimed by the user, not verified".
 7. **Content:** attach the flagged text and the context transcript as a `.txt` file, or paste them into Additional Information. Give the SHA-256.
 8. **"Did you view the content?"** Yes. **"Publicly available?"** No.
 9. **Additional information:** describe the service as an AI parenting simulation with an AI-generated child character. Say whether the transcript suggests a real child is involved, and that RI has no verified accounts.
@@ -142,8 +155,8 @@ The body is JSON with these fields:
 - `content`;
 - `context` (`[{speaker, content, at}]`);
 - `categories`, `scores`, `model`, `reason`;
-- `gameRef`, `ipAddress`, `userAgent`;
-- `identifiers` (`[{kind, value}]`);
+- `gameRef`, `ipAddress` (the flagged sender's request IP), `userAgent`;
+- `identifiers` (`[{kind, value, verified?, role?}]`): `verified: true` only if your service authenticated it; `role: "participant"` for anyone other than the flagged sender;
 - `incidentAt`;
 - `externalRef` (an idempotency key).
 

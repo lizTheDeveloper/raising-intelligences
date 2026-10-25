@@ -629,15 +629,15 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       // for escalation detection (see safety/escalation.ts). Not part of
       // GameState; written directly to the games row.
       await repo.recordGameIp(state.id, getSocketIp(socket));
-      await logIp(repo.childSafety, {
-        ip: getSocketIp(socket), gameRef: state.id, event: "socket_create",
-        userAgent: socket.handshake.headers["user-agent"] ?? null, accountId: payload.userId ?? null,
-      });
 
       let session = createSession(state.id);
       const added = addPlayer(session, socket.id, payload.displayName, payload.userId);
       session = added.session;
       sessions.set(state.id, session);
+      await logIp(repo.childSafety, {
+        ip: getSocketIp(socket), gameRef: state.id, event: "socket_create", slot: added.player.slot,
+        userAgent: socket.handshake.headers["user-agent"] ?? null, accountId: payload.userId ?? null,
+      });
 
       data.gameId = state.id;
       data.slot = added.player.slot;
@@ -783,6 +783,10 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           data.slot = reconnected.player.slot;
           await socket.join(gameId);
           await socket.join(slotRoom(gameId, reconnected.player.slot));
+          await logIp(repo.childSafety, {
+            ip: getSocketIp(socket), gameRef: gameId, event: "socket_rejoin", slot: reconnected.player.slot,
+            userAgent: socket.handshake.headers["user-agent"] ?? null, accountId: reconnected.player.userId ?? null,
+          });
           socket.emit(E.JOINED, { gameId, slot: reconnected.player.slot, playerToken: reconnected.player.token });
           broadcastLobby(gameId);
           // Reconnect used to emit STATE but never GENERATING, so a returning
@@ -825,7 +829,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
       await repo.savePlayer(gameId, added.player.slot, added.player.displayName, added.player.token, added.player.userId);
       await logIp(repo.childSafety, {
-        ip: getSocketIp(socket), gameRef: gameId, event: "socket_join",
+        ip: getSocketIp(socket), gameRef: gameId, event: "socket_join", slot: added.player.slot,
         userAgent: socket.handshake.headers["user-agent"] ?? null, accountId: added.player.userId ?? null,
       });
       clearParentContext();

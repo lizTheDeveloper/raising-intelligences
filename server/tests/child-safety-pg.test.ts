@@ -25,7 +25,7 @@ describe.skipIf(!process.env.DATABASE_URL)("child-safety vault on Postgres", () 
     const state = { ...createGame("Pg"), phase: "family_chat" as const };
     await repo.saveGame(state);
     await repo.savePlayer(state.id, "parent1", "P1", "tok", "@pg:matrix.example");
-    await logIp(repo.childSafety, { ip: "198.51.100.20", gameRef: state.id, event: "game_create", userAgent: "PgUA" });
+    await logIp(repo.childSafety, { ip: "198.51.100.20", gameRef: state.id, event: "game_create", slot: "parent1", userAgent: "PgUA" });
     const { caseId } = await applyModerationBlock({
       repo, games: new Map(), state, sender: "parent1", content: "PG TEST FIXTURE", reason: "openai_moderation:sexual/minors",
       ipAddress: "198.51.100.20", banIp: false,
@@ -47,7 +47,7 @@ describe.skipIf(!process.env.DATABASE_URL)("child-safety vault on Postgres", () 
     const { evidence } = await viewEvidence(repo.childSafety, caseId, "pg-reviewer", "10.1.1.1");
     expect(evidence.content).toBe("PG TEST FIXTURE");
     expect(evidence.userAgent).toBe("PgUA");
-    expect(evidence.identifiers).toEqual(expect.arrayContaining([{ kind: "matrix", value: "@pg:matrix.example" }]));
+    expect(evidence.identifiers).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "matrix", value: "@pg:matrix.example", verified: false })]));
     const log = await repo.childSafety.listAccess(caseId);
     expect(log.map((l) => l.action)).toEqual(["create", "view"]);
 

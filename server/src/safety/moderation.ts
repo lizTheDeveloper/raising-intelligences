@@ -9,6 +9,7 @@ import {
 import type { GamePhase } from "../types.js";
 import { logIp, preserveEvidence, type ContextTurn } from "./child-safety/vault.js";
 import { childSafetyConfig } from "./child-safety/config.js";
+import type { Identifier } from "./child-safety/store.js";
 import { holdGameTraces, markGameHeld } from "../observability/child-safety-exclusion.js";
 
 export interface ModerationResult {
@@ -127,10 +128,15 @@ async function preserveFlagEvidence(params: {
 }): Promise<string | null> {
   const { repo, state, sender, content, reason, ipAddress, userAgent, classifier, isTest } = params;
   try {
-    let identifiers: Array<{ kind: string; value: string }> = [];
+    // Matrix userIds are client-supplied and unverified: kept as evidence
+    // ("claimed, unverified"), scoped to their seat, never banned or reported.
+    let identifiers: Identifier[] = [];
     try {
       const players = await repo.loadPlayers(state.id);
-      identifiers = players.filter((p) => p.userId).map((p) => ({ kind: "matrix", value: p.userId as string }));
+      identifiers = players.filter((p) => p.userId).map((p) => ({
+        kind: "matrix", value: p.userId as string, verified: false, slot: p.slot,
+        role: p.slot === sender ? ("flagged" as const) : ("participant" as const),
+      }));
     } catch {
       // Players are optional context; the case is written without them.
     }
@@ -151,7 +157,12 @@ async function preserveFlagEvidence(params: {
       reason,
       gameRef: state.id,
       ipAddress,
-      userAgent,
+      // A per-message flag's request is the sender's own. A scene-level block
+      // arrives on whichever request ended the scene, possibly the co-player's.
+      requestIpIsSender: !!classifier,
+      sender,
+      // Same reasoning for the user agent: only trust it for the sender's own request.
+      userAgent: classifier ? userAgent : null,
       identifiers,
       extra: { sender, phase: state.phase, eventNumber: state.currentEventNumber, childName: state.childName },
       isTest,
@@ -284,7 +295,7 @@ export async function moderateParentMessage(params: {
   // Every parent message, on every surface, passes through here: this is the
   // IP log's per-message write (child_safety.ip_log, 90-day retention), so a
   // later scene-reader flag still has the IPs that wrote the scene.
-  await logIp(repo.childSafety, { ip: ipAddress, gameRef: state.id, event: "message", userAgent });
+  await logIp(repo.childSafety, { ip: ipAddress, gameRef: state.id, event: "message", slot: sender, userAgent });
 
   const result = await classifyParentMessage(content, categoriesForPhase(state.phase));
   if (!result.flagged) return { blocked: false };
