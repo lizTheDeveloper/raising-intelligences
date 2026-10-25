@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import * as Sentry from "@sentry/browser";
 import { App } from "./App";
 import { startSessionTracking } from "./analytics";
+import { CampusCabinet, setActiveCabinet } from "./campusCabinet";
 import { normalizeNullPayload, toReportableRejection, toReportableWindowError } from "./errorReporting";
 import { eventHasOnlyThirdPartyFrames } from "./errorNoise";
 import "./global.css";
@@ -103,6 +104,12 @@ if (import.meta.env.PROD) {
 // is the whole reason that queue exists — this script is inserted dynamically
 // and so resolves well after first render).
 startSessionTracking();
+
+// Web cabinets: inert unless framed with ?cabinet=campus (see campusCabinet.ts).
+// The pass-exchange path comes from vite's configured base, never the URL.
+const cabinet = new CampusCabinet({ win: window, base: import.meta.env.BASE_URL });
+setActiveCabinet(cabinet);
+cabinet.start();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

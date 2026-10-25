@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { track } from "../analytics";
+import { isCabinetActive } from "../campusCabinet";
 
 /**
  * Direct Stripe payment link for this game (pay-what-you-want, $20 minimum as
@@ -25,7 +26,13 @@ interface Props {
  * for the epilogue, right after the "years later" narrative lands, before
  * the reader clicks continue.
  */
-export function SupportPrompt({ sourcePage, style }: Props) {
+export function SupportPrompt(props: Props) {
+  // A campus web cabinet is a free story corner in a school: no money asks.
+  if (isCabinetActive()) return null;
+  return <SupportPromptInner {...props} />;
+}
+
+function SupportPromptInner({ sourcePage, style }: Props) {
   /**
    * Stage 1 of the canonical revenue funnel. This component had no analytics
    * at all — the flagship title, 335 visitors, contributing zero rows to the

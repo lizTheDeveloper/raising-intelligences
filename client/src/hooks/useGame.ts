@@ -3,28 +3,13 @@ import { saveGameSecret, saveResearchHint, getGameSecret } from "./gameSecret";
 import { sendRepair, type RepairResult } from "../repairClient";
 import { readMemorySummary } from "../memorySummary";
 import { track, mark, secondsSince, bucketSeconds, bucketHours } from "../analytics";
+import { campusIdentity, campusIdentityUnknown } from "../campusCabinet";
 
-export interface SavedKid {
-  gameId: string;
-  childName: string;
-  createdAt: number;
-}
-
-const STORAGE_KEY = "raising-intelligences-kids";
-
-export function getSavedKids(): SavedKid[] {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-  } catch {
-    return [];
-  }
-}
-
-export function saveKid(gameId: string, childName: string) {
-  const kids = getSavedKids().filter((k) => k.gameId !== gameId);
-  kids.unshift({ gameId, childName, createdAt: Date.now() });
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(kids));
-}
+// Saved-kids storage lives in localStore.ts (guarded: storage can throw).
+export { getSavedKids, saveKid, mergeKids } from "../localStore";
+export type { SavedKid } from "../localStore";
+import { getSavedKids, saveKid } from "../localStore";
+import type { SavedKid } from "../localStore";
 
 interface GameEvent {
   eventNumber: number;
@@ -84,13 +69,6 @@ export async function fetchServerKids(userId: string): Promise<SavedKid[]> {
   }
 }
 
-export function mergeKids(local: SavedKid[], remote: SavedKid[]): SavedKid[] {
-  const map = new Map<string, SavedKid>();
-  for (const k of [...remote, ...local]) map.set(k.gameId, k);
-  const merged = [...map.values()].sort((a, b) => b.createdAt - a.createdAt);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
-  return merged;
-}
 
 /**
  * Consume an SSE response that streams `chunk` events then a `done` event.
@@ -266,7 +244,8 @@ export function useGame() {
         headers: { "Content-Type": "application/json" },
         // birthYear goes in this request only: it is never saved locally and
         // never put in a track() event.
-        body: JSON.stringify({ childName: name, relationshipType, birthYear }),
+        // campusIdentity only inside a campus web cabinet (undefined → omitted).
+        body: JSON.stringify({ childName: name, relationshipType, birthYear, campusIdentity: campusIdentity() }),
       });
       if (!res.ok) {
         const body = await res.text().catch(() => "");
@@ -274,6 +253,7 @@ export function useGame() {
         return;
       }
       const data = await res.json();
+      if (data.campus === "unknown") campusIdentityUnknown();
       if (typeof data.secret === "string") saveGameSecret(data.gameId, data.secret);
       if (typeof data.research === "boolean") saveResearchHint(data.gameId, data.research);
       setGameId(data.gameId);

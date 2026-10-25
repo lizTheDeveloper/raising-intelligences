@@ -45,7 +45,6 @@ const E = {
   ERROR: "error",
 } as const;
 
-const RESUME_KEY = "ri_resume";
 
 /**
  * How long a received `typing: true` survives without a refresh.
@@ -59,30 +58,10 @@ const RESUME_KEY = "ri_resume";
  */
 const PARTNER_TYPING_TTL = 5000;
 
-interface ResumeData {
-  gameId: string;
-  playerToken: string;
-}
-
-export function loadResume(): ResumeData | null {
-  try {
-    const raw = localStorage.getItem(RESUME_KEY);
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    if (data?.gameId && data?.playerToken) return data as ResumeData;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function saveResume(gameId: string, playerToken: string): void {
-  localStorage.setItem(RESUME_KEY, JSON.stringify({ gameId, playerToken }));
-}
-
-export function clearResume(): void {
-  localStorage.removeItem(RESUME_KEY);
-}
+// The resume credential lives in localStore.ts (guarded: storage can throw).
+export { loadResume, clearResume } from "../localStore";
+import { loadResume, saveResume, clearResume, type ResumeData } from "../localStore";
+import { campusIdentity, campusIdentityUnknown } from "../campusCabinet";
 
 /**
  * The game id the *current URL* is asking for, or null if it isn't asking for
@@ -542,13 +521,15 @@ export function useMultiplayer() {
         socket.emit(E.JOIN_GAME, {
           gameId: resume.gameId,
           playerToken: resume.playerToken,
+          campusIdentity: campusIdentity(),
         });
       }
     });
 
     socket.on("disconnect", () => setConnected(false));
 
-    socket.on(E.JOINED, (d: { gameId: string; slot: Slot; playerToken?: string }) => {
+    socket.on(E.JOINED, (d: { gameId: string; slot: Slot; playerToken?: string; campus?: string }) => {
+      if (d.campus === "unknown") campusIdentityUnknown();
       setGameId(d.gameId);
       gameIdRef.current = d.gameId;
       setSlot(d.slot);
@@ -727,7 +708,7 @@ export function useMultiplayer() {
       // began". See lastCountedRef.
       createdHereRef.current = true;
       track("setup_submitted", { mode: "multiplayer", nameProvided: !!childName.trim() });
-      ensureSocket().emit(E.CREATE_GAME, { childName, relationshipType, displayName, userId });
+      ensureSocket().emit(E.CREATE_GAME, { childName, relationshipType, displayName, userId, campusIdentity: campusIdentity() });
     },
     [ensureSocket]
   );
@@ -735,7 +716,7 @@ export function useMultiplayer() {
   const joinGame = useCallback(
     (id: string, displayName: string) => {
       const userId = window.matrixAuth?.getUserId() ?? undefined;
-      ensureSocket().emit(E.JOIN_GAME, { gameId: id, displayName, userId });
+      ensureSocket().emit(E.JOIN_GAME, { gameId: id, displayName, userId, campusIdentity: campusIdentity() });
     },
     [ensureSocket]
   );
