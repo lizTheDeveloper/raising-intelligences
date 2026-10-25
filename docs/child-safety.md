@@ -41,6 +41,7 @@ Each case holds:
 | Every IP, user agent and Matrix ID in the game's IP log, each tagged with the seat (parent1/parent2) that produced it | payload `ipHistory` and `identifiers` |
 | User agent | encrypted payload |
 | Matrix IDs of the game's players, marked **claimed, unverified** (RI has no accounts) | `identifiers` |
+| A **verified campus identity** for a seat that played in a campus web cabinet (see below) | `identifiers` (`kind: campus`, `verified: true`) |
 | Game id (text, **not** a foreign key) | `game_ref` |
 | Classifier categories, every score, and the exact model version | payload, `categories` |
 | SHA-256 of the flagged content | `content_sha256` and payload |
@@ -57,7 +58,8 @@ RI games can be multiplayer, and a device can be shared, so a case never treats 
   - For a scene-reader flag, the request that ended the scene may have come from the co-player. In that case the sender's IPs come from their seat's IP-log rows.
 - **Confirm bans only the flagged sender's verified identifiers.** Only those go in the report package.
 - Other participants appear separately in the review page, marked "not banned, not in the report". A reviewer can **Include** one, with a required reason. That choice is logged as `include_participant`, and the identifier is then banned and reported.
-- **Only verified identifiers can be banned or reported.** In RI the only verified identifiers are IPs the server observed. A Matrix `userId` is client-supplied: it is kept as evidence and labelled "claimed, unverified" in the report, but it never drives a ban, and a reviewer cannot include one. Ingest callers mark an identifier `verified: true` only when their own service authenticated it.
+- **Only verified identifiers can be banned or reported.** In RI the verified identifiers are IPs the server observed and campus identities the server verified from a campus launch pass (see "Verified campus identity"). A Matrix `userId` the client sends is client-supplied: it is kept as evidence and labelled "claimed, unverified" in the report, but it never drives a ban, and a reviewer cannot include one. Ingest callers mark an identifier `verified: true` only when their own service authenticated it.
+- **Verified and unverified sightings of one value are never merged.** Duplicates merge only within the same verification state (flagged wins, so a shared device counts as the sender's). An identifier is verified *and* flagged, and so bannable, only if one sighting was itself both. An unverified claim in the flagged seat can therefore never lend "flagged" to someone else's verified identifier seen as a participant.
 - A shared device means a shared IP. If both seats used the same IP, banning the sender's IP also blocks that device. The reviewer sees this in the IP log.
 
 ### Storage and access
@@ -72,7 +74,23 @@ RI games can be multiplayer, and a device can be shared, so a case never treats 
 
 IP, time, event, user agent and Matrix ID are recorded for every game creation (REST and socket), every multiplayer join, and **every parent message on every surface**: family chat, sidebar, adult chat and therapy, over REST and socket. The scene reader flags at scene end, so its case still gets every IP that wrote the scene.
 
+Each row's account id is either a client-claimed Matrix userId (`account_verified = false`, identifier kind `matrix`) or a seat's verified campus identity (`account_verified = true`, migration 027, identifier kind `campus`). Rows from before that migration read as unverified.
+
 **Retention: 90 days** (`CHILD_SAFETY_IP_LOG_RETENTION_DAYS`), enforced by the purge sweep. When a case opens, the game's IP-log rows are copied into the case, so they last as long as the case does.
+
+### Verified campus identity
+
+Students on campus.themultiverse.school play RI inside a "web cabinet" (an iframe; see "Campus cabinet" in the README). RI still has no accounts, but a cabinet gives the server an identity it can verify itself:
+
+1. Campus posts the framed page a launch pass: a 5-minute token signed with campus's Ed25519 key, carrying the student's campus Matrix id (`@x:themultiverse.school`). The server checks every rule of the cabinet contract (`server/src/security/campus-pass.ts`). Only after every other check passes does it spend the pass's `jti` in Postgres (`campus_pass_jti`, an atomic `INSERT … ON CONFLICT DO NOTHING`; expired rows are pruned). A replay is refused across restarts and processes.
+2. `POST /api/campus-pass` trades the pass for an opaque identity token. Only the token's SHA-256 is stored, with the campus id, in `campus_identities` (12 hours, so a restart signs nobody out). The pass itself is never stored or logged; only its `jti` is logged.
+3. The client sends the token as `campusIdentity` when it creates a game (`POST /api/game`, socket `CREATE_GAME`) or joins one (`JOIN_GAME`). The server stores the campus id on the game: `games.campus_sub` for a solo game, whose one player types for both parents, and `players.campus_sub` for each multiplayer seat.
+4. Every IP-log row for that seat (create, join, rejoin and every parent message) carries the campus id with `account_verified = true`. A case built from the IP log therefore lists it as `{ kind: "campus", value: "@x:themultiverse.school", verified: true, slot }`, flagged for the sender's seat and participant for the other seat. `campus` is its own kind, separate from the client-claimed `matrix` kind, so a claim can never merge into a verified campus id. The report package lists it with the sender's verified identifiers and sets `accountVerified: true`.
+5. **Confirming the case bans it.** It goes into `child_safety.banned_identifiers` (kind `campus`) like a banned IP. A banned campus id is refused on REST game creation (403) and on socket create, join and rejoin (`Forbidden`), even from a new IP and with a fresh pass.
+
+**A client can never claim a campus id.** A Matrix `userId` sent by the client that has the campus format (`@…:themultiverse.school`, any case) is dropped before it reaches the seat, the IP log or a case. Campus ids enter only through a verified pass. Without this, a player could claim a classmate's campus id and put it in their own flagged case.
+
+An unknown or expired identity token is ignored: the game starts anonymously, with IP-based safety as before, and the response says `campus: "unknown"` so the cabinet can ask campus for a fresh pass. A campus identity never blocks play unless it is banned.
 
 ## Retention
 

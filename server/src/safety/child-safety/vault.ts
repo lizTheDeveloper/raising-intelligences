@@ -122,12 +122,19 @@ function requireActor(actor: string): string {
   return a;
 }
 
-/** Merges duplicates: flagged beats participant (a shared device is the sender's too), verified is OR-ed. */
-function dedupeIdentifiers(ids: Identifier[]): Identifier[] {
+/**
+ * Merges duplicates: flagged beats participant (a shared device is the
+ * sender's too). Verified and unverified sightings of the same value are
+ * NEVER merged: role and verified stay paired, so an identifier is
+ * verified+flagged (bannable) only if one sighting was itself both. Otherwise
+ * an unverified claim in the flagged seat could lend "flagged" to someone
+ * else's verified id seen as a participant, and frame them into a ban.
+ */
+export function dedupeIdentifiers(ids: Identifier[]): Identifier[] {
   const byKey = new Map<string, Identifier>();
   for (const id of ids) {
     if (!id.value) continue;
-    const k = `${id.kind}:${id.value}`;
+    const k = `${id.kind}:${id.value}:${identifierVerified(id) ? "v" : "u"}`;
     const prev = byKey.get(k);
     if (!prev) {
       byKey.set(k, { ...id });
@@ -136,7 +143,6 @@ function dedupeIdentifiers(ids: Identifier[]): Identifier[] {
     byKey.set(k, {
       ...prev,
       role: prev.role === "flagged" || id.role === "flagged" ? "flagged" : "participant",
-      verified: !!(prev.verified || id.verified),
       slot: prev.role === "flagged" ? prev.slot ?? id.slot : id.role === "flagged" ? id.slot ?? prev.slot : prev.slot ?? id.slot,
     });
   }
@@ -177,13 +183,16 @@ export async function preserveEvidence(
     ...ipHistory.map((e): Identifier => ({
       kind: "ip", value: e.ip, role: senderOwns(e.slot) ? "flagged" : "participant", verified: true, slot: e.slot,
     })),
-    // Account ids: a client-claimed Matrix userId is evidence only, never a
-    // ban. A campus identity the server verified (accountVerified, from a
-    // campus launch pass) stays verified, so confirm bans it like an IP.
-    ...ipHistory.filter((e) => e.accountId).map((e): Identifier => ({
-      kind: "matrix", value: e.accountId as string, role: senderOwns(e.slot) ? "flagged" : "participant",
-      verified: e.accountVerified === true, slot: e.slot,
-    })),
+    // Account ids. A client-claimed Matrix userId (kind "matrix") is
+    // evidence only, never a ban. A campus identity the server verified from
+    // a campus launch pass (accountVerified) is its own kind, "campus", and
+    // verified, so confirm bans it like an IP. Separate kinds mean a claim
+    // can never merge into a verified campus id.
+    ...ipHistory.filter((e) => e.accountId).map((e): Identifier =>
+      e.accountVerified === true
+        ? { kind: "campus", value: e.accountId as string, role: senderOwns(e.slot) ? "flagged" : "participant", verified: true, slot: e.slot }
+        : { kind: "matrix", value: e.accountId as string, role: senderOwns(e.slot) ? "flagged" : "participant", verified: false, slot: e.slot },
+    ),
     ...(input.identifiers ?? []).map((i): Identifier => ({ ...i, role: i.role ?? "flagged", verified: i.verified ?? false })),
   ]);
   // The case's headline IP is the flagged sender's: the request IP when it is
@@ -419,7 +428,10 @@ export async function includeParticipant(
   if (!why) throw new VaultError("a reason is required to include another participant", 400);
   const c = await mustGet(store, caseId);
   if (c.status === "released") throw new VaultError("case is released", 409);
-  const i = c.identifiers.findIndex((id) => id.kind === target.kind && id.value === target.value);
+  // Prefer the verified sighting: verified and unverified ones of one value are kept apart.
+  const matches = (id: Identifier) => id.kind === target.kind && id.value === target.value;
+  const iv = c.identifiers.findIndex((id) => matches(id) && identifierVerified(id));
+  const i = iv >= 0 ? iv : c.identifiers.findIndex(matches);
   if (i < 0) throw new VaultError("that identifier is not part of this case", 404);
   const id = c.identifiers[i];
   if (!identifierVerified(id)) {

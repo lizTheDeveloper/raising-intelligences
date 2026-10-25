@@ -5,7 +5,7 @@ import { TestClient } from "./helpers/socket-client.js";
 import { claimsFor, newCampusKeyPair, signPass } from "./helpers/campus-pass-fixture.js";
 import { SOCKET_EVENTS as E } from "../src/socket/protocol.js";
 import { moderateParentMessage } from "../src/safety/moderation.js";
-import { confirmCase, viewEvidence } from "../src/safety/child-safety/vault.js";
+import { bannableIdentifiers, confirmCase, dedupeIdentifiers, viewEvidence } from "../src/safety/child-safety/vault.js";
 import { logger } from "../src/logger.js";
 import { resolveCampusIdentity } from "../src/security/campus-identity.js";
 import { buildReportPackage, reporterInfoFromEnv } from "../src/safety/child-safety/report.js";
@@ -177,19 +177,19 @@ describe("campus web cabinet (server)", () => {
 
     const c = [...server.memRepo.childSafety.cases.values()].find((x) => x.gameRef === gameId)!;
     expect(c.identifiers).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: "matrix", value: sub, verified: true, role: "flagged", slot: "parent2" }),
+      expect.objectContaining({ kind: "campus", value: sub, verified: true, role: "flagged", slot: "parent2" }),
     ]));
     const { evidence } = await viewEvidence(server.memRepo.childSafety, c.id, "reviewer", null);
     expect(evidence.ipHistory.some((h) => h.accountId === sub && h.accountVerified === true)).toBe(true);
 
     const confirmed = await confirmCase(server.memRepo.childSafety, c.id, "reviewer", null, (i, why) => server.memRepo.banIp(i, why));
-    expect(confirmed.banned).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "matrix", value: sub })]));
-    expect(await server.memRepo.childSafety.isIdentifierBanned({ kind: "matrix", value: sub })).toBe(true);
+    expect(confirmed.banned).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "campus", value: sub })]));
+    expect(await server.memRepo.childSafety.isIdentifierBanned({ kind: "campus", value: sub })).toBe(true);
 
     // The report package lists it as a verified identifier of the sender.
     const view = await viewEvidence(server.memRepo.childSafety, c.id, "reviewer", null);
     const pkg = buildReportPackage(view.case, view.evidence, reporterInfoFromEnv());
-    expect(pkg.reportedPerson.identifiers).toEqual(expect.arrayContaining([{ kind: "matrix", value: sub }]));
+    expect(pkg.reportedPerson.identifiers).toEqual(expect.arrayContaining([{ kind: "campus", value: sub }]));
     expect(pkg.reportedPerson.claimedUnverified).toEqual([]);
     expect(pkg.reportedPerson.accountVerified).toBe(true);
 
@@ -215,7 +215,7 @@ describe("campus web cabinet (server)", () => {
     expect(ja.campus).toBe("verified");
 
     const b = await socketClient(ipB);
-    const joinedB = b.once<{ gameId: string; slot: string; campus?: string }>(E.JOINED);
+    const joinedB = b.once<{ gameId: string; slot: string; playerToken: string; campus?: string }>(E.JOINED);
     b.emit(E.JOIN_GAME, { gameId: ja.gameId, displayName: "B", campusIdentity: idB });
     const jb = await joinedB;
     expect(jb.slot).toBe("parent2");
@@ -238,12 +238,12 @@ describe("campus web cabinet (server)", () => {
     vi.restoreAllMocks();
     const c = [...server.memRepo.childSafety.cases.values()].find((x) => x.gameRef === ja.gameId)!;
     expect(c.identifiers).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: "matrix", value: subB, verified: true, role: "flagged" }),
-      expect.objectContaining({ kind: "matrix", value: subA, verified: true, role: "participant" }),
+      expect.objectContaining({ kind: "campus", value: subB, verified: true, role: "flagged" }),
+      expect.objectContaining({ kind: "campus", value: subA, verified: true, role: "participant" }),
     ]));
     await confirmCase(server.memRepo.childSafety, c.id, "reviewer", null, (i, why) => server.memRepo.banIp(i, why));
-    expect(await server.memRepo.childSafety.isIdentifierBanned({ kind: "matrix", value: subB })).toBe(true);
-    expect(await server.memRepo.childSafety.isIdentifierBanned({ kind: "matrix", value: subA })).toBe(false);
+    expect(await server.memRepo.childSafety.isIdentifierBanned({ kind: "campus", value: subB })).toBe(true);
+    expect(await server.memRepo.childSafety.isIdentifierBanned({ kind: "campus", value: subA })).toBe(false);
 
     // The banned campus id can neither create nor join over the socket.
     const idB2 = await exchange(subB);
@@ -254,6 +254,68 @@ describe("campus web cabinet (server)", () => {
     const err2 = c3.once<{ error: string }>(E.ERROR);
     c3.emit(E.JOIN_GAME, { gameId: ja.gameId, campusIdentity: idB2 });
     expect((await err2).error).toBe("Forbidden");
+    // Nor can the banned seat come back with its own reconnect token, without sending any identity.
+    const err3 = c3.once<{ error: string }>(E.ERROR);
+    c3.emit(E.JOIN_GAME, { gameId: ja.gameId, playerToken: jb.playerToken });
+    expect((await err3).error).toBe("Forbidden");
+  });
+
+  it("security: claiming a co-player's campus id never frames them into a ban", async () => {
+    const victim = "@victim:themultiverse.school";
+    // The attacker creates a game claiming the victim's campus id as a plain userId…
+    const atk = await socketClient();
+    const aJoined = atk.once<{ gameId: string }>(E.JOINED);
+    atk.emit(E.CREATE_GAME, { childName: "Testkid", userId: victim });
+    const ag = await aJoined;
+    // …and the victim joins it with their real, verified campus identity.
+    const idV = await exchange(victim);
+    const v = await socketClient();
+    const vJoined = v.once<{ slot: string; campus?: string }>(E.JOINED);
+    v.emit(E.JOIN_GAME, { gameId: ag.gameId, campusIdentity: idV });
+    expect(await vJoined).toMatchObject({ slot: "parent2", campus: "verified" });
+    // An any-case variant of a campus id is dropped as a claim too.
+    const atk2 = await socketClient();
+    const e2 = atk2.once<{ gameId: string }>(E.JOINED);
+    atk2.emit(E.CREATE_GAME, { childName: "Testkid", userId: "@Victim:TheMultiverse.School" });
+    const g2 = await e2;
+    expect((await server.memRepo.loadPlayers(g2.gameId))[0].userId).toBeUndefined();
+
+    // The claim never reached the attacker's seat or the IP log.
+    expect((await server.memRepo.loadPlayers(ag.gameId)).find((p) => p.slot === "parent1")?.userId).toBeUndefined();
+
+    // The attacker (parent1) is flagged.
+    const state = server.games.get(ag.gameId)!;
+    mockModerationFlag();
+    await moderateParentMessage({ repo: server.memRepo, games: server.games, state, sender: "parent1", content: FIXTURE, ipAddress: "198.51.100.230" });
+    vi.restoreAllMocks();
+    const c = [...server.memRepo.childSafety.cases.values()].find((x) => x.gameRef === ag.gameId)!;
+    // The victim appears only as a verified participant, never flagged.
+    const victimIds = c.identifiers.filter((i) => i.value.toLowerCase() === victim);
+    expect(victimIds).toEqual([expect.objectContaining({ kind: "campus", role: "participant", verified: true })]);
+    expect(bannableIdentifiers(c).some((i) => i.value.toLowerCase() === victim)).toBe(false);
+    await confirmCase(server.memRepo.childSafety, c.id, "reviewer", null, async () => {});
+    expect(await server.memRepo.childSafety.isIdentifierBanned({ kind: "campus", value: victim })).toBe(false);
+    expect(await server.memRepo.childSafety.isIdentifierBanned({ kind: "matrix", value: victim })).toBe(false);
+    // The victim can still start games.
+    expect((await post("/api/game", { childName: "Testkid", campusIdentity: idV })).status).toBe(200);
+  });
+
+  it("a seat that joined before its cabinet sign-in finished takes the campus id on rejoin", async () => {
+    const sub = "@late-sign-in:themultiverse.school";
+    const a = await socketClient();
+    const joined = a.once<{ gameId: string; slot: string; playerToken: string; campus?: string }>(E.JOINED);
+    a.emit(E.CREATE_GAME, { childName: "Testkid" });
+    const j = await joined;
+    expect(j.campus).toBeUndefined();
+    expect(await server.memRepo.campusSubForSeat(j.gameId, "parent1")).toBeNull();
+    const identity = await exchange(sub);
+    const a2 = await socketClient();
+    const rejoined = a2.once<{ slot: string; campus?: string }>(E.JOINED);
+    a2.emit(E.JOIN_GAME, { gameId: j.gameId, playerToken: j.playerToken, campusIdentity: identity });
+    expect(await rejoined).toMatchObject({ slot: "parent1", campus: "verified" });
+    expect(await server.memRepo.campusSubForSeat(j.gameId, "parent1")).toBe(sub);
+    const rows = await server.memRepo.childSafety.ipLogForGame(j.gameId, 0);
+    expect(rows.at(-1)).toMatchObject({ event: "socket_rejoin", accountId: sub, accountVerified: true });
   });
 
   it("a client-claimed userId stays unverified (and an unknown identity is reported back on the socket)", async () => {
@@ -276,5 +338,24 @@ describe("campus web cabinet (server)", () => {
     expect(matrix).toEqual([expect.objectContaining({ value: claimed, verified: false })]);
     await confirmCase(server.memRepo.childSafety, c.id, "reviewer", null, async () => {});
     expect(await server.memRepo.childSafety.isIdentifierBanned({ kind: "matrix", value: claimed })).toBe(false);
+  });
+});
+
+describe("identifier dedupe keeps role and verified paired", () => {
+  it("an unverified flagged sighting never makes a verified participant bannable", () => {
+    const merged = dedupeIdentifiers([
+      { kind: "campus", value: "@v:themultiverse.school", role: "participant", verified: true, slot: "parent2" },
+      { kind: "campus", value: "@v:themultiverse.school", role: "flagged", verified: false, slot: "parent1" },
+    ]);
+    expect(bannableIdentifiers({ identifiers: merged, ipAddress: null })).toEqual([]);
+    expect(merged).toHaveLength(2);
+  });
+
+  it("verified sightings still merge, flagged winning (a shared device is the sender's too)", () => {
+    const merged = dedupeIdentifiers([
+      { kind: "ip", value: "198.51.100.5", role: "participant", verified: true, slot: "parent2" },
+      { kind: "ip", value: "198.51.100.5", role: "flagged", verified: true, slot: "parent1" },
+    ]);
+    expect(merged).toEqual([expect.objectContaining({ role: "flagged", verified: true, slot: "parent1" })]);
   });
 });

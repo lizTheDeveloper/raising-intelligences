@@ -15,12 +15,22 @@ CREATE TABLE IF NOT EXISTS campus_identities (
 );
 CREATE INDEX IF NOT EXISTS idx_campus_identities_expires ON campus_identities (expires_at);
 
+-- Spent campus pass jtis, so a pass is single-use across restarts and
+-- processes. Rows are kept until the pass expires (≤ 5 minutes), then pruned.
+CREATE TABLE IF NOT EXISTS campus_pass_jti (
+  jti     TEXT        PRIMARY KEY,
+  exp_at  TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_campus_pass_jti_exp ON campus_pass_jti (exp_at);
+
 -- The verified campus id behind a game. games.campus_sub is the creator of a
 -- solo (seatless) game, who types for both parents; players.campus_sub is a
 -- multiplayer seat's own. Both go with their row on deletion.
 ALTER TABLE games ADD COLUMN IF NOT EXISTS campus_sub TEXT;
 ALTER TABLE players ADD COLUMN IF NOT EXISTS campus_sub TEXT;
 
--- An IP-log account id the server verified itself (a campus identity), as
--- opposed to a client-claimed Matrix userId. Only verified ids can be banned.
+-- An IP-log account id the server verified itself (a campus identity from a
+-- launch pass), as opposed to a client-claimed Matrix userId. A verified row
+-- becomes a vault identifier of kind 'campus' (bannable); an unverified one
+-- kind 'matrix' (evidence only).
 ALTER TABLE child_safety.ip_log ADD COLUMN IF NOT EXISTS account_verified BOOLEAN NOT NULL DEFAULT false;

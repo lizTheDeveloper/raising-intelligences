@@ -16,6 +16,26 @@ import type { GameRepository } from "../db/repository.js";
 import { logger } from "../logger.js";
 
 export const CAMPUS_IDENTITY_TTL_MS = 12 * 60 * 60 * 1000;
+/**
+ * The vault identifier kind for a campus id verified from a launch pass.
+ * Distinct from "matrix" (client-claimed, unverified) so the two can never
+ * be confused or merged.
+ */
+export const CAMPUS_KIND = "campus";
+/** Campus Matrix ids, any case. A client may never claim one (see sanitizeClaimedUserId). */
+const CAMPUS_SUB_ANY_CASE_RE = /^@[a-z0-9._=\-/+]{1,255}:themultiverse\.school$/i;
+
+/**
+ * A client-claimed Matrix userId, or undefined if it looks like a campus id:
+ * those enter only through a verified pass, never as a claim (a claim of
+ * someone else's campus id must not even reach the evidence record).
+ */
+export function sanitizeClaimedUserId(userId: unknown): string | undefined {
+  if (typeof userId !== "string") return undefined;
+  const v = userId.trim();
+  if (!v || CAMPUS_SUB_ANY_CASE_RE.test(v)) return undefined;
+  return v;
+}
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 
 export interface CampusIdentity { sub: string; name: string }
@@ -61,7 +81,7 @@ export async function campusIdentityForRequest(
 /** Whether a confirmed child-safety case banned this campus id. Fails open on a storage error, like the IP ban check. */
 export async function isCampusSubBanned(repo: GameRepository, sub: string | null): Promise<boolean> {
   if (!sub) return false;
-  return repo.childSafety.isIdentifierBanned({ kind: "matrix", value: sub }).catch((err) => {
+  return repo.childSafety.isIdentifierBanned({ kind: CAMPUS_KIND, value: sub }).catch((err) => {
     logger.error("campus_ban_check_failed", { error: err instanceof Error ? err.message : String(err) });
     return false;
   });

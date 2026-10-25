@@ -17,7 +17,7 @@ export function createCampusRoutes(repo: GameRepository, opts: { limit?: Request
   const router = Router();
   router.post("/campus-pass", ...(opts.limit ? [opts.limit] : []), async (req: Request, res: Response) => {
     const pass = (req.body as { pass?: unknown } | undefined)?.pass;
-    const verified = typeof pass === "string" ? verifyCampusPass(pass, { audience: CAMPUS_PASS_AUDIENCE }) : null;
+    const verified = typeof pass === "string" ? await verifyCampusPass(pass, { audience: CAMPUS_PASS_AUDIENCE, jtiStore: repo }) : null;
     if (!verified) {
       res.status(400).json({ error: "pass_refused" });
       return;

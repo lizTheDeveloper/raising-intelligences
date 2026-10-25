@@ -57,7 +57,7 @@ import {
 import { generatePersonalitySeed } from "../game/personality.js";
 import { moderateParentMessage, applyModerationBlock, recordConcern } from "../safety/moderation.js";
 import { logIp } from "../safety/child-safety/vault.js";
-import { campusIdentityForRequest, isCampusSubBanned } from "../security/campus-identity.js";
+import { campusIdentityForRequest, isCampusSubBanned, sanitizeClaimedUserId } from "../security/campus-identity.js";
 import { evaluateEscalation } from "../safety/escalation.js";
 import { getSocketIp } from "../lib/client-ip.js";
 import { buildSceneTranscript } from "../game/context-assembler.js";
@@ -198,6 +198,8 @@ function seatAccount(player: { campusSub?: string }, claimedUserId: string | und
     ? { accountId: player.campusSub, accountVerified: true }
     : { accountId: claimedUserId ?? null, accountVerified: false };
 }
+
+const NO_CAMPUS: { sub: string | null; status?: "verified" | "unknown" } = { sub: null };
 
 /** JOINED's `campus` field: only when an identity was sent ("unknown" → the cabinet asks campus for a new pass). */
 function campusField(campus: { status?: "verified" | "unknown" }): { campus?: "verified" | "unknown" } {
@@ -636,13 +638,19 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     // ---- CREATE_GAME ----
     socket.on(E.CREATE_GAME, async (payload: CreateGamePayload) => {
       if (!payload?.childName) return fail("childName is required");
-      if (payload.userId && (await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: payload.userId }).catch(() => false))) {
+      // A claimed userId that looks like a campus id is dropped: campus ids
+      // only ever come from a verified pass (campusIdentity).
+      const claimedUserId = sanitizeClaimedUserId(payload.userId);
+      if (claimedUserId && (await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: claimedUserId }).catch(() => false))) {
         return fail("Forbidden");
       }
       // Web cabinets: a verified campus id, refused if a confirmed case banned
       // it. Unknown/expired identities are ignored (anonymous play).
-      const campus = await campusIdentityForRequest(repo, payload.campusIdentity);
-      if (await isCampusSubBanned(repo, campus.sub)) return fail("Forbidden");
+      // No await at all when no identity was sent: these handlers are
+      // ordering-sensitive (see the handoff note above), and anonymous play
+      // must behave exactly as before.
+      const campus = payload.campusIdentity ? await campusIdentityForRequest(repo, payload.campusIdentity) : NO_CAMPUS;
+      if (campus.sub && (await isCampusSubBanned(repo, campus.sub))) return fail("Forbidden");
       const state = createGame(payload.childName, payload.relationshipType);
       games.set(state.id, state);
       await repo.saveGame(state);
@@ -652,12 +660,12 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       await repo.recordGameIp(state.id, getSocketIp(socket));
 
       let session = createSession(state.id);
-      const added = addPlayer(session, socket.id, payload.displayName, payload.userId, campus.sub ?? undefined);
+      const added = addPlayer(session, socket.id, payload.displayName, claimedUserId, campus.sub ?? undefined);
       session = added.session;
       sessions.set(state.id, session);
       await logIp(repo.childSafety, {
         ip: getSocketIp(socket), gameRef: state.id, event: "socket_create", slot: added.player.slot,
-        userAgent: socket.handshake.headers["user-agent"] ?? null, ...seatAccount(added.player, payload.userId),
+        userAgent: socket.handshake.headers["user-agent"] ?? null, ...seatAccount(added.player, claimedUserId),
       });
 
       data.gameId = state.id;
@@ -675,6 +683,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     socket.on(E.JOIN_GAME, async (payload: JoinGamePayload) => {
       const gameId = payload?.gameId;
       if (!gameId) return fail("gameId is required");
+      const claimedUserId = sanitizeClaimedUserId(payload.userId);
 
       // Redeem a device-handoff code FIRST, and synchronously — before the
       // first await in this handler. Single-use has to mean single-use under
@@ -691,12 +700,15 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
       // A Matrix ID banned by a confirmed child-safety case cannot join.
       // (Matrix IDs are unverified; the IP ban is the stronger control.)
-      if (payload.userId && (await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: payload.userId }).catch(() => false))) {
+      if (claimedUserId && (await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: claimedUserId }).catch(() => false))) {
         return fail("Forbidden");
       }
       // A campus id is verified, so its ban is the strong control here.
-      const campus = await campusIdentityForRequest(repo, payload.campusIdentity);
-      if (await isCampusSubBanned(repo, campus.sub)) return fail("Forbidden");
+      // No await at all when no identity was sent: these handlers are
+      // ordering-sensitive (see the handoff note above), and anonymous play
+      // must behave exactly as before.
+      const campus = payload.campusIdentity ? await campusIdentityForRequest(repo, payload.campusIdentity) : NO_CAMPUS;
+      if (campus.sub && (await isCampusSubBanned(repo, campus.sub))) return fail("Forbidden");
 
       // Load game state if not in memory
       let state = games.get(gameId);
@@ -770,6 +782,8 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         // The slot has no player record at all: the game was reset or the
         // players row is gone. Nothing to hand off to.
         if (!player) return fail(HANDOFF_REJECTED);
+        // A seat whose verified campus id is banned can't move to a new device either.
+        if (player.campusSub && (await isCampusSubBanned(repo, player.campusSub))) return fail("Forbidden");
 
         supersedeActiveSocket(player, socket.id);
         const moved = reconnectPlayer(session, player.token, socket.id);
@@ -796,7 +810,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         const existing = getPlayerByToken(session, payload.playerToken);
         if (existing) {
           // The seat's own verified campus id is banned: no way back in.
-          if (await isCampusSubBanned(repo, existing.campusSub ?? null)) return fail("Forbidden");
+          if (existing.campusSub && (await isCampusSubBanned(repo, existing.campusSub))) return fail("Forbidden");
           // Symmetry with the handoff path: if a *live* socket currently holds
           // this slot, it is being taken over and must be told. This is what
           // makes the reverse direction (taking the game back on the device you
@@ -838,7 +852,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       // New player: assign to first free slot
       let added;
       try {
-        added = addPlayer(session, socket.id, payload.displayName, payload.userId, campus.sub ?? undefined);
+        added = addPlayer(session, socket.id, payload.displayName, claimedUserId, campus.sub ?? undefined);
       } catch {
         return fail("This game already has two players");
       }

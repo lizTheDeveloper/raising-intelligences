@@ -7,6 +7,8 @@ import { confirmCase, dismissCase, logIp, purgeExpired, viewEvidence } from "../
 import { backfillLegacyFlags } from "../src/safety/child-safety/maintenance.js";
 import { moderateParentMessage } from "../src/safety/moderation.js";
 import { issueCampusIdentity, resolveCampusIdentity } from "../src/security/campus-identity.js";
+import { verifyCampusPass } from "../src/security/campus-pass.js";
+import { claimsFor, newCampusKeyPair, signPass } from "./helpers/campus-pass-fixture.js";
 import { buildServer } from "../src/app.js";
 import type { LLMClient } from "../src/llm/client.js";
 import type { AddressInfo } from "node:net";
@@ -139,6 +141,25 @@ describe.skipIf(!process.env.DATABASE_URL)("child-safety vault on Postgres", () 
       expect(await resolveCampusIdentity(afterRestart, token, Date.now() + 13 * 60 * 60 * 1000)).toBeNull();
     });
 
+    it("a spent pass jti is refused by a fresh verifier on the same database (restart / second process)", async () => {
+      const keys = newCampusKeyPair();
+      const c = claimsFor();
+      const pass = signPass(c, keys.privateKeyB64);
+      const o = { publicKeyB64: keys.publicKeyB64, audience: "raising-intelligences" };
+      expect(await verifyCampusPass(pass, { ...o, jtiStore: repo })).not.toBeNull();
+      const fresh = new PgGameRepository(pool);
+      expect(await verifyCampusPass(pass, { ...o, jtiStore: fresh })).toBeNull();
+      const { rows } = await pool.query(`SELECT exp_at FROM campus_pass_jti WHERE jti = $1`, [c.jti]);
+      expect(new Date(rows[0].exp_at).getTime()).toBe(c.exp * 1000);
+      // Concurrent spends of one jti: exactly one wins.
+      const c2 = claimsFor();
+      const results = await Promise.all([1, 2, 3].map(() => new PgGameRepository(pool).consumeCampusPassJti(c2.jti, c2.exp * 1000, Date.now())));
+      expect(results.filter(Boolean)).toHaveLength(1);
+      // Expired rows are pruned.
+      await fresh.consumeCampusPassJti(claimsFor().jti, c.exp * 1000, c.exp * 1000 + 1);
+      expect((await pool.query(`SELECT 1 FROM campus_pass_jti WHERE jti = $1`, [c.jti])).rows).toHaveLength(0);
+    });
+
     it("legacy IP-log rows read back unverified", async () => {
       const state = createGame("PgLegacyIp");
       await repo.saveGame(state);
@@ -182,13 +203,13 @@ describe.skipIf(!process.env.DATABASE_URL)("child-safety vault on Postgres", () 
         expect(cases).toHaveLength(1);
         const row = (await repo.childSafety.getCase(cases[0].id))!;
         expect(row.identifiers).toEqual(expect.arrayContaining([
-          expect.objectContaining({ kind: "matrix", value: sub, verified: true, role: "flagged" }),
+          expect.objectContaining({ kind: "campus", value: sub, verified: true, role: "flagged" }),
           expect.objectContaining({ kind: "matrix", value: "@pg-claimed:matrix.example", verified: false }),
         ]));
 
         const confirmed = await confirmCase(repo.childSafety, row.id, "pg-reviewer", null, (ip, why) => repo.banIp(ip, why));
-        expect(confirmed.banned.map((b) => `${b.kind}:${b.value}`)).toContain(`matrix:${sub}`);
-        expect(await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: sub })).toBe(true);
+        expect(confirmed.banned.map((b) => `${b.kind}:${b.value}`)).toContain(`campus:${sub}`);
+        expect(await repo.childSafety.isIdentifierBanned({ kind: "campus", value: sub })).toBe(true);
         expect(await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: "@pg-claimed:matrix.example" })).toBe(false);
 
         const again = await issueCampusIdentity(repo, { sub, name: "PG Synthetic" });

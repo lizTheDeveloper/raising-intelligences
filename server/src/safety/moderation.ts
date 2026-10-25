@@ -1,6 +1,7 @@
 import type { GameRepository } from "../db/repository.js";
 import type { GameState, Sender } from "../types.js";
 import { logger } from "../logger.js";
+import { sanitizeClaimedUserId } from "../security/campus-identity.js";
 import {
   checkOpenAiModeration,
   CHILD_SAFETY_CATEGORIES,
@@ -133,7 +134,9 @@ async function preserveFlagEvidence(params: {
     let identifiers: Identifier[] = [];
     try {
       const players = await repo.loadPlayers(state.id);
-      identifiers = players.filter((p) => p.userId).map((p) => ({
+      // A stored userId shaped like a campus id is never trusted as a claim
+      // (only a verified pass yields a campus id; see sanitizeClaimedUserId).
+      identifiers = players.filter((p) => sanitizeClaimedUserId(p.userId)).map((p) => ({
         kind: "matrix", value: p.userId as string, verified: false, slot: p.slot,
         role: p.slot === sender ? ("flagged" as const) : ("participant" as const),
       }));

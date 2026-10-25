@@ -25,16 +25,13 @@ const B64URL_RE = /^[A-Za-z0-9_-]+$/;
 
 export interface CampusPassIdentity { sub: string; name: string; jti: string }
 
-/** jti → exp (ms). A jti is remembered until its pass expires. */
-const seenJtis = new Map<string, number>();
-
-/** For tests. */
-export function resetSeenJtis(): void {
-  seenJtis.clear();
-}
-
-function pruneSeen(nowMs: number): void {
-  for (const [jti, expMs] of seenJtis) if (expMs <= nowMs) seenJtis.delete(jti);
+/**
+ * Where consumed jtis live. Persistent and shared (Postgres
+ * `campus_pass_jti`), so a replay is refused across restarts and processes.
+ * `consume` is atomic: true only for the call that recorded the jti.
+ */
+export interface CampusPassJtiStore {
+  consumeCampusPassJti(jti: string, expMs: number, nowMs: number): Promise<boolean>;
 }
 
 export function campusPassPublicKey(): string {
@@ -42,13 +39,13 @@ export function campusPassPublicKey(): string {
 }
 
 /**
- * Every check of the cabinet contract; null on any failure. A pass that
- * passes is consumed: its jti is refused from then until it expires.
+ * Every check of the cabinet contract except replay; null on any failure.
+ * Pure: consumes nothing. Use verifyCampusPass to also spend the jti.
  */
-export function verifyCampusPass(
+export function checkCampusPass(
   token: string,
   opts: { publicKeyB64?: string; audience: string; nowMs?: number },
-): CampusPassIdentity | null {
+): (CampusPassIdentity & { expMs: number }) | null {
   if (typeof token !== "string" || !token.startsWith(CAMPUS_PASS_PREFIX)) return null;
   const parts = token.slice(CAMPUS_PASS_PREFIX.length).split(".");
   if (parts.length !== 2) return null;
@@ -73,11 +70,24 @@ export function verifyCampusPass(
     const iat = c.iat as number;
     const exp = c.exp as number;
     if (exp - iat > CAMPUS_PASS_MAX_TTL_S || !(nowS < exp) || iat > nowS + IAT_SKEW_S) return null;
-    pruneSeen(nowMs);
-    if (seenJtis.has(c.jti)) return null;
-    seenJtis.set(c.jti, exp * 1000);
-    return { sub: c.sub, name: c.name, jti: c.jti };
+    return { sub: c.sub, name: c.name, jti: c.jti, expMs: exp * 1000 };
   } catch {
     return null;
   }
+}
+
+/**
+ * Every check of the cabinet contract, then — only if all pass — spends the
+ * jti in the persistent store. A jti already spent (by this process or any
+ * other, before or after a restart) is refused until its pass expires.
+ */
+export async function verifyCampusPass(
+  token: string,
+  opts: { publicKeyB64?: string; audience: string; nowMs?: number; jtiStore: CampusPassJtiStore },
+): Promise<CampusPassIdentity | null> {
+  const nowMs = opts.nowMs ?? Date.now();
+  const checked = checkCampusPass(token, { ...opts, nowMs });
+  if (!checked) return null;
+  if (!(await opts.jtiStore.consumeCampusPassJti(checked.jti, checked.expMs, nowMs))) return null;
+  return { sub: checked.sub, name: checked.name, jti: checked.jti };
 }

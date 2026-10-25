@@ -91,6 +91,12 @@ export interface GameRepository {
   saveCampusIdentity(tokenHash: string, rec: { sub: string; name: string; expiresAt: number }, nowMs: number): Promise<void>;
   /** The campus id behind an unexpired identity token hash, or null. */
   loadCampusIdentity(tokenHash: string, nowMs: number): Promise<{ sub: string; name: string } | null>;
+  /**
+   * Spends a campus pass jti (table campus_pass_jti; expired rows pruned).
+   * Atomic: true only for the call that inserted it, so a replay — from any
+   * process, before or after a restart — is refused until the pass expires.
+   */
+  consumeCampusPassJti(jti: string, expMs: number, nowMs: number): Promise<boolean>;
   /** The verified campus id of a solo game's creator (`games.campus_sub`). */
   recordGameCampusSub(gameId: string, sub: string): Promise<void>;
   /**
@@ -487,6 +493,15 @@ export class PgGameRepository implements GameRepository {
       [tokenHash, new Date(nowMs)]
     );
     return rows[0] ? { sub: rows[0].sub, name: rows[0].name } : null;
+  }
+
+  async consumeCampusPassJti(jti: string, expMs: number, nowMs: number): Promise<boolean> {
+    await this.db.query(`DELETE FROM campus_pass_jti WHERE exp_at <= $1`, [new Date(nowMs)]);
+    const r = await this.db.query(
+      `INSERT INTO campus_pass_jti (jti, exp_at) VALUES ($1, $2) ON CONFLICT (jti) DO NOTHING`,
+      [jti, new Date(expMs)]
+    );
+    return r.rowCount === 1;
   }
 
   async recordGameCampusSub(gameId: string, sub: string): Promise<void> {
@@ -1164,6 +1179,7 @@ export class InMemoryGameRepository implements GameRepository {
   // games.campus_sub, kept beside the row for the same reason as gameIpAddresses.
   private gameCampusSubs = new Map<string, string>();
   private campusIdentities = new Map<string, { sub: string; name: string; expiresAt: number }>();
+  private campusPassJtis = new Map<string, number>();
   // Self-reported age classification; under-18 entries carry birthYear null.
   private gameAges = new Map<string, { birthYear: number | null; isAdult: boolean }>();
   private accessSecretHashes = new Map<string, string>();
@@ -1253,6 +1269,13 @@ export class InMemoryGameRepository implements GameRepository {
   async loadCampusIdentity(tokenHash: string, nowMs: number): Promise<{ sub: string; name: string } | null> {
     const rec = this.campusIdentities.get(tokenHash);
     return rec && rec.expiresAt > nowMs ? { sub: rec.sub, name: rec.name } : null;
+  }
+
+  async consumeCampusPassJti(jti: string, expMs: number, nowMs: number): Promise<boolean> {
+    for (const [k, exp] of [...this.campusPassJtis]) if (exp <= nowMs) this.campusPassJtis.delete(k);
+    if (this.campusPassJtis.has(jti)) return false;
+    this.campusPassJtis.set(jti, expMs);
+    return true;
   }
 
   async recordGameCampusSub(gameId: string, sub: string): Promise<void> {
