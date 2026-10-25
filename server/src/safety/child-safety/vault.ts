@@ -526,3 +526,50 @@ export async function logIp(
     logger.error("child_safety_ip_log_failed", { error: err instanceof Error ? err.message : String(err) });
   }
 }
+
+// ── Suppressed-burst samples: reviewer-added report details ──────────────────
+
+const SAMPLE_DETAIL = /^sample:(\d+):(ipAddress|userAgent) — /;
+
+/** The sample details reviewers added to the report, from the access log. */
+export function sampleInclusions(log: Array<{ action: string; detail: string | null }>): Set<string> {
+  const out = new Set<string>();
+  for (const e of log) {
+    if (e.action !== "include_sample_detail" || !e.detail) continue;
+    const m = SAMPLE_DETAIL.exec(e.detail);
+    if (m) out.add(`${m[1]}:${m[2]}`);
+  }
+  return out;
+}
+
+/**
+ * Add a suppressed-burst sample's IP or user agent to the report package,
+ * with a reason (logged). An IP only when it is a verified IP identifier of
+ * that sample's own sender.
+ */
+export async function includeSampleDetail(
+  store: ChildSafetyStore,
+  caseId: string,
+  actor: string,
+  actorIp: string | null,
+  target: { sample: number; field: "ipAddress" | "userAgent" },
+  reason: string,
+  now: number = Date.now(),
+): Promise<{ included: string }> {
+  const who = requireActor(actor);
+  const why = (reason ?? "").trim();
+  if (!why) throw new VaultError("a reason is required to add a sample's details to the report", 400);
+  const c = await mustGet(store, caseId);
+  const e = JSON.parse(decryptEvidence(c.keyId, c.ciphertext)) as EvidencePayload;
+  const samples = (e.extra?.suppressedBurst as { samples?: Array<{ ipAddress: string | null; userAgent: string | null; identifiers: Identifier[] }> } | undefined)?.samples ?? [];
+  const smp = samples[target.sample];
+  if (!smp) throw new VaultError("no such sample", 404);
+  if (target.field === "ipAddress") {
+    const ok = !!smp.ipAddress && smp.identifiers.some((i) => i.kind === "ip" && i.value === smp.ipAddress && i.verified === true && !i.role);
+    if (!ok) throw new VaultError("that sample's IP is not a verified identifier of its own sender", 422);
+  } else if (!smp.userAgent) {
+    throw new VaultError("that sample has no user agent", 404);
+  }
+  await store.appendAccess({ caseId, actor: who, action: "include_sample_detail", actorIp, detail: `sample:${target.sample}:${target.field} — ${why.slice(0, 400)}`, at: now });
+  return { included: `${target.sample}:${target.field}` };
+}

@@ -520,8 +520,25 @@ describe("child-safety review queue (HTTP)", () => {
     });
     const id2 = (await res2.json()).caseId;
     const view2 = await (await fetch(`${server.baseUrl}/api/admin/child-safety/cases/${id2}/view`, { method: "POST", headers: h() })).json();
-    expect(view2.evidence.extra.suppressedBurst.samples).toEqual([sample]);
+    const stored = view2.evidence.extra.suppressedBurst.samples;
+    expect(stored).toHaveLength(1);
+    // RI computes the hash of what it stores; the sender's is kept apart, unverified.
+    expect(stored[0].contentSha256).toBe(createHash("sha256").update(FIXTURE).digest("hex"));
+    expect(stored[0].claimedSha256).toBe("b".repeat(64));
+    expect(stored[0]).toMatchObject({ truncated: false, originalLength: FIXTURE.length, ipAddress: "198.51.100.92", identifiers: sample.identifiers });
     expect(view2.evidence.content).toContain("1 of them are kept in full");
+
+    // Over-long sample content is stored truncated and labelled.
+    const long = "L".repeat(70_000);
+    const res3 = await ingest({
+      source: "whispers", recordKind: "suppressed_burst", externalRef: "burst-long", identifiers: [{ kind: "ip", value: "198.51.100.93", verified: true }], ipAddress: "198.51.100.93",
+      suppressedBurst: { key: { kind: "ip", value: "198.51.100.93" }, count: 1, firstAt: 1, lastAt: 1, samples: [{ ...sample, content: long, originalLength: 90_000 }] },
+    });
+    const v3 = await (await fetch(`${server.baseUrl}/api/admin/child-safety/cases/${(await res3.json()).caseId}/view`, { method: "POST", headers: h() })).json();
+    const ls = v3.evidence.extra.suppressedBurst.samples[0];
+    expect(ls.content.length).toBe(60_000);
+    expect(ls).toMatchObject({ truncated: true, originalLength: 90_000, claimedSha256: "b".repeat(64) });
+    expect(ls.contentSha256).toBe(createHash("sha256").update("L".repeat(60_000)).digest("hex"));
     // Malformed bursts are refused.
     expect((await ingest({ source: "whispers", recordKind: "suppressed_burst", externalRef: "burst-2", suppressedBurst: { count: 0 } })).status).toBe(400);
     expect((await ingest({ source: "whispers", recordKind: "other", content: "x", externalRef: "burst-3" })).status).toBe(400);
@@ -541,6 +558,41 @@ describe("child-safety review queue (HTTP)", () => {
     });
     expect(authed.status).toBeGreaterThanOrEqual(400);
     expect(server.memRepo.childSafety.cases.size).toBe(before);
+  });
+
+  it("report package: a sample's IP and user agent stay out unless a reviewer adds them; unverified IPs never", async () => {
+    const own = [{ kind: "whispers_seat", value: "seat-9", verified: true }, { kind: "ip", value: "198.51.100.94", verified: true }, { kind: "whispers_player_name", value: "Nine", verified: false }, { kind: "ip", value: "198.51.100.99", verified: true, role: "participant" }];
+    const res = await ingest({
+      source: "whispers", recordKind: "suppressed_burst", externalRef: "burst-r", identifiers: [{ kind: "ip", value: "198.51.100.94", verified: true }], ipAddress: "198.51.100.94",
+      suppressedBurst: {
+        key: { kind: "ip", value: "198.51.100.94" }, count: 2, firstAt: 1, lastAt: 2,
+        samples: [
+          { incidentAt: 1, content: FIXTURE, contentSha256: "c".repeat(64), ipAddress: "198.51.100.94", userAgent: "UA-1", gameRef: "w-9", identifiers: own },
+          { incidentAt: 2, content: FIXTURE, contentSha256: "d".repeat(64), ipAddress: "198.51.100.98", userAgent: "UA-2", gameRef: "w-9", identifiers: [{ kind: "ip", value: "198.51.100.98", verified: false }] },
+        ],
+      },
+    });
+    const caseId = (await res.json()).caseId;
+    await fetch(`${server.baseUrl}/api/admin/child-safety/cases/${caseId}/confirm`, { method: "POST", headers: h() });
+    const pkg1 = await (await fetch(`${server.baseUrl}/api/admin/child-safety/cases/${caseId}/report`, { method: "POST", headers: h() })).json();
+    const s0 = pkg1.content.suppressedSamples[0];
+    expect(s0.ipAddress).toBeUndefined();
+    expect(s0.userAgent).toBeUndefined();
+    expect(s0.identifiers).toEqual([{ kind: "whispers_seat", value: "seat-9" }]);
+    expect(s0.claimedUnverified).toEqual([{ kind: "whispers_player_name", value: "Nine" }]);
+    expect(JSON.stringify(pkg1.content.suppressedSamples)).not.toContain("198.51.100.99"); // participants never
+    expect(s0.claimedSha256Unverified).toBe("c".repeat(64));
+
+    const add = (body: unknown) => fetch(`${server.baseUrl}/api/admin/child-safety/cases/${caseId}/include-sample-detail`, { method: "POST", headers: h(), body: JSON.stringify(body) });
+    expect((await add({ sample: 0, field: "ipAddress" })).status).toBe(400); // a reason is required
+    expect((await add({ sample: 1, field: "ipAddress", reason: "x" })).status).toBe(422); // unverified IP: never
+    expect((await add({ sample: 0, field: "ipAddress", reason: "same household device, see transcript" })).status).toBe(200);
+    expect((await add({ sample: 0, field: "userAgent", reason: "device match" })).status).toBe(200);
+    const pkg2 = await (await fetch(`${server.baseUrl}/api/admin/child-safety/cases/${caseId}/report`, { method: "POST", headers: h() })).json();
+    expect(pkg2.content.suppressedSamples[0]).toMatchObject({ ipAddress: "198.51.100.94", userAgent: "UA-1" });
+    expect(pkg2.content.suppressedSamples[1].ipAddress).toBeUndefined();
+    const log = await (await fetch(`${server.baseUrl}/api/admin/child-safety/cases/${caseId}/access-log`, { headers: h() })).json();
+    expect(JSON.stringify(log)).toContain("include_sample_detail");
   });
 
   it("ingest takes whole passages up to 500k characters, and refuses more rather than cutting", async () => {

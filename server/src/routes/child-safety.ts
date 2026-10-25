@@ -1,6 +1,6 @@
 import express, { Router } from "express";
 import type { Request, Response, NextFunction } from "express";
-import { timingSafeEqual } from "node:crypto";
+import { timingSafeEqual, createHash } from "node:crypto";
 import rateLimit from "express-rate-limit";
 import type { GameRepository } from "../db/repository.js";
 import type { GameState } from "../types.js";
@@ -15,6 +15,8 @@ import {
   deleteTestCase,
   dismissCase,
   includeParticipant,
+  includeSampleDetail,
+  sampleInclusions,
   listCases,
   logIp,
   markReported,
@@ -122,6 +124,18 @@ export function createChildSafetyAdminRoutes(repo: GameRepository): Router {
     }
   });
 
+  // A suppressed-burst sample's IP or user agent is left out of the report
+  // package unless a reviewer adds it, with a reason (logged).
+  router.post("/admin/child-safety/cases/:id/include-sample-detail", async (req, res) => {
+    try {
+      const b = (req.body ?? {}) as { sample?: unknown; field?: unknown; reason?: unknown };
+      if (typeof b.sample !== "number" || (b.field !== "ipAddress" && b.field !== "userAgent")) throw new VaultError("sample (index) and field (ipAddress|userAgent) are required", 400);
+      res.json(await includeSampleDetail(store, String(req.params.id), actorOf(req), req.ip ?? null, { sample: b.sample, field: b.field }, typeof b.reason === "string" ? b.reason : ""));
+    } catch (err) {
+      sendError(res, err, "include-sample-detail");
+    }
+  });
+
   router.post("/admin/child-safety/cases/:id/report", async (req, res) => {
     try {
       const id = String(req.params.id);
@@ -131,7 +145,7 @@ export function createChildSafetyAdminRoutes(repo: GameRepository): Router {
         throw new VaultError("confirm the case before generating a report package", 409);
       }
       const { case: c, evidence } = await viewEvidence(store, id, actorOf(req), req.ip ?? null, Date.now(), "export");
-      const pkg = buildReportPackage(c, evidence, reporterInfoFromEnv());
+      const pkg = buildReportPackage(c, evidence, reporterInfoFromEnv(), Date.now(), sampleInclusions(await store.listAccess(id)));
       if (req.query.format === "html") {
         res.type("html").send(renderReportHtml(pkg));
         return;
@@ -280,7 +294,14 @@ const HEX64 = /^[0-9a-f]{64}$/;
 export interface SuppressedSample {
   incidentAt: number;
   content: string;
+  /** SHA-256 of the content as stored here — computed by RI, never taken from the sender. */
   contentSha256: string;
+  /** The sender's hash of its original (unverified: RI cannot check text it never received). */
+  claimedSha256: string | null;
+  /** The content is shorter than the sender's original. */
+  truncated: boolean;
+  /** Length of the original, as the sender states it (or as received). */
+  originalLength: number;
   ipAddress: string | null;
   userAgent: string | null;
   gameRef: string | null;
@@ -304,9 +325,13 @@ function parseSample(v: unknown): SuppressedSample | null {
   if (!v || typeof v !== "object") return null;
   const o = v as Record<string, unknown>;
   const incidentAt = typeof o.incidentAt === "number" ? o.incidentAt : typeof o.incidentAt === "string" ? Date.parse(o.incidentAt) : NaN;
-  const content = typeof o.content === "string" && o.content.length > 0 ? o.content.slice(0, SAMPLE_CONTENT_MAX) : null;
-  const sha = typeof o.contentSha256 === "string" && HEX64.test(o.contentSha256) ? o.contentSha256 : null;
-  if (!Number.isFinite(incidentAt) || !content || !sha) return null;
+  const received = typeof o.content === "string" && o.content.length > 0 ? o.content : null;
+  if (!Number.isFinite(incidentAt) || !received) return null;
+  const content = received.slice(0, SAMPLE_CONTENT_MAX);
+  const claimed = typeof o.claimedSha256 === "string" && HEX64.test(o.claimedSha256) ? o.claimedSha256
+    : typeof o.contentSha256 === "string" && HEX64.test(o.contentSha256) ? o.contentSha256 : null;
+  const statedLength = typeof o.originalLength === "number" && Number.isInteger(o.originalLength) && o.originalLength > 0 ? o.originalLength : received.length;
+  const originalLength = Math.max(statedLength, received.length);
   const s = (x: unknown, max: number) => (typeof x === "string" && x.length > 0 ? x.slice(0, max) : null);
   const identifiers = Array.isArray(o.identifiers)
     ? (o.identifiers as unknown[]).slice(0, 50).flatMap((i) => {
@@ -316,7 +341,11 @@ function parseSample(v: unknown): SuppressedSample | null {
         return kind && value ? [{ kind, value, verified: r.verified === true, ...(r.role === "participant" ? { role: "participant" as const } : {}) }] : [];
       })
     : [];
-  return { incidentAt, content, contentSha256: sha, ipAddress: s(o.ipAddress, 100), userAgent: s(o.userAgent, 512), gameRef: s(o.gameRef, 200), identifiers };
+  return {
+    incidentAt, content, contentSha256: createHash("sha256").update(content, "utf8").digest("hex"), claimedSha256: claimed,
+    truncated: content.length < originalLength, originalLength,
+    ipAddress: s(o.ipAddress, 100), userAgent: s(o.userAgent, 512), gameRef: s(o.gameRef, 200), identifiers,
+  };
 }
 
 /** Validates a suppressedBurst record; null when malformed. */

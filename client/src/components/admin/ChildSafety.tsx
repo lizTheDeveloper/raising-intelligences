@@ -59,7 +59,7 @@ interface Evidence {
   extra?: {
     suppressedBurst?: {
       key: { kind: string; value: string }; count: number; firstAt: number; lastAt: number; sha256: string[];
-      samples?: Array<{ incidentAt: number; content: string; contentSha256: string; ipAddress: string | null; userAgent: string | null; gameRef: string | null; identifiers: Ident[] }>;
+      samples?: Array<{ incidentAt: number; content: string; contentSha256: string; claimedSha256?: string | null; truncated?: boolean; originalLength?: number; ipAddress: string | null; userAgent: string | null; gameRef: string | null; identifiers: Ident[] }>;
     };
     contentTruncated?: { originalSha256: string; originalLength: number };
   };
@@ -302,12 +302,22 @@ export function ChildSafety({ token }: { token: string }) {
                 <div key={k} style={{ borderLeft: "3px solid #fc6", paddingLeft: 8, margin: "8px 0" }}>
                   <div>Sample {k + 1} · {fmt(smp.incidentAt)} · IP <code>{smp.ipAddress ?? "—"}</code> · game <code>{smp.gameRef ?? "—"}</code></div>
                   <div>UA: {smp.userAgent ?? "—"}</div>
+                  <div style={{ fontSize: 12 }}>
+                    Left out of the report package unless added:{" "}
+                    {(["ipAddress", "userAgent"] as const).map((field) => (
+                      <button key={field} style={{ marginLeft: 6 }} onClick={async () => {
+                        const reason = window.prompt(`Why add this sample's ${field === "ipAddress" ? "IP" : "user agent"} to the report? (required, logged)`);
+                        if (!reason?.trim()) return;
+                        await act(() => call(`/cases/${viewing.id}/include-sample-detail`, "POST", { sample: k, field, reason }));
+                      }}>Add {field === "ipAddress" ? "IP" : "user agent"}…</button>
+                    ))}
+                  </div>
                   <ul>
                     {smp.identifiers.map((i) => (
                       <li key={`${i.kind}:${i.value}`}>{i.kind}: <code>{i.value}</code>{i.role ? " (participant)" : ""}{!i.verified && <em> (claimed, unverified)</em>}</li>
                     ))}
                   </ul>
-                  <div>SHA-256 <code>{smp.contentSha256}</code></div>
+                  <div>SHA-256 (computed here) <code>{smp.contentSha256}</code>{smp.truncated ? ` · truncated from ${smp.originalLength} characters` : ""}{smp.claimedSha256 && smp.claimedSha256 !== smp.contentSha256 ? <> · sender's hash (unverified) <code>{smp.claimedSha256}</code></> : null}</div>
                   <pre style={{ whiteSpace: "pre-wrap" }}>{smp.content}</pre>
                 </div>
               ))}
