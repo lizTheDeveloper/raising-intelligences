@@ -619,7 +619,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     // ---- CREATE_GAME ----
     socket.on(E.CREATE_GAME, async (payload: CreateGamePayload) => {
       if (!payload?.childName) return fail("childName is required");
-      if (payload.userId && (await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: payload.userId }))) {
+      if (payload.userId && (await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: payload.userId }).catch(() => false))) {
         return fail("Forbidden");
       }
       const state = createGame(payload.childName, payload.relationshipType);
@@ -670,7 +670,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
       // A Matrix ID banned by a confirmed child-safety case cannot join.
       // (Matrix IDs are unverified; the IP ban is the stronger control.)
-      if (payload.userId && (await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: payload.userId }))) {
+      if (payload.userId && (await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: payload.userId }).catch(() => false))) {
         return fail("Forbidden");
       }
 
