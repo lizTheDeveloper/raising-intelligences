@@ -260,8 +260,52 @@ const str = (v: unknown, max: number): string | null => (typeof v === "string" &
  *   identifiers [{kind, value, verified?, role?}] — verified only if the
  *   caller authenticated it; role "participant" for anyone but the sender
  *   incidentAt   epoch ms or ISO string; externalRef (idempotency key); isTest
+ *   groupRef     optional, groups related cases from the caller (≤ 200 chars)
+ *   recordKind   "flag" (default) or "suppressed_burst" — then, instead of
+ *                content, suppressedBurst: {key: {kind, value}, count,
+ *                firstAt, lastAt, sha256: [≤ 200 hex digests]}: one sender
+ *                (the key) went over the caller's per-window case cap. The
+ *                case's text is written here from those fields only, so
+ *                nothing a player wrote can shape it.
+ * Every field is structured: attribution comes only from ipAddress,
+ * userAgent and identifiers, never from content.
  * Returns {caseId, created}.
  */
+export const INGEST_CONTENT_MAX = 500_000;
+const HEX64 = /^[0-9a-f]{64}$/;
+
+export interface SuppressedBurst {
+  key: { kind: string; value: string };
+  count: number;
+  firstAt: number;
+  lastAt: number;
+  sha256: string[];
+}
+
+/** Validates a suppressedBurst record; null when malformed. */
+export function parseSuppressedBurst(v: unknown): SuppressedBurst | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  const key = o.key as Record<string, unknown> | undefined;
+  const kind = typeof key?.kind === "string" && /^[a-z0-9_]{1,40}$/.test(key.kind) ? key.kind : null;
+  const value = typeof key?.value === "string" && key.value.length > 0 && key.value.length <= 300 ? key.value : null;
+  const count = typeof o.count === "number" && Number.isInteger(o.count) && o.count > 0 ? o.count : null;
+  const time = (t: unknown) => (typeof t === "number" ? t : typeof t === "string" ? Date.parse(t) : NaN);
+  const firstAt = time(o.firstAt);
+  const lastAt = time(o.lastAt);
+  if (!kind || !value || !count || !Number.isFinite(firstAt) || !Number.isFinite(lastAt)) return null;
+  const sha256 = Array.isArray(o.sha256) ? (o.sha256 as unknown[]).filter((h): h is string => typeof h === "string" && HEX64.test(h)).slice(0, 200) : [];
+  return { key: { kind, value }, count, firstAt, lastAt, sha256 };
+}
+
+/** The case text of a burst record — from validated fields only. */
+export function burstContent(b: SuppressedBurst): string {
+  return [
+    `Suppressed burst: ${b.count} further flag${b.count === 1 ? "" : "s"} from ${b.key.kind} ${JSON.stringify(b.key.value)} went over the sending service's per-window case cap and were not filed as separate cases.`,
+    `First ${new Date(b.firstAt).toISOString()}, last ${new Date(b.lastAt).toISOString()}.`,
+    b.sha256.length ? `SHA-256 of the suppressed content (${b.sha256.length}${b.sha256.length < b.count ? ` of ${b.count}` : ""}):\n${b.sha256.join("\n")}` : "No content hashes were kept.",
+  ].join("\n");
+}
 export function createChildSafetyIngestRoutes(repo: GameRepository): Router {
   const router = Router();
   const limiter = rateLimit({ windowMs: 60_000, max: 120, standardHeaders: true, legacyHeaders: false });
@@ -269,7 +313,21 @@ export function createChildSafetyIngestRoutes(repo: GameRepository): Router {
     try {
       const b = (req.body ?? {}) as Record<string, unknown>;
       const source = str(b.source, 40);
-      const content = str(b.content, 100_000);
+      const recordKind = b.recordKind === "suppressed_burst" ? ("suppressed_burst" as const) : ("flag" as const);
+      if (b.recordKind !== undefined && b.recordKind !== "flag" && b.recordKind !== "suppressed_burst") {
+        res.status(400).json({ error: "recordKind must be flag or suppressed_burst" });
+        return;
+      }
+      const burst = recordKind === "suppressed_burst" ? parseSuppressedBurst(b.suppressedBurst) : null;
+      if (recordKind === "suppressed_burst" && !burst) {
+        res.status(400).json({ error: "suppressed_burst needs suppressedBurst {key:{kind,value}, count, firstAt, lastAt, sha256[]}" });
+        return;
+      }
+      if (typeof b.content === "string" && b.content.length > INGEST_CONTENT_MAX) {
+        res.status(413).json({ error: `content over ${INGEST_CONTENT_MAX} characters` });
+        return;
+      }
+      const content = burst ? burstContent(burst) : str(b.content, INGEST_CONTENT_MAX);
       if (!source || !/^[a-z0-9_]+$/.test(source) || !content) {
         res.status(400).json({ error: "source ([a-z0-9_]) and content are required" });
         return;
@@ -327,7 +385,9 @@ export function createChildSafetyIngestRoutes(repo: GameRepository): Router {
         incidentAt: Number.isFinite(incidentAt) ? incidentAt : undefined,
         externalRef: str(b.externalRef, 300) ? `${source}:${str(b.externalRef, 300)}` : null,
         isTest,
-        extra: { ingestedFrom: source },
+        groupRef: str(b.groupRef, 200),
+        recordKind,
+        extra: { ingestedFrom: source, ...(burst ? { suppressedBurst: burst } : {}) },
       });
       res.status(result.created ? 201 : 200).json(result);
     } catch (err) {

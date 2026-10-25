@@ -130,6 +130,9 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
       crossOriginEmbedderPolicy: false,
     })
   );
+  // Child-safety ingest carries whole flagged passages (up to 500k chars of
+  // content, INGEST_CONTENT_MAX); parsed here first with a larger limit.
+  app.use("/api/internal/child-safety/evidence", express.json({ limit: "2mb" }));
   app.use(express.json());
 
   // Security headers — defense-in-depth against common browser-based attacks.

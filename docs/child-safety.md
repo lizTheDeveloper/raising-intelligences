@@ -158,6 +158,12 @@ The body is JSON with these fields:
 - `gameRef`, `ipAddress` (the flagged sender's request IP), `userAgent`;
 - `identifiers` (`[{kind, value, verified?, role?}]`): `verified: true` only if your service authenticated it; `role: "participant"` for anyone other than the flagged sender;
 - `incidentAt`;
-- `externalRef` (an idempotency key).
+- `externalRef` (an idempotency key);
+- `groupRef` (optional): related cases from the caller share it, and the Child Safety list's **Group** column shows them together;
+- `recordKind` (optional): `flag` (default) or `suppressed_burst`.
+
+Every field is structured. Attribution comes only from `ipAddress`, `userAgent` and `identifiers`, never from `content`. One flag is one case; `content` may be up to 500,000 characters, and a longer one is refused (413) rather than cut.
+
+A **suppressed burst** is what a sending service files when one sender (one seat, or one IP) goes over its per-window case cap. It sends no `content`. Instead it sends `suppressedBurst: {key: {kind, value}, count, firstAt, lastAt, sha256: [up to 200 hex digests]}`, under that sender's own `identifiers` and `ipAddress`. RI writes the case text from those validated fields only. The list marks these cases "suppressed burst".
 
 The endpoint returns `{caseId, created}`. Cases filed this way go through the same review queue and retention as RI's own.

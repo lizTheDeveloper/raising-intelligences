@@ -67,6 +67,10 @@ export interface EvidenceInput {
   /** Idempotency key (legacy flag id, or a caller id from another service). */
   externalRef?: string | null;
   isTest?: boolean;
+  /** Groups related cases from one sending service (shown together in review). */
+  groupRef?: string | null;
+  /** 'suppressed_burst' for a structured over-the-cap counter; default 'flag'. */
+  recordKind?: "flag" | "suppressed_burst";
   /** Anything source-specific worth keeping (sender slot, phase, service name). */
   extra?: Record<string, unknown>;
 }
@@ -225,6 +229,8 @@ export async function preserveEvidence(
     keyId,
     ciphertext,
     externalRef: input.externalRef ?? null,
+    groupRef: input.groupRef ?? null,
+    recordKind: input.recordKind ?? "flag",
     isTest: input.isTest ?? false,
     locked: false,
     retainUntil: null,

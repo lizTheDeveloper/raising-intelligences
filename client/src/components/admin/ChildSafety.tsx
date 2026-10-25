@@ -40,6 +40,8 @@ interface CaseSummary {
   dismissReason: string | null;
   cybertipReportId: string | null;
   encrypted: boolean;
+  groupRef?: string | null;
+  recordKind?: "flag" | "suppressed_burst" | null;
 }
 
 interface Evidence {
@@ -54,6 +56,7 @@ interface Evidence {
   userAgent: string | null;
   sender?: string | null;
   ipHistory: Array<{ ip: string; event: string; at: number; slot?: string | null }>;
+  extra?: { suppressedBurst?: { key: { kind: string; value: string }; count: number; firstAt: number; lastAt: number; sha256: string[] } };
 }
 
 const STATUS_FILTERS = ["open", "confirmed", "reported", "dismissed", "released"] as const;
@@ -69,6 +72,8 @@ export function ChildSafety({ token }: { token: string }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [viewing, setViewing] = useState<{ id: string; case: CaseSummary; evidence: Evidence } | null>(null);
+  // Related cases from one sending service share a group; click one to see them together.
+  const [group, setGroup] = useState<string | null>(null);
 
   const call = useCallback(
     async (path: string, method = "GET", body?: unknown) => {
@@ -210,24 +215,28 @@ export function ChildSafety({ token }: { token: string }) {
             <th>Categories</th>
             <th>IP</th>
             <th>Hold</th>
+            <th>Group</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
           {cases.length === 0 ? (
             <tr>
-              <td colSpan={6} style={{ color: "#555", fontStyle: "italic" }}>No {status} cases</td>
+              <td colSpan={7} style={{ color: "#555", fontStyle: "italic" }}>No {status} cases</td>
             </tr>
           ) : (
-            cases.map((c) => (
+            cases.filter((c) => !group || c.groupRef === group).map((c) => (
               <tr key={c.id}>
                 <td title={c.id}>{fmt(c.incidentAt)}{c.isTest && <span style={{ color: "#fc6", marginLeft: 6 }}>test</span>}</td>
-                <td>{c.source}</td>
+                <td>{c.source}{c.recordKind === "suppressed_burst" && <span style={{ color: "#fc6", marginLeft: 6 }}>suppressed burst</span>}</td>
                 <td>{c.categories.join(", ")}</td>
                 <td style={{ fontFamily: "monospace", fontSize: 12 }}>{c.ipAddress ?? "—"}</td>
                 <td style={{ fontSize: 12 }}>
                   {c.locked ? `locked until ${fmt(c.retainUntil)}` : c.purgeAfter ? `purge ${fmt(c.purgeAfter)}` : "kept while open"}
                   {c.cybertipReportId && <div>CT #{c.cybertipReportId}</div>}
+                </td>
+                <td style={{ fontFamily: "monospace", fontSize: 12 }}>
+                  {c.groupRef ? <button title={c.groupRef} onClick={() => setGroup(group === c.groupRef ? null : c.groupRef!)}>{group === c.groupRef ? "all" : c.groupRef.slice(0, 10)}</button> : "—"}
                 </td>
                 <td style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   <button onClick={() => view(c.id)}>View evidence</button>
@@ -275,6 +284,16 @@ export function ChildSafety({ token }: { token: string }) {
               </li>
             ))}
           </ul>
+          {viewing.evidence.extra?.suppressedBurst && (
+            <>
+              <h4>Suppressed burst</h4>
+              <p>
+                {viewing.evidence.extra.suppressedBurst.count} flags from {viewing.evidence.extra.suppressedBurst.key.kind}{" "}
+                <code>{viewing.evidence.extra.suppressedBurst.key.value}</code> between {fmt(viewing.evidence.extra.suppressedBurst.firstAt)} and{" "}
+                {fmt(viewing.evidence.extra.suppressedBurst.lastAt)}, over the sending service's case cap. Content was not kept; {viewing.evidence.extra.suppressedBurst.sha256.length} SHA-256 hashes are listed below.
+              </p>
+            </>
+          )}
           <h4>Flagged content</h4>
           <pre style={{ whiteSpace: "pre-wrap" }}>{viewing.evidence.content}</pre>
           <h4>Context (oldest first)</h4>
