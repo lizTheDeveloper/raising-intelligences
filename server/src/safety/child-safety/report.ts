@@ -67,6 +67,27 @@ export interface ReportPackage {
     text: string;
     sha256: string;
     contextTranscript: Array<{ speaker: string; content: string; at: string | null }>;
+    /** For a suppressed-burst record: the flags kept in full, each with its own sender. */
+    suppressedSamples?: Array<{
+      incidentAt: string;
+      content: string;
+      /** SHA-256 of the content as stored (computed by RI). */
+      sha256: string;
+      truncated: boolean;
+      originalLength: number;
+      /** The sender's hash of its original: unverified. */
+      claimedSha256Unverified: string | null;
+      /** Only when a reviewer added it (logged), and only a verified IP of the sample's own sender. */
+      ipAddress?: string;
+      /** Only when a reviewer added it (logged). */
+      userAgent?: string;
+      gameRef: string | null;
+      /** The sample sender's verified identifiers (participants never). */
+      identifiers: Array<{ kind: string; value: string }>;
+      claimedUnverified: Array<{ kind: string; value: string }>;
+    }>;
+    /** The sender capped an oversized flag: the original's SHA-256 and length (full text kept by the sender). */
+    truncatedOriginal?: { sha256: string; length: number };
     locationOnService: string;
     viewedByEsp: true;
     publiclyAvailable: false;
@@ -89,7 +110,44 @@ export interface ReportPackage {
 
 const iso = (ms: number | null | undefined): string | null => (ms ? new Date(ms).toISOString() : null);
 
-export function buildReportPackage(c: CaseSummary, e: EvidencePayload, reporter: ReporterInfo, now = Date.now()): ReportPackage {
+type SampleExtra = { incidentAt: number; content: string; contentSha256: string; claimedSha256?: string | null; truncated?: boolean; originalLength?: number; ipAddress: string | null; userAgent: string | null; gameRef: string | null; identifiers: Array<{ kind: string; value: string; verified: boolean; role?: string }> };
+/**
+ * Samples go in by the same rules as reportedPerson: only the sample's own
+ * sender (never participants), verified identifiers apart from claimed ones,
+ * and its IP and user agent only when a reviewer added them (`included`,
+ * "<index>:<field>", from the access log) — the IP only if it is a verified
+ * IP identifier of that sender.
+ */
+function suppressedExtras(extra: Record<string, unknown>, included: Set<string>): Pick<ReportPackage["content"], "suppressedSamples" | "truncatedOriginal"> {
+  const burst = extra.suppressedBurst as { samples?: SampleExtra[] } | undefined;
+  const trunc = extra.contentTruncated as { originalSha256: string; originalLength: number } | undefined;
+  return {
+    ...(burst?.samples?.length
+      ? {
+          suppressedSamples: burst.samples.map((s, k) => {
+            const own = s.identifiers.filter((i) => !i.role);
+            const ipOk = !!s.ipAddress && included.has(`${k}:ipAddress`) && own.some((i) => i.kind === "ip" && i.value === s.ipAddress && i.verified === true);
+            return {
+              incidentAt: new Date(s.incidentAt).toISOString(),
+              content: s.content,
+              sha256: s.contentSha256,
+              truncated: s.truncated === true,
+              originalLength: s.originalLength ?? s.content.length,
+              claimedSha256Unverified: s.claimedSha256 ?? null,
+              ...(ipOk ? { ipAddress: s.ipAddress! } : {}),
+              ...(s.userAgent && included.has(`${k}:userAgent`) ? { userAgent: s.userAgent } : {}),
+              gameRef: s.gameRef,
+              identifiers: own.filter((i) => i.verified === true && i.kind !== "ip").map((i) => ({ kind: i.kind, value: i.value })),
+              claimedUnverified: own.filter((i) => i.verified !== true).map((i) => ({ kind: i.kind, value: i.value })),
+            };
+          }),
+        }
+      : {}),
+    ...(trunc ? { truncatedOriginal: { sha256: trunc.originalSha256, length: trunc.originalLength } } : {}),
+  };
+}
+
+export function buildReportPackage(c: CaseSummary, e: EvidencePayload, reporter: ReporterInfo, now = Date.now(), sampleIncluded: Set<string> = new Set()): ReportPackage {
   // Only the flagged sender's identifiers (and any a reviewer explicitly
   // included, with a reason) go in the report. Co-players seen in the same
   // game stay out unless included.
@@ -136,6 +194,7 @@ export function buildReportPackage(c: CaseSummary, e: EvidencePayload, reporter:
       text: e.content,
       sha256: e.contentSha256,
       contextTranscript: e.context.map((t) => ({ speaker: t.speaker, content: t.content, at: iso(t.at ?? null) })),
+      ...suppressedExtras(e.extra ?? {}, sampleIncluded),
       locationOnService: `In-game chat, game ${e.gameRef ?? "(unknown)"}`,
       viewedByEsp: true,
       publiclyAvailable: false,

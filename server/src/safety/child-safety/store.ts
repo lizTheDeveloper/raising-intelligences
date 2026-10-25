@@ -70,6 +70,10 @@ export interface CaseRow {
   ciphertext: string;
   /** Idempotency key: a legacy moderation_flags id, or a caller-supplied id from another service. */
   externalRef: string | null;
+  /** Related cases from the same sending service share this (migration 026). */
+  groupRef?: string | null;
+  /** 'flag' (default) or 'suppressed_burst': a structured over-the-cap counter (migration 026). */
+  recordKind?: "flag" | "suppressed_burst" | null;
   isTest: boolean;
   locked: boolean;
   retainUntil: number | null;
@@ -223,6 +227,8 @@ const COLS: Array<[keyof CaseRow, string]> = [
   ["keyId", "key_id"],
   ["ciphertext", "ciphertext"],
   ["externalRef", "external_ref"],
+  ["groupRef", "group_ref"],
+  ["recordKind", "record_kind"],
   ["isTest", "is_test"],
   ["locked", "locked"],
   ["retainUntil", "retain_until"],

@@ -13,7 +13,7 @@ import { createAdminRoutes } from "./routes/admin.js";
 import { createAlbumRoutes } from "./routes/album.js";
 import { createResearchRoutes } from "./routes/research.js";
 import { createSupportRoutes } from "./routes/support.js";
-import { createChildSafetyAdminRoutes, createChildSafetyIngestRoutes } from "./routes/child-safety.js";
+import { createChildSafetyAdminRoutes, createChildSafetyIngestRoutes, INGEST_PATH } from "./routes/child-safety.js";
 import type { AdminQueries } from "./db/admin-queries.js";
 import { ConversationEngine } from "./game/conversation-engine.js";
 import { EndgameEngine } from "./game/endgame-engine.js";
@@ -130,7 +130,12 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
       crossOriginEmbedderPolicy: false,
     })
   );
-  app.use(express.json());
+  // The child-safety ingest route parses its own (larger) body, and only
+  // after its rate limit and token check (routes/child-safety.ts): the
+  // global parser never reads that path, so an unauthenticated caller can't
+  // make the server read a large body.
+  const jsonParser = express.json();
+  app.use((req, res, next) => (req.path === INGEST_PATH ? next() : jsonParser(req, res, next)));
 
   // Security headers — defense-in-depth against common browser-based attacks.
   const securityHeaders: RequestHandler = (_req, res, next) => {
