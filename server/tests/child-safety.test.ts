@@ -486,6 +486,22 @@ describe("child-safety review queue (HTTP)", () => {
     method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${INGEST}` }, body: JSON.stringify(body),
   });
 
+  it("two concurrent deliveries of one record file one case and both succeed", async () => {
+    const store = server.memRepo.childSafety;
+    const orig = store.findByExternalRef.bind(store);
+    // Both requests pass the pre-check before either inserts: the race a retrying sender can cause.
+    let calls = 0;
+    store.findByExternalRef = async (ref: string) => (++calls <= 2 ? null : orig(ref));
+    try {
+      const body = { source: "whispers", content: FIXTURE, externalRef: "race-1", ipAddress: "198.51.100.95" };
+      const [a, b] = await Promise.all([ingest(body), ingest(body)]);
+      expect([a.status, b.status].sort()).toEqual([200, 201]);
+      expect((await a.json()).caseId).toBe((await b.json()).caseId);
+    } finally {
+      store.findByExternalRef = orig;
+    }
+  });
+
   it("ingest keeps a caller's groupRef and record kind as structured fields", async () => {
     const res = await ingest({ source: "whispers", content: FIXTURE, categories: ["sexual/minors"], gameRef: "w-2", externalRef: "g-1", groupRef: "grp-abc", ipAddress: "198.51.100.90" });
     expect(res.status).toBe(201);
