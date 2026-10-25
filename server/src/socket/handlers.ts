@@ -825,9 +825,12 @@ export function registerSocketHandlers(deps: SocketDeps): void {
             const player = { ...reconnected.player, campusSub: campus.sub };
             session = { ...session, players: session.players.map((p) => (p.slot === player.slot ? player : p)) };
             reconnected = { session, player };
-            await repo.savePlayer(gameId, player.slot, player.displayName, player.token, player.userId, campus.sub);
           }
           sessions.set(gameId, session);
+          if (reconnected.player.campusSub && reconnected.player.campusSub === campus.sub) {
+            const pl = reconnected.player;
+            await repo.savePlayer(gameId, pl.slot, pl.displayName, pl.token, pl.userId, pl.campusSub);
+          }
           data.gameId = gameId;
           data.slot = reconnected.player.slot;
           await socket.join(gameId);
