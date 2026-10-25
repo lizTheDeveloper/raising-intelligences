@@ -18,6 +18,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import OpenAI from "openai";
+import { fetchHeldTraceIds, filterHeldObservations } from "../server/src/observability/child-safety-exclusion.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CACHE_DIR = join(__dirname, ".prompt-cache");
@@ -73,18 +74,21 @@ async function pullPrompts(): Promise<CachedPrompt[]> {
   const prompts: CachedPrompt[] = [];
 
   // Pull kid_family_chat observations, paginating through pages of 100
-  const allObs: Array<{ input: unknown; output: unknown }> = [];
+  const allObs: Array<{ input: unknown; output: unknown; traceId?: string }> = [];
   for (let page = 1; page <= 5; page++) {
     const data = await langfuseGet("/api/public/observations", {
       type: "GENERATION",
       name: "kid_family_chat",
       limit: "100",
       page: String(page),
-    }) as { data: Array<{ input: unknown; output: unknown }> };
+    }) as { data: Array<{ input: unknown; output: unknown; traceId?: string }> };
     allObs.push(...data.data);
     if (data.data.length < 100) break;
   }
-  const data = { data: allObs };
+  // Child-safety hold: traces from a game with an evidence case are never
+  // pulled into the benchmark corpus (see child-safety-exclusion.ts).
+  const held = await fetchHeldTraceIds(langfuseGet);
+  const data = { data: filterHeldObservations(allObs, held) };
 
   for (const age of targetAges) {
     // Find observations where the system prompt mentions the target age

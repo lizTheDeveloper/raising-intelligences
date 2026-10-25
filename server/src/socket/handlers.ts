@@ -56,6 +56,7 @@ import {
 } from "./protocol.js";
 import { generatePersonalitySeed } from "../game/personality.js";
 import { moderateParentMessage, applyModerationBlock, recordConcern } from "../safety/moderation.js";
+import { logIp } from "../safety/child-safety/vault.js";
 import { evaluateEscalation } from "../safety/escalation.js";
 import { getSocketIp } from "../lib/client-ip.js";
 import { buildSceneTranscript } from "../game/context-assembler.js";
@@ -618,6 +619,9 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     // ---- CREATE_GAME ----
     socket.on(E.CREATE_GAME, async (payload: CreateGamePayload) => {
       if (!payload?.childName) return fail("childName is required");
+      if (payload.userId && (await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: payload.userId }))) {
+        return fail("Forbidden");
+      }
       const state = createGame(payload.childName, payload.relationshipType);
       games.set(state.id, state);
       await repo.saveGame(state);
@@ -625,6 +629,10 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       // for escalation detection (see safety/escalation.ts). Not part of
       // GameState; written directly to the games row.
       await repo.recordGameIp(state.id, getSocketIp(socket));
+      await logIp(repo.childSafety, {
+        ip: getSocketIp(socket), gameRef: state.id, event: "socket_create",
+        userAgent: socket.handshake.headers["user-agent"] ?? null, accountId: payload.userId ?? null,
+      });
 
       let session = createSession(state.id);
       const added = addPlayer(session, socket.id, payload.displayName, payload.userId);
@@ -658,6 +666,12 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         handoff = consumeHandoffCode(payload.handoffCode, gameId);
         // Never echo the code back — not in this message, not anywhere.
         if (!handoff) return fail(HANDOFF_REJECTED);
+      }
+
+      // A Matrix ID banned by a confirmed child-safety case cannot join.
+      // (Matrix IDs are unverified; the IP ban is the stronger control.)
+      if (payload.userId && (await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: payload.userId }))) {
+        return fail("Forbidden");
       }
 
       // Load game state if not in memory
@@ -810,6 +824,10 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       await socket.join(slotRoom(gameId, added.player.slot));
 
       await repo.savePlayer(gameId, added.player.slot, added.player.displayName, added.player.token, added.player.userId);
+      await logIp(repo.childSafety, {
+        ip: getSocketIp(socket), gameRef: gameId, event: "socket_join",
+        userAgent: socket.handshake.headers["user-agent"] ?? null, accountId: added.player.userId ?? null,
+      });
       clearParentContext();
       socket.emit(E.JOINED, { gameId, slot: added.player.slot, playerToken: added.player.token });
       broadcastLobby(gameId);
@@ -1129,6 +1147,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           sender: slot,
           content: payload.content.trim(),
           ipAddress: getSocketIp(socket),
+          userAgent: socket.handshake.headers["user-agent"] ?? null,
         });
         if (moderation.blocked) {
           fail("This session has ended.");
@@ -1222,6 +1241,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
             content: buildSceneTranscript(result.state),
             reason: result.sceneSafety.reason,
             ipAddress: getSocketIp(socket),
+            userAgent: socket.handshake.headers["user-agent"] ?? null,
             banIp: false, // Scene-level block is an LLM judgment — end session + persist a flag for human review; do NOT auto-ban (only the reliable per-message OpenAI check auto-bans).
           });
           fail("This session has ended.");
@@ -1356,6 +1376,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           sender: slot,
           content: trimmedContent,
           ipAddress: getSocketIp(socket),
+          userAgent: socket.handshake.headers["user-agent"] ?? null,
         });
         if (moderation.blocked) {
           fail("This session has ended.");

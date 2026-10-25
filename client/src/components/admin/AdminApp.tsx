@@ -4,9 +4,10 @@ import { Overview } from "./Overview";
 import { GameList } from "./GameList";
 import { GameDetailView } from "./GameDetail";
 import { Moderation } from "./Moderation";
+import { ChildSafety } from "./ChildSafety";
 import "../../admin.css";
 
-type Page = "overview" | "games" | "game-detail" | "moderation";
+type Page = "overview" | "games" | "game-detail" | "moderation" | "child-safety";
 
 const ADMIN_BASE = import.meta.env.BASE_URL + "api/admin";
 
@@ -112,6 +113,12 @@ export function AdminApp() {
         >
           Moderation
         </button>
+        <button
+          className={page === "child-safety" ? "active" : ""}
+          onClick={() => setPage("child-safety")}
+        >
+          Child Safety
+        </button>
       </div>
       <main>
         {page === "overview" && (
@@ -137,6 +144,7 @@ export function AdminApp() {
             unbanIp={(ip) => unbanIp(token, ip)}
           />
         )}
+        {page === "child-safety" && <ChildSafety token={token} />}
       </main>
     </div>
   );

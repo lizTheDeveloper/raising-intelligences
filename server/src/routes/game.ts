@@ -27,6 +27,7 @@ import { withGameLock } from "../lib/game-lock.js";
 import { initSSE, sseChunk, sseDone, sseError, sseTerminated } from "../lib/sse.js";
 import { resolveGame as sharedResolveGame } from "../lib/resolve-game.js";
 import { moderateParentMessage, applyModerationBlock, recordConcern } from "../safety/moderation.js";
+import { logIp } from "../safety/child-safety/vault.js";
 import { evaluateEscalation } from "../safety/escalation.js";
 import { buildSceneTranscript } from "../game/context-assembler.js";
 import {
@@ -124,6 +125,8 @@ export function createGameRoutes(
     // for escalation detection (see safety/escalation.ts). Not part of
     // GameState; written directly to the games row.
     await repo.recordGameIp(state.id, req.ip ?? null);
+    // Child-safety IP log (90-day retention; docs/child-safety.md).
+    await logIp(repo.childSafety, { ip: req.ip, gameRef: state.id, event: "game_create", userAgent: req.get("user-agent") ?? null });
     // Per-game secret: only its hash is stored; the plaintext is returned once.
     const { secret, hash } = newGameSecret();
     await repo.recordAccessSecretHash(state.id, hash);
@@ -379,6 +382,7 @@ export function createGameRoutes(
             sender,
             content,
             ipAddress: req.ip ?? null,
+            userAgent: req.get("user-agent") ?? null,
           });
           if (moderation.blocked) {
             sseTerminated(res);
@@ -421,6 +425,7 @@ export function createGameRoutes(
               content: buildSceneTranscript(result.state),
               reason: result.sceneSafety.reason,
               ipAddress: req.ip ?? null,
+              userAgent: req.get("user-agent") ?? null,
               banIp: false, // Scene-level block is an LLM judgment — end session + persist a flag for human review; do NOT auto-ban (only the reliable per-message OpenAI check auto-bans).
             });
             sseTerminated(res);
@@ -544,6 +549,7 @@ export function createGameRoutes(
               content: buildSceneTranscript(next),
               reason: sceneSafety.reason,
               ipAddress: req.ip ?? null,
+              userAgent: req.get("user-agent") ?? null,
               banIp: false, // Scene-level block is an LLM judgment — end session + persist a flag for human review; do NOT auto-ban (only the reliable per-message OpenAI check auto-bans).
             });
             sseTerminated(res);
@@ -697,6 +703,7 @@ export function createGameRoutes(
           sender: "parent1",
           content: cleaned.message,
           ipAddress: req.ip ?? null,
+          userAgent: req.get("user-agent") ?? null,
         });
         if (moderation.blocked) {
           res.status(403).json({ error: "This session has ended" });
@@ -903,6 +910,7 @@ export function createGameRoutes(
             sender: "parent1",
             content,
             ipAddress: req.ip ?? null,
+            userAgent: req.get("user-agent") ?? null,
           });
           if (moderation.blocked) {
             sseTerminated(res);

@@ -7,10 +7,24 @@ import {
   MINOR_SAFETY_CATEGORIES,
 } from "./openai-moderation.js";
 import type { GamePhase } from "../types.js";
+import { logIp, preserveEvidence, type ContextTurn } from "./child-safety/vault.js";
+import { childSafetyConfig } from "./child-safety/config.js";
+import { holdGameTraces, markGameHeld } from "../observability/child-safety-exclusion.js";
 
 export interface ModerationResult {
   flagged: boolean;
   reason: string;
+  /** On a flag: the matched categories, every score, and the classifier version — kept as evidence. */
+  categories?: string[];
+  scores?: Record<string, number>;
+  model?: string;
+}
+
+/** Classifier details passed from the per-message check into the evidence record. */
+export interface ClassifierEvidence {
+  categories: string[];
+  scores?: Record<string, number>;
+  model?: string;
 }
 
 /**
@@ -51,7 +65,13 @@ export async function classifyParentMessage(
 ): Promise<ModerationResult> {
   const result = await checkOpenAiModeration(content, categories);
   if (result.flagged) {
-    return { flagged: true, reason: `openai_moderation:${result.categories.join(",")}` };
+    return {
+      flagged: true,
+      reason: `openai_moderation:${result.categories.join(",")}`,
+      categories: result.categories,
+      scores: result.scores,
+      model: result.model,
+    };
   }
   return { flagged: false, reason: "" };
 }
@@ -84,9 +104,73 @@ export function categoriesForPhase(phase: GamePhase): readonly string[] {
 }
 
 /**
+ * Copies a flag into the child-safety evidence vault (encrypted, no cascade,
+ * retained per docs/child-safety.md) and tags the game's Langfuse traces so
+ * bulk readers skip them. Returns the case id, or null if the vault write
+ * failed (the caller then keeps the content in moderation_flags instead).
+ *
+ * Every RI moderation block is in the child-sexual-content category: the
+ * per-message check only asks about sexual/minors (plus "sexual" when the
+ * listener is the child), and the scene reader's "block" covers
+ * sexualization of the child or real-world harm, which a reviewer triages.
+ */
+async function preserveFlagEvidence(params: {
+  repo: GameRepository;
+  state: GameState;
+  sender: Sender;
+  content: string;
+  reason: string;
+  ipAddress: string | null;
+  userAgent: string | null;
+  classifier?: ClassifierEvidence;
+  isTest: boolean;
+}): Promise<string | null> {
+  const { repo, state, sender, content, reason, ipAddress, userAgent, classifier, isTest } = params;
+  try {
+    let identifiers: Array<{ kind: string; value: string }> = [];
+    try {
+      const players = await repo.loadPlayers(state.id);
+      identifiers = players.filter((p) => p.userId).map((p) => ({ kind: "matrix", value: p.userId as string }));
+    } catch {
+      // Players are optional context; the case is written without them.
+    }
+    const context: ContextTurn[] = state.messages.slice(-childSafetyConfig().contextTurns).map((m) => ({
+      speaker: m.sender,
+      content: m.content,
+      at: m.timestamp,
+      label: `${m.chatType} / scene ${m.eventNumber}`,
+    }));
+    const sceneHint = /sexual|romantic|groom|intimate|erotic/i.test(reason) ? ["scene_reader:sexualization"] : ["scene_reader:block"];
+    const { caseId } = await preserveEvidence(repo.childSafety, {
+      source: classifier ? "ri_message" : "ri_scene",
+      content,
+      context,
+      categories: classifier ? classifier.categories : sceneHint,
+      scores: classifier?.scores ?? null,
+      model: classifier?.model ?? "scene-reader (safety_check role)",
+      reason,
+      gameRef: state.id,
+      ipAddress,
+      userAgent,
+      identifiers,
+      extra: { sender, phase: state.phase, eventNumber: state.currentEventNumber, childName: state.childName },
+      isTest,
+    });
+    markGameHeld(state.id);
+    holdGameTraces(state.id).catch((err) => {
+      logger.error("child_safety_langfuse_hold_failed", { caseId, error: err instanceof Error ? err.message : String(err) });
+    });
+    return caseId;
+  } catch (err) {
+    logger.error("child_safety_preserve_failed", { gameId: state.id, error: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
+/**
  * Shared side effect for any moderation trigger (per-message or end-of-scene
- * pattern check): persist the flagged content + reason + IP for review, ban
- * the IP, and terminate the session.
+ * pattern check): preserve the evidence in the child-safety vault, persist a
+ * flag for review, ban the IP, and terminate the session.
  */
 export async function applyModerationBlock(params: {
   repo: GameRepository;
@@ -111,11 +195,27 @@ export async function applyModerationBlock(params: {
    * Defaults to true for backward compatibility with the per-message caller.
    */
   banIp?: boolean | "repeat-offender";
-}): Promise<void> {
+  /** The client's User-Agent, kept with the evidence. */
+  userAgent?: string | null;
+  /** Present for the per-message classifier; absent means the scene reader. */
+  classifier?: ClassifierEvidence;
+  /** Only the admin synthetic test hook sets this: the case is marked is_test. */
+  syntheticTest?: boolean;
+}): Promise<{ caseId: string | null }> {
   const { repo, games, state, sender, content, reason, ipAddress, banIp = true } = params;
 
+  // Evidence first, in its own store: it must survive whatever happens to the
+  // game. The moderation_flags row then points at the case instead of
+  // repeating the content (it cascades with the game). If the vault write
+  // failed, the flag keeps the content so nothing is lost.
+  const caseId = await preserveFlagEvidence({
+    repo, state, sender, content, reason, ipAddress, userAgent: params.userAgent ?? null, classifier: params.classifier,
+    isTest: params.syntheticTest ?? false,
+  });
+  const flagContent = caseId ? `[withheld: child-safety case ${caseId}]` : content;
+
   // Persist the flag first so the repeat-offender count below includes it.
-  await repo.saveModerationFlag({ gameId: state.id, sender, content, reason, ipAddress });
+  await repo.saveModerationFlag({ gameId: state.id, sender, content: flagContent, reason, ipAddress });
 
   let doBan = false;
   if (ipAddress) {
@@ -127,7 +227,7 @@ export async function applyModerationBlock(params: {
     }
   }
 
-  logger.error("moderation_flag", { gameId: state.id, sender, ipAddress, reason, banIp: doBan });
+  logger.error("moderation_flag", { gameId: state.id, sender, ipAddress, caseId, banIp: doBan });
 
   if (doBan && ipAddress) {
     await repo.banIp(ipAddress, `moderation_flag:${state.id}`);
@@ -136,6 +236,7 @@ export async function applyModerationBlock(params: {
   const terminated: GameState = { ...state, phase: "ended" };
   games.set(terminated.id, terminated);
   await repo.saveGame(terminated);
+  return { caseId };
 }
 
 /**
@@ -175,12 +276,22 @@ export async function moderateParentMessage(params: {
   sender: Sender;
   content: string;
   ipAddress: string | null;
+  userAgent?: string | null;
 }): Promise<{ blocked: boolean }> {
   const { repo, games, state, sender, content, ipAddress } = params;
+  const userAgent = params.userAgent ?? null;
+
+  // Every parent message, on every surface, passes through here: this is the
+  // IP log's per-message write (child_safety.ip_log, 90-day retention), so a
+  // later scene-reader flag still has the IPs that wrote the scene.
+  await logIp(repo.childSafety, { ip: ipAddress, gameRef: state.id, event: "message", userAgent });
 
   const result = await classifyParentMessage(content, categoriesForPhase(state.phase));
   if (!result.flagged) return { blocked: false };
 
-  await applyModerationBlock({ repo, games, state, sender, content, reason: result.reason, ipAddress });
+  await applyModerationBlock({
+    repo, games, state, sender, content, reason: result.reason, ipAddress, userAgent,
+    classifier: { categories: result.categories ?? [], scores: result.scores, model: result.model },
+  });
   return { blocked: true };
 }

@@ -1,0 +1,172 @@
+import type { CaseSummary, EvidencePayload } from "./vault.js";
+
+/**
+ * Builds a CyberTipline-ready report package from a confirmed case: the
+ * fields NCMEC's CyberTipline report form asks an electronic service provider
+ * for, laid out in the order the form asks for them, plus a filing checklist.
+ *
+ * This produces a document for a HUMAN to file at https://report.cybertip.org
+ * (or through the ESP portal once registered). Nothing here submits anything.
+ */
+
+export const REQUIRED_REPORT_FIELDS = [
+  "reportingEsp",
+  "incidentSummary.incidentType",
+  "incidentSummary.incidentDateTime",
+  "incidentSummary.incidentDescription",
+  "reportedPerson.ipAddresses",
+  "reportedPerson.userAgent",
+  "reportedPerson.identifiers",
+  "content.text",
+  "content.sha256",
+  "content.contextTranscript",
+  "content.viewedByEsp",
+  "content.publiclyAvailable",
+  "internal.caseId",
+] as const;
+
+export interface ReporterInfo {
+  espName: string;
+  espContactName: string | null;
+  espContactEmail: string | null;
+  service: string;
+  serviceUrl: string;
+}
+
+export function reporterInfoFromEnv(): ReporterInfo {
+  return {
+    espName: process.env.CHILD_SAFETY_ESP_NAME ?? "Multiverse Games (Raising Intelligences)",
+    espContactName: process.env.CHILD_SAFETY_ESP_CONTACT_NAME ?? null,
+    espContactEmail: process.env.CHILD_SAFETY_ESP_CONTACT_EMAIL ?? null,
+    service: "Raising Intelligences",
+    serviceUrl: "https://multiversegames.ai/raising-intelligences/",
+  };
+}
+
+export interface ReportPackage {
+  generatedAt: string;
+  notice: string;
+  reportingEsp: ReporterInfo;
+  incidentSummary: {
+    incidentType: string;
+    incidentDateTime: string;
+    incidentDescription: string;
+    detectionMethod: string;
+  };
+  reportedPerson: {
+    ipAddresses: Array<{ ip: string; capturedAt: string; event: string }>;
+    userAgent: string | null;
+    identifiers: Array<{ kind: string; value: string }>;
+    accountVerified: false;
+  };
+  content: {
+    text: string;
+    sha256: string;
+    contextTranscript: Array<{ speaker: string; content: string; at: string | null }>;
+    locationOnService: string;
+    viewedByEsp: true;
+    publiclyAvailable: false;
+  };
+  classifier: { categories: string[]; scores: Record<string, number> | null; model: string | null; reason: string | null };
+  internal: {
+    caseId: string;
+    source: string;
+    gameRef: string | null;
+    status: string;
+    preservedAt: string;
+    confirmedAt: string | null;
+    confirmedBy: string | null;
+    retainUntil: string | null;
+  };
+  checklist: string[];
+}
+
+const iso = (ms: number | null | undefined): string | null => (ms ? new Date(ms).toISOString() : null);
+
+export function buildReportPackage(c: CaseSummary, e: EvidencePayload, reporter: ReporterInfo, now = Date.now()): ReportPackage {
+  const ipAddresses = [
+    ...(e.ipAddress ? [{ ip: e.ipAddress, capturedAt: new Date(e.incidentAt).toISOString(), event: "flagged_message" }] : []),
+    ...e.ipHistory.map((h) => ({ ip: h.ip, capturedAt: new Date(h.at).toISOString(), event: h.event })),
+  ];
+  return {
+    generatedAt: new Date(now).toISOString(),
+    notice:
+      "Prepared for a human to file with the NCMEC CyberTipline. Not submitted automatically. " +
+      "Contains apparent child sexual exploitation material in text form: handle under the access policy in docs/child-safety.md.",
+    reportingEsp: reporter,
+    incidentSummary: {
+      // The reviewer confirms or changes this on the form; enticement is the
+      // usual fit for text chat, apparent CSAM for imagery.
+      incidentType: "Online Enticement of Children for Sexual Acts / apparent child sexual exploitation (text) — reviewer to confirm",
+      incidentDateTime: new Date(e.incidentAt).toISOString(),
+      incidentDescription:
+        `A user of ${reporter.service} (an AI parenting simulation in which the player talks with an AI-generated child character) ` +
+        `submitted text that the service's automated moderation flagged as ${e.categories.join(", ") || "child sexual content"} ` +
+        `and a human reviewer confirmed. Transcript and identifiers attached.`,
+      detectionMethod: `${e.source} via ${e.model ?? "automated classifier"}; confirmed by human review`,
+    },
+    reportedPerson: {
+      ipAddresses,
+      userAgent: e.userAgent,
+      identifiers: e.identifiers,
+      accountVerified: false,
+    },
+    content: {
+      text: e.content,
+      sha256: e.contentSha256,
+      contextTranscript: e.context.map((t) => ({ speaker: t.speaker, content: t.content, at: iso(t.at ?? null) })),
+      locationOnService: `In-game chat, game ${e.gameRef ?? "(unknown)"}`,
+      viewedByEsp: true,
+      publiclyAvailable: false,
+    },
+    classifier: { categories: e.categories, scores: e.scores, model: e.model, reason: e.reason },
+    internal: {
+      caseId: c.id,
+      source: c.source,
+      gameRef: c.gameRef,
+      status: c.status,
+      preservedAt: new Date(e.preservedAt).toISOString(),
+      confirmedAt: iso(c.confirmedAt),
+      confirmedBy: c.confirmedBy,
+      retainUntil: iso(c.retainUntil),
+    },
+    checklist: [
+      "Sign in to the CyberTipline ESP portal (or https://report.cybertip.org if not yet registered as an ESP).",
+      "Incident type: choose the closest category (usually Online Enticement for text chat; Child Pornography if imagery is involved).",
+      "Incident date/time: use incidentSummary.incidentDateTime (UTC).",
+      "Reporting ESP: fill from reportingEsp.",
+      "Reported person: enter every IP in reportedPerson.ipAddresses with its capture time and event, the user agent, and any identifiers (Matrix ID etc.; note they are unverified).",
+      "Content: paste content.text and the context transcript as an attached .txt or in Additional Information; give the SHA-256.",
+      "Answer 'Did you view the content?' = Yes (a human reviewer viewed it). 'Publicly available?' = No.",
+      "Additional information: explain the service (AI child character, no real child in the conversation unless the transcript indicates one) and that identifiers are unverified.",
+      "Submit, then record the CyberTipline report number on the case (Mark reported). That starts the one-year preservation clock.",
+      "Do not contact the user, do not delete anything, and do not discuss the case outside the reviewer group.",
+      "If the transcript suggests a real child is in imminent danger, also call 911 / local police and NCMEC (1-800-843-5678).",
+    ],
+  };
+}
+
+function esc(s: string): string {
+  return s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] as string);
+}
+
+export function renderReportHtml(p: ReportPackage): string {
+  const row = (k: string, v: string | null | undefined) => `<tr><th>${esc(k)}</th><td>${esc(v ?? "—")}</td></tr>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="robots" content="noindex">
+<title>CyberTipline package ${esc(p.internal.caseId)}</title>
+<style>body{font:14px/1.5 system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;color:#111;background:#fff}
+th{text-align:left;vertical-align:top;padding:4px 12px 4px 0;white-space:nowrap}td{padding:4px 0}pre{white-space:pre-wrap;background:#f4f4f4;padding:12px}
+.notice{border:2px solid #b00;padding:8px 12px}</style></head><body>
+<p class="notice">${esc(p.notice)}</p>
+<h1>CyberTipline report package</h1>
+<h2>Reporting ESP</h2><table>${row("ESP", p.reportingEsp.espName)}${row("Contact", p.reportingEsp.espContactName)}${row("Email", p.reportingEsp.espContactEmail)}${row("Service", `${p.reportingEsp.service} — ${p.reportingEsp.serviceUrl}`)}</table>
+<h2>Incident</h2><table>${row("Type", p.incidentSummary.incidentType)}${row("Date/time (UTC)", p.incidentSummary.incidentDateTime)}${row("Description", p.incidentSummary.incidentDescription)}${row("Detection", p.incidentSummary.detectionMethod)}</table>
+<h2>Reported person</h2><table>${p.reportedPerson.ipAddresses.map((i) => row(`IP (${i.event})`, `${i.ip} at ${i.capturedAt}`)).join("")}${row("User agent", p.reportedPerson.userAgent)}${p.reportedPerson.identifiers.filter((i) => i.kind !== "ip").map((i) => row(i.kind, `${i.value} (unverified)`)).join("")}</table>
+<h2>Content</h2><table>${row("SHA-256", p.content.sha256)}${row("Location", p.content.locationOnService)}${row("Viewed by ESP", "Yes")}${row("Publicly available", "No")}</table>
+<h3>Flagged text</h3><pre>${esc(p.content.text)}</pre>
+<h3>Context (oldest first)</h3><pre>${esc(p.content.contextTranscript.map((t) => `[${t.at ?? ""}] ${t.speaker}: ${t.content}`).join("\n"))}</pre>
+<h2>Classifier</h2><pre>${esc(JSON.stringify(p.classifier, null, 2))}</pre>
+<h2>Internal</h2><pre>${esc(JSON.stringify(p.internal, null, 2))}</pre>
+<h2>Filing checklist</h2><ol>${p.checklist.map((c) => `<li>${esc(c)}</li>`).join("")}</ol>
+</body></html>`;
+}

@@ -14,6 +14,7 @@ import type pg from "pg";
 import type { StoredAnswer } from "../research/questions.js";
 import type { MomentLabel } from "../research/moment-label.js";
 import { ESCALATION_DARK_CONCERN } from "../safety/escalation.js";
+import { InMemoryChildSafetyStore, PgChildSafetyStore, type ChildSafetyStore } from "../safety/child-safety/store.js";
 
 export interface FollowupContact {
   email: string | null;
@@ -61,6 +62,12 @@ export interface AlbumMoment {
  * storage so a session can be reconstructed from the latest checkpoint.
  */
 export interface GameRepository {
+  /**
+   * The child-safety evidence vault's storage (schema child_safety). Separate
+   * from every game table and never touched by deleteGameData — see
+   * safety/child-safety/ and docs/child-safety.md.
+   */
+  readonly childSafety: ChildSafetyStore;
   /** Upsert the top-level game checkpoint (phase, counters, identity doc). */
   saveGame(state: GameState): Promise<void>;
   saveMessage(gameId: string, message: Message): Promise<void>;
@@ -312,7 +319,10 @@ function reconstructState(input: {
 }
 
 export class PgGameRepository implements GameRepository {
-  constructor(private db: Pick<pg.Pool, "query"> & Partial<Pick<pg.Pool, "connect">> = pool) {}
+  readonly childSafety: ChildSafetyStore;
+  constructor(private db: Pick<pg.Pool, "query"> & Partial<Pick<pg.Pool, "connect">> = pool) {
+    this.childSafety = new PgChildSafetyStore(db);
+  }
 
   async saveGame(state: GameState): Promise<void> {
     await this.db.query(
@@ -1058,6 +1068,7 @@ export class PgGameRepository implements GameRepository {
  * game without a Postgres connection.
  */
 export class InMemoryGameRepository implements GameRepository {
+  readonly childSafety = new InMemoryChildSafetyStore();
   private games = new Map<
     string,
     {
