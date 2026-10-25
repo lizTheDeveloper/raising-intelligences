@@ -14,6 +14,7 @@ import {
   confirmCase,
   deleteTestCase,
   dismissCase,
+  includeParticipant,
   listCases,
   logIp,
   markReported,
@@ -105,6 +106,22 @@ export function createChildSafetyAdminRoutes(repo: GameRepository): Router {
     }
   });
 
+  // Reviewer explicitly adds a co-player / other-participant identifier to
+  // the flagged set (banned on confirm, included in the report). Reason
+  // required; verified identifiers only; logged.
+  router.post("/admin/child-safety/cases/:id/include-participant", async (req, res) => {
+    try {
+      const b = (req.body ?? {}) as { kind?: unknown; value?: unknown; reason?: unknown };
+      if (typeof b.kind !== "string" || typeof b.value !== "string") throw new VaultError("kind and value are required", 400);
+      res.json(await includeParticipant(
+        store, String(req.params.id), actorOf(req), req.ip ?? null, { kind: b.kind, value: b.value },
+        typeof b.reason === "string" ? b.reason : "", (ip, reason) => repo.banIp(ip, reason),
+      ));
+    } catch (err) {
+      sendError(res, err, "include-participant");
+    }
+  });
+
   router.post("/admin/child-safety/cases/:id/report", async (req, res) => {
     try {
       const id = String(req.params.id);
@@ -174,7 +191,7 @@ export function createChildSafetyAdminRoutes(repo: GameRepository): Router {
       };
       await repo.saveGame(state);
       const userAgent = "child-safety-synthetic-test";
-      await logIp(store, { ip: SYNTHETIC_IP, gameRef: state.id, event: "game_create", userAgent });
+      await logIp(store, { ip: SYNTHETIC_IP, gameRef: state.id, event: "game_create", slot: "parent1", userAgent });
       const { caseId } = await applyModerationBlock({
         repo,
         games: new Map(),
@@ -239,7 +256,9 @@ const str = (v: unknown, max: number): string | null => (typeof v === "string" &
  *   content      required, the flagged text (≤ 100k chars)
  *   context      [{speaker, content, at?}] prior turns, oldest first (≤ 200)
  *   categories   string[]; scores {cat: number}; model; reason
- *   gameRef, ipAddress, userAgent, identifiers [{kind, value}]
+ *   gameRef, ipAddress (the flagged sender's request IP), userAgent,
+ *   identifiers [{kind, value, verified?, role?}] — verified only if the
+ *   caller authenticated it; role "participant" for anyone but the sender
  *   incidentAt   epoch ms or ISO string; externalRef (idempotency key); isTest
  * Returns {caseId, created}.
  */
@@ -274,7 +293,12 @@ export function createChildSafetyIngestRoutes(repo: GameRepository): Router {
             const o = i as Record<string, unknown>;
             const kind = str(o?.kind, 40);
             const value = str(o?.value, 300);
-            return kind && value ? [{ kind, value }] : [];
+            // verified: true only for an identity the calling service itself
+            // authenticated; otherwise it is evidence only, never a ban.
+            // role "participant" marks someone other than the flagged sender.
+            return kind && value
+              ? [{ kind, value, verified: o.verified === true, role: o.role === "participant" ? ("participant" as const) : ("flagged" as const) }]
+              : [];
           })
         : [];
       const scores: Record<string, number> = {};

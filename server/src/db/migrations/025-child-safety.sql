@@ -72,14 +72,18 @@ CREATE TABLE IF NOT EXISTS child_safety.ip_log (
   ip          TEXT        NOT NULL,
   game_ref    TEXT,
   event       TEXT        NOT NULL,
+  -- Which seat produced the row (parent1 / parent2), so a confirmed case
+  -- bans and reports only the flagged sender, never a co-player.
+  slot        TEXT,
   user_agent  TEXT,
   account_id  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_cs_ip_log_game ON child_safety.ip_log (game_ref, at);
 CREATE INDEX IF NOT EXISTS idx_cs_ip_log_at ON child_safety.ip_log (at);
 
--- Non-IP identifiers banned by a confirmed case (Matrix IDs etc.), and IPs a
--- confirmed case has locked against unban.
+-- Identifiers banned by a confirmed case, which locks them against unban.
+-- Only verified identifiers ever land here: a server-observed IP, or an
+-- authenticated account. RI's Matrix IDs are client-claimed and never do.
 CREATE TABLE IF NOT EXISTS child_safety.banned_identifiers (
   kind        TEXT        NOT NULL,
   value       TEXT        NOT NULL,

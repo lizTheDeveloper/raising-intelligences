@@ -126,7 +126,7 @@ export function createGameRoutes(
     // GameState; written directly to the games row.
     await repo.recordGameIp(state.id, req.ip ?? null);
     // Child-safety IP log (90-day retention; docs/child-safety.md).
-    await logIp(repo.childSafety, { ip: req.ip, gameRef: state.id, event: "game_create", userAgent: req.get("user-agent") ?? null });
+    await logIp(repo.childSafety, { ip: req.ip, gameRef: state.id, event: "game_create", slot: "parent1", userAgent: req.get("user-agent") ?? null });
     // Per-game secret: only its hash is stored; the plaintext is returned once.
     const { secret, hash } = newGameSecret();
     await repo.recordAccessSecretHash(state.id, hash);

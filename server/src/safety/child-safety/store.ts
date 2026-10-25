@@ -20,6 +20,36 @@ export interface Identifier {
   /** "ip" | "matrix" | "account" | "email" | ... — what the value is. */
   kind: string;
   value: string;
+  /**
+   * "flagged": belongs to the sender whose content was flagged — banned on
+   * confirm and listed in the report package. "participant": seen in the same
+   * game from another seat (co-player) or from no known seat — never banned or
+   * reported unless a reviewer explicitly includes it, with a reason.
+   * Absent on rows written before roles existed; see identifierRole().
+   */
+  role?: "flagged" | "participant";
+  /**
+   * True only for identifiers the server itself observed or authenticated
+   * (a request IP, a verified session). Client-claimed IDs (RI's Matrix
+   * userId) are false: kept as "claimed, unverified", never banned or reported.
+   */
+  verified?: boolean;
+  /** Seat that produced it (parent1 / parent2), when known. */
+  slot?: string | null;
+  /** Set when a reviewer moved a participant into the flagged set. */
+  includedBy?: string;
+  includedReason?: string;
+}
+
+/** Role of an identifier; legacy role-less rows count as flagged only for the case's own request IP. */
+export function identifierRole(id: Identifier, caseIp: string | null): "flagged" | "participant" {
+  if (id.role) return id.role;
+  return id.kind === "ip" && id.value === caseIp ? "flagged" : "participant";
+}
+
+/** Whether an identifier is verified; legacy rows: IPs (server-observed) yes, anything else no. */
+export function identifierVerified(id: Identifier): boolean {
+  return id.verified ?? id.kind === "ip";
 }
 
 export interface CaseRow {
@@ -69,7 +99,10 @@ export interface IpLogEntry {
   gameRef: string | null;
   /** game_create | socket_create | socket_join | message */
   event: string;
+  /** parent1 / parent2 when the seat is known. */
+  slot: string | null;
   userAgent: string | null;
+  /** Client-claimed account id (RI: Matrix userId). Unverified. */
   accountId: string | null;
   at: number;
 }
@@ -337,19 +370,19 @@ export class PgChildSafetyStore implements ChildSafetyStore {
 
   async insertIpLog(e: IpLogEntry): Promise<void> {
     await this.db.query(
-      `INSERT INTO child_safety.ip_log (ip, game_ref, event, user_agent, account_id, at) VALUES ($1, $2, $3, $4, $5, $6)`,
-      [e.ip, e.gameRef, e.event, e.userAgent, e.accountId, new Date(e.at)],
+      `INSERT INTO child_safety.ip_log (ip, game_ref, event, slot, user_agent, account_id, at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [e.ip, e.gameRef, e.event, e.slot, e.userAgent, e.accountId, new Date(e.at)],
     );
   }
 
   async ipLogForGame(gameRef: string, sinceMs: number): Promise<IpLogEntry[]> {
     const { rows } = await this.db.query(
-      `SELECT ip, game_ref, event, user_agent, account_id, at FROM child_safety.ip_log
+      `SELECT ip, game_ref, event, slot, user_agent, account_id, at FROM child_safety.ip_log
         WHERE game_ref = $1 AND at >= $2 ORDER BY at`,
       [gameRef, new Date(sinceMs)],
     );
     return rows.map((r) => ({
-      ip: r.ip, gameRef: r.game_ref, event: r.event, userAgent: r.user_agent, accountId: r.account_id,
+      ip: r.ip, gameRef: r.game_ref, event: r.event, slot: r.slot ?? null, userAgent: r.user_agent, accountId: r.account_id,
       at: new Date(r.at).getTime(),
     }));
   }

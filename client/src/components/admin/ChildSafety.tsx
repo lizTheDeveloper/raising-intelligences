@@ -13,6 +13,16 @@ import { useState, useEffect, useCallback } from "react";
 
 const BASE = import.meta.env.BASE_URL + "api/admin/child-safety";
 
+interface Ident {
+  kind: string;
+  value: string;
+  role?: "flagged" | "participant";
+  verified?: boolean;
+  slot?: string | null;
+  includedBy?: string;
+  includedReason?: string;
+}
+
 interface CaseSummary {
   id: string;
   source: string;
@@ -20,6 +30,7 @@ interface CaseSummary {
   categories: string[];
   gameRef: string | null;
   ipAddress: string | null;
+  identifiers: Ident[];
   incidentAt: number;
   createdAt: number;
   isTest: boolean;
@@ -41,8 +52,8 @@ interface Evidence {
   reason: string | null;
   ipAddress: string | null;
   userAgent: string | null;
-  identifiers: Array<{ kind: string; value: string }>;
-  ipHistory: Array<{ ip: string; event: string; at: number }>;
+  sender?: string | null;
+  ipHistory: Array<{ ip: string; event: string; at: number; slot?: string | null }>;
 }
 
 const STATUS_FILTERS = ["open", "confirmed", "reported", "dismissed", "released"] as const;
@@ -57,7 +68,7 @@ export function ChildSafety({ token }: { token: string }) {
   const [cases, setCases] = useState<CaseSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [viewing, setViewing] = useState<{ id: string; evidence: Evidence } | null>(null);
+  const [viewing, setViewing] = useState<{ id: string; case: CaseSummary; evidence: Evidence } | null>(null);
 
   const call = useCallback(
     async (path: string, method = "GET", body?: unknown) => {
@@ -100,8 +111,8 @@ export function ChildSafety({ token }: { token: string }) {
   async function view(id: string) {
     if (!window.confirm("Viewing decrypts the evidence and is logged under your name. Continue?")) return;
     await act(async () => {
-      const r = (await call(`/cases/${id}/view`, "POST")) as { evidence: Evidence };
-      setViewing({ id, evidence: r.evidence });
+      const r = (await call(`/cases/${id}/view`, "POST")) as { case: CaseSummary; evidence: Evidence };
+      setViewing({ id, case: r.case, evidence: r.evidence });
     });
   }
 
@@ -113,8 +124,23 @@ export function ChildSafety({ token }: { token: string }) {
   }
 
   async function confirm(id: string) {
-    if (!window.confirm("Confirm as reportable? This locks the evidence (1-year minimum hold) and bans every linked IP and identifier.")) return;
+    if (!window.confirm("Confirm as reportable? This locks the evidence (1-year minimum hold) and bans the flagged sender's IPs. Other participants are not banned unless you include them.")) return;
     await act(() => call(`/cases/${id}/confirm`, "POST"));
+  }
+
+  // Legacy rows have no role: only the case's own request IP counts as the sender's.
+  const roleOf = (c: CaseSummary, i: Ident) => i.role ?? (i.kind === "ip" && i.value === c.ipAddress ? "flagged" : "participant");
+  const verifiedOf = (i: Ident) => i.verified ?? i.kind === "ip";
+
+  async function includeParticipant(c: CaseSummary, i: Ident) {
+    const reason = window.prompt(
+      `Include ${i.kind} ${i.value} (another participant) in the bans and the report? This is logged. Reason (required):`,
+    );
+    if (!reason?.trim()) return;
+    await act(async () => {
+      const updated = (await call(`/cases/${c.id}/include-participant`, "POST", { kind: i.kind, value: i.value, reason })) as CaseSummary;
+      setViewing((v) => (v && v.id === c.id ? { ...v, case: updated } : v));
+    });
   }
 
   async function reportPackage(id: string) {
@@ -226,7 +252,29 @@ export function ChildSafety({ token }: { token: string }) {
           <p>Classifier: {viewing.evidence.model ?? "—"} · {viewing.evidence.categories.join(", ")}</p>
           {viewing.evidence.reason && <p>Reason: {viewing.evidence.reason}</p>}
           <p>User agent: {viewing.evidence.userAgent ?? "—"}</p>
-          <p>Identifiers: {viewing.evidence.identifiers.map((i) => `${i.kind}:${i.value}`).join(", ") || "—"}</p>
+          <h4>Flagged sender{viewing.evidence.sender ? ` (${viewing.evidence.sender})` : ""}: banned on confirm, in the report</h4>
+          <ul>
+            {viewing.case.identifiers.filter((i) => roleOf(viewing.case, i) === "flagged").map((i) => (
+              <li key={`${i.kind}:${i.value}`}>
+                {i.kind}: <code>{i.value}</code>
+                {!verifiedOf(i) && <em> (claimed, unverified: never banned)</em>}
+                {i.includedBy && <em> (included by {i.includedBy}: {i.includedReason})</em>}
+              </li>
+            ))}
+          </ul>
+          <h4>Other participants: not banned, not in the report</h4>
+          <ul>
+            {viewing.case.identifiers.filter((i) => roleOf(viewing.case, i) === "participant").map((i) => (
+              <li key={`${i.kind}:${i.value}`}>
+                {i.kind}: <code>{i.value}</code>{i.slot ? ` (${i.slot})` : ""}
+                {verifiedOf(i) ? (
+                  <button style={{ marginLeft: 8 }} onClick={() => includeParticipant(viewing.case, i)}>Include…</button>
+                ) : (
+                  <em> (claimed, unverified)</em>
+                )}
+              </li>
+            ))}
+          </ul>
           <h4>Flagged content</h4>
           <pre style={{ whiteSpace: "pre-wrap" }}>{viewing.evidence.content}</pre>
           <h4>Context (oldest first)</h4>
@@ -234,7 +282,7 @@ export function ChildSafety({ token }: { token: string }) {
             {viewing.evidence.context.map((t) => `${t.speaker}: ${t.content}`).join("\n")}
           </pre>
           <h4>IP log</h4>
-          <pre>{viewing.evidence.ipHistory.map((h) => `${new Date(h.at).toISOString()} ${h.event} ${h.ip}`).join("\n") || "—"}</pre>
+          <pre>{viewing.evidence.ipHistory.map((h) => `${new Date(h.at).toISOString()} ${h.event} ${h.slot ?? "?"} ${h.ip}`).join("\n") || "—"}</pre>
         </div>
       )}
     </div>
