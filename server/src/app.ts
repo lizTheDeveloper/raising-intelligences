@@ -13,6 +13,7 @@ import { createAdminRoutes } from "./routes/admin.js";
 import { createAlbumRoutes } from "./routes/album.js";
 import { createResearchRoutes } from "./routes/research.js";
 import { createSupportRoutes } from "./routes/support.js";
+import { createCampusRoutes } from "./routes/campus.js";
 import { createChildSafetyAdminRoutes, createChildSafetyIngestRoutes, INGEST_PATH } from "./routes/child-safety.js";
 import type { AdminQueries } from "./db/admin-queries.js";
 import { ConversationEngine } from "./game/conversation-engine.js";
@@ -28,6 +29,8 @@ import type { Session } from "./game/session-manager.js";
 import type { GameState } from "./types.js";
 
 const GAME_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+/** The only other origin allowed to frame the game (web cabinets). */
+export const CAMPUS_ORIGIN = "https://campus.themultiverse.school";
 const EVICTION_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
 export interface BuildServerOptions {
@@ -124,8 +127,15 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
           ],
           fontSrc: ["'self'", "https://fonts.gstatic.com"],
           mediaSrc: ["'self'"],
+          // Web cabinets: campus.themultiverse.school frames the game in an
+          // iframe (see "Campus cabinet" in README.md). Nobody else may.
+          frameAncestors: ["'self'", CAMPUS_ORIGIN],
         },
       },
+      // X-Frame-Options can't name an allowed origin, and browsers that see
+      // DENY refuse the campus frame even when the CSP allows it: off.
+      // frame-ancestors above is the framing control.
+      frameguard: false,
       // crossOriginEmbedderPolicy blocks EventSource in some browsers when set
       crossOriginEmbedderPolicy: false,
     })
@@ -138,8 +148,8 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   app.use((req, res, next) => (req.path === INGEST_PATH ? next() : jsonParser(req, res, next)));
 
   // Security headers — defense-in-depth against common browser-based attacks.
+  // (No X-Frame-Options: framing is governed by CSP frame-ancestors above.)
   const securityHeaders: RequestHandler = (_req, res, next) => {
-    res.setHeader("X-Frame-Options", "DENY");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
@@ -188,6 +198,8 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   // (a few per scene) and bounds scripted abuse. Whole-route, not per-branch, so every write is bounded.
   const answerLimit = rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false });
   const supportCheckoutLimit = rateLimit({ windowMs: 60_000, max: 10, standardHeaders: true, legacyHeaders: false });
+  // Campus answers each mg:ready with one pass; a student needs a handful a minute at most.
+  const campusPassLimit = rateLimit({ windowMs: 60_000, max: 20, standardHeaders: true, legacyHeaders: false });
 
   // Single shared lock map — prevents cross-module races between game.ts,
   // endgame.ts, and socket handlers operating on the same game concurrently.
@@ -196,6 +208,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   app.use("/api", createGameRoutes(conversationEngine, endgameEngine, games, repo, { llmRateLimit, gameCreateLimit, gameLocks, llm, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0 }));
   app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit, gameLocks }));
   app.use("/api", createResearchRoutes(games, repo, { gameLocks, llm, followupLimit, answerLimit, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0 }));
+  app.use("/api", createCampusRoutes(repo, { limit: campusPassLimit }));
   app.use("/api", createUserRoutes());
   app.use("/api", createAlbumRoutes(repo));
   // The limiter is scoped to the /support/checkout route itself, not mounted

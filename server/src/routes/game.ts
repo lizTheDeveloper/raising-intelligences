@@ -40,6 +40,9 @@ import {
 import { UUID_RE } from "../lib/validation.js";
 import { classifyBirthYear } from "../research/age.js";
 import { isResearchEnabled } from "../research/config.js";
+import {
+  CAMPUS_IDENTITY_HEADER, REST_OCCUPANT, campusIdentityForRequest, campusOccupant, isCampusSubBanned, restSpeaker,
+} from "../security/campus-identity.js";
 import { newGameSecret, requireGameSecret, verifyGameSecret, GAME_SECRET_HEADER } from "../security/game-secret.js";
 import { cleanRepairMessage } from "../research/repair.js";
 import { forgetSceneSummary } from "../research/moment-label.js";
@@ -87,10 +90,12 @@ export function createGameRoutes(
   const resolveGame = (id: string) => sharedResolveGame(id, games, repo);
 
   router.post("/game", ...(gameCreateLimit ? [gameCreateLimit] : []), async (req: Request, res: Response) => {
-    const { childName, relationshipType, birthYear } = req.body as {
+    const { childName, relationshipType, birthYear, campusIdentity } = req.body as {
       childName: string;
       relationshipType?: string;
       birthYear?: unknown;
+      /** Web cabinets: the identity token from POST /api/campus-pass. Optional. */
+      campusIdentity?: unknown;
     };
     if (!childName) {
       res.status(400).json({ error: "childName is required" });
@@ -112,9 +117,28 @@ export function createGameRoutes(
       res.status(400).json({ error: age.error });
       return;
     }
+    // A verified campus id (web cabinet) is refused here if a confirmed
+    // child-safety case banned it, exactly as a banned IP is refused. An
+    // unknown/expired identity is ignored: the game starts anonymously.
+    const campus = await campusIdentityForRequest(repo, campusIdentity);
+    if (await isCampusSubBanned(repo, campus.sub)) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
     const state = createGame(childName, relationshipType);
     games.set(state.id, state);
     await repo.saveGame(state);
+    // Never blocks play: if the campus id can't be stored, the game goes on
+    // without it (it then has no verified id, exactly like an anonymous one).
+    let gameCampusSub: string | null = null;
+    if (campus.sub) {
+      try {
+        await repo.recordGameCampusSub(state.id, campus.sub);
+        gameCampusSub = campus.sub;
+      } catch (err) {
+        logger.error("campus_sub_record_failed", { gameId: state.id, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
     if (age?.ok) {
       await repo.recordAge(state.id, {
         birthYear: age.isAdult && isResearchEnabled() ? age.birthYear : null,
@@ -126,13 +150,22 @@ export function createGameRoutes(
     // GameState; written directly to the games row.
     await repo.recordGameIp(state.id, req.ip ?? null);
     // Child-safety IP log (90-day retention; docs/child-safety.md).
-    await logIp(repo.childSafety, { ip: req.ip, gameRef: state.id, event: "game_create", slot: "parent1", userAgent: req.get("user-agent") ?? null });
+    await logIp(repo.childSafety, {
+      ip: req.ip, gameRef: state.id, event: "game_create", slot: "parent1", userAgent: req.get("user-agent") ?? null,
+      occupant: gameCampusSub ? campusOccupant(gameCampusSub) : REST_OCCUPANT,
+      ...(gameCampusSub ? { accountId: gameCampusSub, accountVerified: true } : {}),
+    });
     // Per-game secret: only its hash is stored; the plaintext is returned once.
     const { secret, hash } = newGameSecret();
     await repo.recordAccessSecretHash(state.id, hash);
     // `research` is only a hint so the client can skip wait-question requests
     // outright; the research routes enforce the same gates themselves.
-    res.json({ gameId: state.id, secret, research: isResearchEnabled() && age?.ok === true && age.isAdult });
+    // `campus` only when an identity was sent: "unknown" tells a cabinet client
+    // to ask campus for a fresh pass.
+    res.json({
+      gameId: state.id, secret, research: isResearchEnabled() && age?.ok === true && age.isAdult,
+      ...(campus.status ? { campus: campus.status } : {}),
+    });
     // Kick off gender inference and portrait generation in parallel. Scene 1 is
     // deliberately not prefetched here: it must be built after the personality
     // seed exists, so /next-event generates it via engine.startEvent.
@@ -383,6 +416,7 @@ export function createGameRoutes(
             content,
             ipAddress: req.ip ?? null,
             userAgent: req.get("user-agent") ?? null,
+            speaker: await restSpeaker(repo, state.id, req.get(CAMPUS_IDENTITY_HEADER)),
           });
           if (moderation.blocked) {
             sseTerminated(res);
@@ -704,6 +738,7 @@ export function createGameRoutes(
           content: cleaned.message,
           ipAddress: req.ip ?? null,
           userAgent: req.get("user-agent") ?? null,
+          speaker: await restSpeaker(repo, state.id, req.get(CAMPUS_IDENTITY_HEADER)),
         });
         if (moderation.blocked) {
           res.status(403).json({ error: "This session has ended" });
@@ -911,6 +946,7 @@ export function createGameRoutes(
             content,
             ipAddress: req.ip ?? null,
             userAgent: req.get("user-agent") ?? null,
+            speaker: await restSpeaker(repo, state.id, req.get(CAMPUS_IDENTITY_HEADER)),
           });
           if (moderation.blocked) {
             sseTerminated(res);

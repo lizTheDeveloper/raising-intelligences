@@ -14,8 +14,9 @@ import type { CaseRow, CaseStatus, ChildSafetyStore, Identifier, IpLogEntry } fr
  *   dismissed — a reviewer judged it a false positive (reason required).
  *               Purged CHILD_SAFETY_DISMISSED_RETENTION_DAYS (90) later.
  *   confirmed — a reviewer judged it reportable. Locked: never purged; the
- *               flagged sender's verified identifiers (server-observed IPs)
- *               are banned and cannot be unbanned. Co-players' identifiers
+ *               flagged sender's verified identifiers (server-observed IPs,
+ *               and a campus identity verified from a launch pass) are banned
+ *               and cannot be unbanned. Co-players' identifiers
  *               are banned only if a reviewer includes them, with a reason.
  *   reported  — a human filed it at report.cybertip.org and recorded the
  *               report id. Still locked; retain_until runs one year (or the
@@ -56,6 +57,14 @@ export interface EvidenceInput {
   identifiers?: Identifier[];
   /** Seat whose content was flagged (parent1 / parent2). Scopes bans and the report to that sender. */
   sender?: string | null;
+  /**
+   * Who in that seat sent it (the IP-log `occupant` of the flagged message),
+   * when known — a per-message flag knows it. A verified campus id from the
+   * IP log is flagged only when its rows have this same occupant. Absent (a
+   * scene-reader flag): the seat's single occupant, if its rows show only
+   * one; otherwise campus ids stay participants for a reviewer to include.
+   */
+  senderOccupant?: string | null;
   /**
    * Whether ipAddress is the flagged sender's own request (true for a
    * per-message flag). False for a scene-reader flag, where the request that
@@ -121,12 +130,19 @@ function requireActor(actor: string): string {
   return a;
 }
 
-/** Merges duplicates: flagged beats participant (a shared device is the sender's too), verified is OR-ed. */
-function dedupeIdentifiers(ids: Identifier[]): Identifier[] {
+/**
+ * Merges duplicates: flagged beats participant (a shared device is the
+ * sender's too). Verified and unverified sightings of the same value are
+ * NEVER merged: role and verified stay paired, so an identifier is
+ * verified+flagged (bannable) only if one sighting was itself both. Otherwise
+ * an unverified claim in the flagged seat could lend "flagged" to someone
+ * else's verified id seen as a participant, and frame them into a ban.
+ */
+export function dedupeIdentifiers(ids: Identifier[]): Identifier[] {
   const byKey = new Map<string, Identifier>();
   for (const id of ids) {
     if (!id.value) continue;
-    const k = `${id.kind}:${id.value}`;
+    const k = `${id.kind}:${id.value}:${identifierVerified(id) ? "v" : "u"}`;
     const prev = byKey.get(k);
     if (!prev) {
       byKey.set(k, { ...id });
@@ -135,7 +151,6 @@ function dedupeIdentifiers(ids: Identifier[]): Identifier[] {
     byKey.set(k, {
       ...prev,
       role: prev.role === "flagged" || id.role === "flagged" ? "flagged" : "participant",
-      verified: !!(prev.verified || id.verified),
       slot: prev.role === "flagged" ? prev.slot ?? id.slot : id.role === "flagged" ? id.slot ?? prev.slot : prev.slot ?? id.slot,
     });
   }
@@ -169,6 +184,17 @@ export async function preserveEvidence(
   const senderOwns = (slot: string | null) => sender !== null && slot === sender;
   const requestIpIsSender = input.requestIpIsSender ?? true;
   const senderIps = new Set(ipHistory.filter((e) => senderOwns(e.slot)).map((e) => e.ip));
+  // A verified campus id is the sender's only if the rows carrying it come
+  // from the same OCCUPANT of the seat as the flagged content — never just
+  // the same slot: a slot can change hands (a disconnected seat taken over,
+  // a solo game posted into by its id), and the earlier occupant's verified
+  // id must not become the newcomer's.
+  const senderOccupant: string | null = (() => {
+    if (input.senderOccupant !== undefined) return input.senderOccupant;
+    const seen = new Set(ipHistory.filter((e) => senderOwns(e.slot) && e.occupant).map((e) => e.occupant as string));
+    return seen.size === 1 ? [...seen][0] : null;
+  })();
+  const campusIsSender = (e: IpLogEntry) => senderOwns(e.slot) && senderOccupant !== null && e.occupant === senderOccupant;
   const requestIpRole: "flagged" | "participant" =
     requestIpIsSender || (input.ipAddress !== null && senderIps.has(input.ipAddress)) ? "flagged" : "participant";
   const identifiers = dedupeIdentifiers([
@@ -176,10 +202,16 @@ export async function preserveEvidence(
     ...ipHistory.map((e): Identifier => ({
       kind: "ip", value: e.ip, role: senderOwns(e.slot) ? "flagged" : "participant", verified: true, slot: e.slot,
     })),
-    // Client-claimed account ids (RI's Matrix userId): evidence only, never a ban.
-    ...ipHistory.filter((e) => e.accountId).map((e): Identifier => ({
-      kind: "matrix", value: e.accountId as string, role: senderOwns(e.slot) ? "flagged" : "participant", verified: false, slot: e.slot,
-    })),
+    // Account ids. A client-claimed Matrix userId (kind "matrix") is
+    // evidence only, never a ban. A campus identity the server verified from
+    // a campus launch pass (accountVerified) is its own kind, "campus", and
+    // verified, so confirm bans it like an IP. Separate kinds mean a claim
+    // can never merge into a verified campus id.
+    ...ipHistory.filter((e) => e.accountId).map((e): Identifier =>
+      e.accountVerified === true
+        ? { kind: "campus", value: e.accountId as string, role: campusIsSender(e) ? "flagged" : "participant", verified: true, slot: e.slot }
+        : { kind: "matrix", value: e.accountId as string, role: senderOwns(e.slot) ? "flagged" : "participant", verified: false, slot: e.slot },
+    ),
     ...(input.identifiers ?? []).map((i): Identifier => ({ ...i, role: i.role ?? "flagged", verified: i.verified ?? false })),
   ]);
   // The case's headline IP is the flagged sender's: the request IP when it is
@@ -415,7 +447,10 @@ export async function includeParticipant(
   if (!why) throw new VaultError("a reason is required to include another participant", 400);
   const c = await mustGet(store, caseId);
   if (c.status === "released") throw new VaultError("case is released", 409);
-  const i = c.identifiers.findIndex((id) => id.kind === target.kind && id.value === target.value);
+  // Prefer the verified sighting: verified and unverified ones of one value are kept apart.
+  const matches = (id: Identifier) => id.kind === target.kind && id.value === target.value;
+  const iv = c.identifiers.findIndex((id) => matches(id) && identifierVerified(id));
+  const i = iv >= 0 ? iv : c.identifiers.findIndex(matches);
   if (i < 0) throw new VaultError("that identifier is not part of this case", 404);
   const id = c.identifiers[i];
   if (!identifierVerified(id)) {
@@ -519,6 +554,10 @@ export async function logIp(
   entry: {
     ip: string | null | undefined; gameRef: string | null; event: string;
     slot?: string | null; userAgent?: string | null; accountId?: string | null;
+    /** True only for an account id the server verified (a campus identity). */
+    accountVerified?: boolean;
+    /** Who within the seat produced the row (see IpLogEntry.occupant). */
+    occupant?: string | null;
   },
   now: number = Date.now(),
 ): Promise<void> {
@@ -531,6 +570,8 @@ export async function logIp(
       slot: entry.slot ?? null,
       userAgent: entry.userAgent ? entry.userAgent.slice(0, 512) : null,
       accountId: entry.accountId ?? null,
+      accountVerified: !!entry.accountId && entry.accountVerified === true,
+      occupant: entry.occupant ?? null,
       at: now,
     });
   } catch (err) {

@@ -61,6 +61,7 @@ Copy `.env.example` to `.env`. The required keys:
 - `OPENAI_API_KEY` — optional, only if you want direct OpenAI image generation (portraits use OpenRouter by default)
 - `LANGFUSE_*` — optional, enables LLM call tracing
 - `ADMIN_TOKEN` — optional, enables the admin dashboard at `/raising-intelligences/admin` (requires `DATABASE_URL`); also authenticates `DELETE /api/admin/games/:id`, which erases a game on a player's request
+- `CAMPUS_PASS_PUBLIC_KEY` — optional; overrides the pinned campus launch-pass public key (see "Campus cabinet")
 - `RI_RESEARCH_ENABLED` — optional, default off; only the exact value `true` enables the research features. Leave off until the copy and the consent and age handling are reviewed
 
 The server works without any of these, but LLM calls will fail without an API key.
@@ -174,6 +175,16 @@ docker run -p 3000:3000 \
 ```
 
 The production instance at `multiversegames.ai` uses Traefik for TLS routing. See `deploy/deploy.sh` for the full setup.
+
+---
+
+## Campus cabinet
+
+Students on [campus.themultiverse.school](https://campus.themultiverse.school) can play RI in the Multiverse Games building's story corner. Campus opens `https://play.multiversegames.ai/raising-intelligences/?cabinet=campus` in an iframe.
+
+- **Framing:** every response sends `Content-Security-Policy: frame-ancestors 'self' https://campus.themultiverse.school` and no `X-Frame-Options`. No other site can frame the game.
+- **Cabinet mode** (`client/src/campusCabinet.ts`) is on only when the page is framed *and* the URL has `?cabinet=campus`. Outside it, nothing changes. In cabinet mode the client posts `mg:ready` to the campus origin, trades campus's `mg:pass` at `POST <base>api/campus-pass`, posts `mg:signed-in`, and sends the identity as `campusIdentity` when it creates or joins a game. The exchange URL comes from vite's configured base, never from `location`, so a pass cannot leave the page's origin. The pay-what-you-want prompt is hidden: a cabinet never asks for money.
+- **Server:** `server/src/security/campus-pass.ts` verifies passes against the pinned campus public key (override: `CAMPUS_PASS_PUBLIC_KEY`). Each pass is single-use: its `jti` is spent in Postgres (`campus_pass_jti`). `server/src/routes/campus.ts` handles the exchange. The verified campus id feeds the child-safety vault as a verified identifier that a confirmed case bans; see "Verified campus identity" in `docs/child-safety.md`.
 
 ---
 

@@ -11,6 +11,8 @@ export interface RepairDeps {
   gameId: string;
   /** The game's secret, if this device has one. Sent so the server may keep the words as research data. */
   secret: string | null;
+  /** Web cabinets: the campus identity token, so the server knows the creator sent it. */
+  campusIdentity?: string;
   message: string;
   /** BASE_URL-style prefix ending in "/". */
   base: string;
@@ -33,6 +35,7 @@ export async function sendRepair(deps: RepairDeps): Promise<RepairResult> {
       headers: {
         "Content-Type": "application/json",
         ...(deps.secret ? { "x-game-secret": deps.secret } : {}),
+        ...(deps.campusIdentity ? { "x-campus-identity": deps.campusIdentity } : {}),
       },
       body: JSON.stringify({ message }),
     });

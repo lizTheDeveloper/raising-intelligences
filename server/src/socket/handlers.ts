@@ -57,6 +57,7 @@ import {
 import { generatePersonalitySeed } from "../game/personality.js";
 import { moderateParentMessage, applyModerationBlock, recordConcern } from "../safety/moderation.js";
 import { logIp } from "../safety/child-safety/vault.js";
+import { campusIdentityForRequest, isCampusSubBanned, sanitizeClaimedUserId, seatOccupant } from "../security/campus-identity.js";
 import { evaluateEscalation } from "../safety/escalation.js";
 import { getSocketIp } from "../lib/client-ip.js";
 import { buildSceneTranscript } from "../game/context-assembler.js";
@@ -115,6 +116,10 @@ const HANDOFF_REJECTED = "That link has expired or was already used. Ask for a n
 interface SocketData {
   gameId?: string;
   slot?: Sender;
+  /** IP-log occupant of the seat this socket holds (its token, hashed). */
+  occupant?: string;
+  /** The seat's verified campus id, bound with the seat (web cabinets). */
+  campusSub?: string | null;
 }
 
 // Mirrors routes/game.ts's MAX_MESSAGE_LENGTH — REST's /therapy-message
@@ -185,6 +190,36 @@ function normalizeRehydrated(state: GameState): GameState {
  */
 function slotRoom(gameId: string, slot: Sender): string {
   return `${gameId}:${slot}`;
+}
+
+/**
+ * The IP-log account fields for a seat: its verified campus id when it has
+ * one (web cabinet), else the client-claimed Matrix userId, unverified. (A
+ * claimed userId still reaches a case through the players row.)
+ */
+function seatAccount(
+  player: { campusSub?: string; token: string },
+  claimedUserId: string | undefined,
+): { accountId: string | null; accountVerified: boolean; occupant: string } {
+  const occupant = seatOccupant(player.token);
+  return player.campusSub
+    ? { accountId: player.campusSub, accountVerified: true, occupant }
+    : { accountId: claimedUserId ?? null, accountVerified: false, occupant };
+}
+
+/** Binds a socket to the seat it now holds: slot, occupant and the seat's own campus id. */
+function bindSeat(data: SocketData, gameId: string, player: { slot: Sender; token: string; campusSub?: string }): void {
+  data.gameId = gameId;
+  data.slot = player.slot;
+  data.occupant = seatOccupant(player.token);
+  data.campusSub = player.campusSub ?? null;
+}
+
+const NO_CAMPUS: { sub: string | null; status?: "verified" | "unknown" } = { sub: null };
+
+/** JOINED's `campus` field: only when an identity was sent ("unknown" → the cabinet asks campus for a new pass). */
+function campusField(campus: { status?: "verified" | "unknown" }): { campus?: "verified" | "unknown" } {
+  return campus.status ? { campus: campus.status } : {};
 }
 
 /**
@@ -619,9 +654,19 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     // ---- CREATE_GAME ----
     socket.on(E.CREATE_GAME, async (payload: CreateGamePayload) => {
       if (!payload?.childName) return fail("childName is required");
-      if (payload.userId && (await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: payload.userId }).catch(() => false))) {
+      // A claimed userId that looks like a campus id is dropped: campus ids
+      // only ever come from a verified pass (campusIdentity).
+      const claimedUserId = sanitizeClaimedUserId(payload.userId);
+      if (claimedUserId && (await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: claimedUserId }).catch(() => false))) {
         return fail("Forbidden");
       }
+      // Web cabinets: a verified campus id, refused if a confirmed case banned
+      // it. Unknown/expired identities are ignored (anonymous play).
+      // No await at all when no identity was sent: these handlers are
+      // ordering-sensitive (see the handoff note above), and anonymous play
+      // must behave exactly as before.
+      const campus = payload.campusIdentity ? await campusIdentityForRequest(repo, payload.campusIdentity) : NO_CAMPUS;
+      if (campus.sub && (await isCampusSubBanned(repo, campus.sub))) return fail("Forbidden");
       const state = createGame(payload.childName, payload.relationshipType);
       games.set(state.id, state);
       await repo.saveGame(state);
@@ -631,21 +676,20 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       await repo.recordGameIp(state.id, getSocketIp(socket));
 
       let session = createSession(state.id);
-      const added = addPlayer(session, socket.id, payload.displayName, payload.userId);
+      const added = addPlayer(session, socket.id, payload.displayName, claimedUserId, campus.sub ?? undefined);
       session = added.session;
       sessions.set(state.id, session);
       await logIp(repo.childSafety, {
         ip: getSocketIp(socket), gameRef: state.id, event: "socket_create", slot: added.player.slot,
-        userAgent: socket.handshake.headers["user-agent"] ?? null, accountId: payload.userId ?? null,
+        userAgent: socket.handshake.headers["user-agent"] ?? null, ...seatAccount(added.player, claimedUserId),
       });
 
-      data.gameId = state.id;
-      data.slot = added.player.slot;
+      bindSeat(data, state.id, added.player);
       await socket.join(state.id);
       await socket.join(slotRoom(state.id, added.player.slot));
 
-      await repo.savePlayer(state.id, added.player.slot, added.player.displayName, added.player.token, added.player.userId);
-      socket.emit(E.JOINED, { gameId: state.id, slot: added.player.slot, playerToken: added.player.token });
+      await repo.savePlayer(state.id, added.player.slot, added.player.displayName, added.player.token, added.player.userId, added.player.campusSub);
+      socket.emit(E.JOINED, { gameId: state.id, slot: added.player.slot, playerToken: added.player.token, ...campusField(campus) });
       broadcastLobby(state.id);
       generateFirstPortrait(state.id).catch(() => {});
     });
@@ -654,6 +698,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     socket.on(E.JOIN_GAME, async (payload: JoinGamePayload) => {
       const gameId = payload?.gameId;
       if (!gameId) return fail("gameId is required");
+      const claimedUserId = sanitizeClaimedUserId(payload.userId);
 
       // Redeem a device-handoff code FIRST, and synchronously — before the
       // first await in this handler. Single-use has to mean single-use under
@@ -670,9 +715,15 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
       // A Matrix ID banned by a confirmed child-safety case cannot join.
       // (Matrix IDs are unverified; the IP ban is the stronger control.)
-      if (payload.userId && (await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: payload.userId }).catch(() => false))) {
+      if (claimedUserId && (await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: claimedUserId }).catch(() => false))) {
         return fail("Forbidden");
       }
+      // A campus id is verified, so its ban is the strong control here.
+      // No await at all when no identity was sent: these handlers are
+      // ordering-sensitive (see the handoff note above), and anonymous play
+      // must behave exactly as before.
+      const campus = payload.campusIdentity ? await campusIdentityForRequest(repo, payload.campusIdentity) : NO_CAMPUS;
+      if (campus.sub && (await isCampusSubBanned(repo, campus.sub))) return fail("Forbidden");
 
       // Load game state if not in memory
       let state = games.get(gameId);
@@ -728,6 +779,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
                 connected: false,
                 token: rec.token,
                 userId: rec.userId,
+                ...(rec.campusSub ? { campusSub: rec.campusSub } : {}),
               },
             ],
           };
@@ -741,17 +793,25 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       // slot, after which this is an ordinary reconnect and inherits all of its
       // behaviour, including preserving the player's ready flag.
       if (handoff) {
-        const player = getPlayerBySlot(session, handoff.slot);
+        let player = getPlayerBySlot(session, handoff.slot);
         // The slot has no player record at all: the game was reset or the
         // players row is gone. Nothing to hand off to.
         if (!player) return fail(HANDOFF_REJECTED);
+        // A seat whose verified campus id is banned can't move to a new device either.
+        if (player.campusSub) {
+          if (await isCampusSubBanned(repo, player.campusSub)) return fail("Forbidden");
+          // Re-read after the await: never write back a session another
+          // handler changed meanwhile (a co-player's join, a reconnect).
+          session = sessions.get(gameId) ?? session;
+          player = getPlayerBySlot(session, handoff.slot);
+          if (!player) return fail(HANDOFF_REJECTED);
+        }
 
         supersedeActiveSocket(player, socket.id);
         const moved = reconnectPlayer(session, player.token, socket.id);
         session = moved.session;
         sessions.set(gameId, session);
-        data.gameId = gameId;
-        data.slot = moved.player.slot;
+        bindSeat(data, gameId, moved.player);
         await socket.join(gameId);
         await socket.join(slotRoom(gameId, moved.player.slot));
         // The new device gets the ordinary long-lived credential, which it
@@ -768,7 +828,14 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
       // Token-based reconnect: returning player reclaims their slot
       if (payload.playerToken) {
-        const existing = getPlayerByToken(session, payload.playerToken);
+        let existing = getPlayerByToken(session, payload.playerToken);
+        if (existing?.campusSub) {
+          // The seat's own verified campus id is banned: no way back in.
+          if (await isCampusSubBanned(repo, existing.campusSub)) return fail("Forbidden");
+          // Re-read after the await: never write back a stale session.
+          session = sessions.get(gameId) ?? session;
+          existing = getPlayerByToken(session, payload.playerToken);
+        }
         if (existing) {
           // Symmetry with the handoff path: if a *live* socket currently holds
           // this slot, it is being taken over and must be told. This is what
@@ -776,18 +843,28 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           // handed off from) non-silent — without it the phone would keep a
           // ready button that no longer reaches the server.
           supersedeActiveSocket(existing, socket.id);
-          const reconnected = reconnectPlayer(session, payload.playerToken, socket.id);
+          let reconnected = reconnectPlayer(session, payload.playerToken, socket.id);
           session = reconnected.session;
+          // A seat that started before its cabinet sign-in finished takes the
+          // verified campus id on its first rejoin; one it already has stays.
+          if (campus.sub && !reconnected.player.campusSub) {
+            const player = { ...reconnected.player, campusSub: campus.sub };
+            session = { ...session, players: session.players.map((p) => (p.slot === player.slot ? player : p)) };
+            reconnected = { session, player };
+          }
           sessions.set(gameId, session);
-          data.gameId = gameId;
-          data.slot = reconnected.player.slot;
+          if (reconnected.player.campusSub && reconnected.player.campusSub === campus.sub) {
+            const pl = reconnected.player;
+            await repo.savePlayer(gameId, pl.slot, pl.displayName, pl.token, pl.userId, pl.campusSub);
+          }
+          bindSeat(data, gameId, reconnected.player);
           await socket.join(gameId);
           await socket.join(slotRoom(gameId, reconnected.player.slot));
           await logIp(repo.childSafety, {
             ip: getSocketIp(socket), gameRef: gameId, event: "socket_rejoin", slot: reconnected.player.slot,
-            userAgent: socket.handshake.headers["user-agent"] ?? null, accountId: reconnected.player.userId ?? null,
+            userAgent: socket.handshake.headers["user-agent"] ?? null, ...seatAccount(reconnected.player, reconnected.player.userId),
           });
-          socket.emit(E.JOINED, { gameId, slot: reconnected.player.slot, playerToken: reconnected.player.token });
+          socket.emit(E.JOINED, { gameId, slot: reconnected.player.slot, playerToken: reconnected.player.token, ...campusField(campus) });
           broadcastLobby(gameId);
           // Reconnect used to emit STATE but never GENERATING, so a returning
           // client kept whatever stale generating flag it had. The flag now
@@ -803,7 +880,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       // New player: assign to first free slot
       let added;
       try {
-        added = addPlayer(session, socket.id, payload.displayName, payload.userId);
+        added = addPlayer(session, socket.id, payload.displayName, claimedUserId, campus.sub ?? undefined);
       } catch {
         return fail("This game already has two players");
       }
@@ -822,18 +899,17 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       };
       clearParentContext();
 
-      data.gameId = gameId;
-      data.slot = added.player.slot;
+      bindSeat(data, gameId, added.player);
       await socket.join(gameId);
       await socket.join(slotRoom(gameId, added.player.slot));
 
-      await repo.savePlayer(gameId, added.player.slot, added.player.displayName, added.player.token, added.player.userId);
+      await repo.savePlayer(gameId, added.player.slot, added.player.displayName, added.player.token, added.player.userId, added.player.campusSub);
       await logIp(repo.childSafety, {
         ip: getSocketIp(socket), gameRef: gameId, event: "socket_join", slot: added.player.slot,
-        userAgent: socket.handshake.headers["user-agent"] ?? null, accountId: added.player.userId ?? null,
+        userAgent: socket.handshake.headers["user-agent"] ?? null, ...seatAccount(added.player, added.player.userId),
       });
       clearParentContext();
-      socket.emit(E.JOINED, { gameId, slot: added.player.slot, playerToken: added.player.token });
+      socket.emit(E.JOINED, { gameId, slot: added.player.slot, playerToken: added.player.token, ...campusField(campus) });
       broadcastLobby(gameId);
       socket.emit(
         E.STATE,
@@ -1152,6 +1228,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           content: payload.content.trim(),
           ipAddress: getSocketIp(socket),
           userAgent: socket.handshake.headers["user-agent"] ?? null,
+          speaker: { occupant: data.occupant ?? "socket", campusSub: data.campusSub ?? null },
         });
         if (moderation.blocked) {
           fail("This session has ended.");
@@ -1381,6 +1458,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           content: trimmedContent,
           ipAddress: getSocketIp(socket),
           userAgent: socket.handshake.headers["user-agent"] ?? null,
+          speaker: { occupant: data.occupant ?? "socket", campusSub: data.campusSub ?? null },
         });
         if (moderation.blocked) {
           fail("This session has ended.");

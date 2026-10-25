@@ -21,6 +21,9 @@ export interface Player {
   /** Matrix user id, when the player is signed in. Server-side only — used to
    * build the co-parent Family Album; never sent in public/lobby views. */
   userId?: string;
+  /** Verified campus Matrix id (web cabinet), resolved server-side from an
+   * identity token. Server-side only, like userId. */
+  campusSub?: string;
 }
 
 export interface Session {
@@ -70,7 +73,8 @@ export function addPlayer(
   session: Session,
   connectionId: string,
   displayName?: string,
-  userId?: string
+  userId?: string,
+  campusSub?: string
 ): { session: Session; player: Player } {
   const existing = getPlayer(session, connectionId);
   if (existing) return { session, player: existing };
@@ -101,6 +105,7 @@ export function addPlayer(
     connected: true,
     token,
     userId: userId?.trim() || undefined,
+    ...(campusSub ? { campusSub } : {}),
   };
   const next: Session = { ...session, players: [...session.players, player] };
   return { session: next, player };

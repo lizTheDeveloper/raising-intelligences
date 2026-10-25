@@ -35,6 +35,8 @@ export interface PlayerRecord {
   token: string;
   /** Matrix user id, when the player was signed in; null/undefined otherwise. */
   userId?: string;
+  /** Verified campus Matrix id for this seat (web cabinet), when the seat had one. */
+  campusSub?: string;
 }
 
 export interface AlbumPartner {
@@ -80,8 +82,36 @@ export interface GameRepository {
   ): Promise<void>;
   /** Reconstruct an in-memory GameState from the latest checkpoint, or null. */
   loadGame(gameId: string): Promise<GameState | null>;
-  savePlayer(gameId: string, slot: string, displayName: string, token: string, userId?: string): Promise<void>;
+  /**
+   * `campusSub` is a verified campus id (never client-claimed). It belongs to
+   * the seat's OCCUPANT: an upsert with the same token keeps an existing one
+   * (COALESCE, like userId), but a new token — the slot re-assigned to
+   * someone else — replaces it with the newcomer's own (or none).
+   */
+  savePlayer(gameId: string, slot: string, displayName: string, token: string, userId?: string, campusSub?: string): Promise<void>;
   loadPlayers(gameId: string): Promise<PlayerRecord[]>;
+
+  // Campus web cabinets (security/campus-identity.ts)
+  /** Stores an identity token's SHA-256 → campus id; also drops expired rows. */
+  saveCampusIdentity(tokenHash: string, rec: { sub: string; name: string; expiresAt: number }, nowMs: number): Promise<void>;
+  /** The campus id behind an unexpired identity token hash, or null. */
+  loadCampusIdentity(tokenHash: string, nowMs: number): Promise<{ sub: string; name: string } | null>;
+  /**
+   * Spends a campus pass jti (table campus_pass_jti; expired rows pruned).
+   * Atomic: true only for the call that inserted it, so a replay — from any
+   * process, before or after a restart — is refused until the pass expires.
+   */
+  consumeCampusPassJti(jti: string, expMs: number, nowMs: number): Promise<boolean>;
+  /** The verified campus id of a solo game's creator (`games.campus_sub`). */
+  recordGameCampusSub(gameId: string, sub: string): Promise<void>;
+  /** `games.campus_sub`, or null. */
+  getGameCampusSub(gameId: string): Promise<string | null>;
+  /**
+   * The verified campus id that speaks for `slot` in this game, or null. A
+   * seated (multiplayer) game answers from that seat's row only; a seatless
+   * (solo) game from its creator's, who types for both parents.
+   */
+  campusSubForSeat(gameId: string, slot: string): Promise<string | null>;
   /** Associate a signed-in user with a game (the album's kid row). Idempotent —
    * ON CONFLICT DO NOTHING so an existing row is left untouched. */
   saveUserGame(userId: string, gameId: string, childName: string): Promise<void>;
@@ -443,16 +473,65 @@ export class PgGameRepository implements GameRepository {
     );
   }
 
-  async savePlayer(gameId: string, slot: string, displayName: string, token: string, userId?: string): Promise<void> {
+  async savePlayer(gameId: string, slot: string, displayName: string, token: string, userId?: string, campusSub?: string): Promise<void> {
     await this.db.query(
-      `INSERT INTO players (game_id, slot, display_name, token, user_id)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO players (game_id, slot, display_name, token, user_id, campus_sub)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (game_id, slot) DO UPDATE SET
          display_name = EXCLUDED.display_name,
          token        = EXCLUDED.token,
-         user_id      = COALESCE(EXCLUDED.user_id, players.user_id)`,
-      [gameId, slot, displayName, token, userId ?? null]
+         user_id      = COALESCE(EXCLUDED.user_id, players.user_id),
+         campus_sub   = CASE WHEN EXCLUDED.token = players.token
+                          THEN COALESCE(EXCLUDED.campus_sub, players.campus_sub)
+                          ELSE EXCLUDED.campus_sub END`,
+      [gameId, slot, displayName, token, userId ?? null, campusSub ?? null]
     );
+  }
+
+  async saveCampusIdentity(tokenHash: string, rec: { sub: string; name: string; expiresAt: number }, nowMs: number): Promise<void> {
+    await this.db.query(`DELETE FROM campus_identities WHERE expires_at <= $1`, [new Date(nowMs)]);
+    await this.db.query(
+      `INSERT INTO campus_identities (token_hash, sub, name, expires_at) VALUES ($1, $2, $3, $4)`,
+      [tokenHash, rec.sub, rec.name, new Date(rec.expiresAt)]
+    );
+  }
+
+  async loadCampusIdentity(tokenHash: string, nowMs: number): Promise<{ sub: string; name: string } | null> {
+    const { rows } = await this.db.query<{ sub: string; name: string }>(
+      `SELECT sub, name FROM campus_identities WHERE token_hash = $1 AND expires_at > $2`,
+      [tokenHash, new Date(nowMs)]
+    );
+    return rows[0] ? { sub: rows[0].sub, name: rows[0].name } : null;
+  }
+
+  async consumeCampusPassJti(jti: string, expMs: number, nowMs: number): Promise<boolean> {
+    await this.db.query(`DELETE FROM campus_pass_jti WHERE exp_at <= $1`, [new Date(nowMs)]);
+    const r = await this.db.query(
+      `INSERT INTO campus_pass_jti (jti, exp_at) VALUES ($1, $2) ON CONFLICT (jti) DO NOTHING`,
+      [jti, new Date(expMs)]
+    );
+    return r.rowCount === 1;
+  }
+
+  async recordGameCampusSub(gameId: string, sub: string): Promise<void> {
+    await this.db.query(`UPDATE games SET campus_sub = $2 WHERE id = $1`, [gameId, sub]);
+  }
+
+  async getGameCampusSub(gameId: string): Promise<string | null> {
+    const { rows } = await this.db.query<{ campus_sub: string | null }>(`SELECT campus_sub FROM games WHERE id = $1`, [gameId]);
+    return rows[0]?.campus_sub ?? null;
+  }
+
+  async campusSubForSeat(gameId: string, slot: string): Promise<string | null> {
+    const { rows } = await this.db.query<{ sub: string | null }>(
+      `SELECT CASE
+                WHEN EXISTS (SELECT 1 FROM players WHERE game_id = $1)
+                  THEN (SELECT campus_sub FROM players WHERE game_id = $1 AND slot = $2)
+                ELSE (SELECT campus_sub FROM games WHERE id = $1)
+              END AS sub`,
+      [gameId, slot]
+    );
+    return rows[0]?.sub ?? null;
   }
 
   async loadPlayers(gameId: string): Promise<PlayerRecord[]> {
@@ -461,8 +540,9 @@ export class PgGameRepository implements GameRepository {
       display_name: string;
       token: string;
       user_id: string | null;
+      campus_sub: string | null;
     }>(
-      `SELECT slot, display_name, token, user_id FROM players WHERE game_id = $1`,
+      `SELECT slot, display_name, token, user_id, campus_sub FROM players WHERE game_id = $1`,
       [gameId]
     );
     return res.rows.map((r) => ({
@@ -470,6 +550,7 @@ export class PgGameRepository implements GameRepository {
       displayName: r.display_name,
       token: r.token,
       userId: r.user_id ?? undefined,
+      campusSub: r.campus_sub ?? undefined,
     }));
   }
 
@@ -1109,6 +1190,10 @@ export class InMemoryGameRepository implements GameRepository {
   // because saveGame replaces that row wholesale on every checkpoint and
   // ip_address is deliberately NOT part of GameState (see recordGameIp).
   private gameIpAddresses = new Map<string, string | null>();
+  // games.campus_sub, kept beside the row for the same reason as gameIpAddresses.
+  private gameCampusSubs = new Map<string, string>();
+  private campusIdentities = new Map<string, { sub: string; name: string; expiresAt: number }>();
+  private campusPassJtis = new Map<string, number>();
   // Self-reported age classification; under-18 entries carry birthYear null.
   private gameAges = new Map<string, { birthYear: number | null; isAdult: boolean }>();
   private accessSecretHashes = new Map<string, string>();
@@ -1180,11 +1265,47 @@ export class InMemoryGameRepository implements GameRepository {
     this.endgames.set(gameId, { epilogue, reportCard });
   }
 
-  async savePlayer(gameId: string, slot: string, displayName: string, token: string, userId?: string): Promise<void> {
+  async savePlayer(gameId: string, slot: string, displayName: string, token: string, userId?: string, campusSub?: string): Promise<void> {
     const map = this.playerRecords.get(gameId) ?? new Map<string, PlayerRecord>();
     const existing = map.get(slot);
-    map.set(slot, { slot, displayName, token, userId: userId ?? existing?.userId });
+    // campusSub belongs to the occupant: a new token drops the old one.
+    const keepCampus = existing && existing.token === token ? existing.campusSub : undefined;
+    map.set(slot, {
+      slot, displayName, token, userId: userId ?? existing?.userId, campusSub: campusSub ?? keepCampus,
+    });
     this.playerRecords.set(gameId, map);
+  }
+
+  async saveCampusIdentity(tokenHash: string, rec: { sub: string; name: string; expiresAt: number }, nowMs: number): Promise<void> {
+    for (const [k, v] of [...this.campusIdentities]) if (v.expiresAt <= nowMs) this.campusIdentities.delete(k);
+    if (this.campusIdentities.has(tokenHash)) throw new Error("campus_identities: duplicate token_hash");
+    this.campusIdentities.set(tokenHash, { ...rec });
+  }
+
+  async loadCampusIdentity(tokenHash: string, nowMs: number): Promise<{ sub: string; name: string } | null> {
+    const rec = this.campusIdentities.get(tokenHash);
+    return rec && rec.expiresAt > nowMs ? { sub: rec.sub, name: rec.name } : null;
+  }
+
+  async consumeCampusPassJti(jti: string, expMs: number, nowMs: number): Promise<boolean> {
+    for (const [k, exp] of [...this.campusPassJtis]) if (exp <= nowMs) this.campusPassJtis.delete(k);
+    if (this.campusPassJtis.has(jti)) return false;
+    this.campusPassJtis.set(jti, expMs);
+    return true;
+  }
+
+  async recordGameCampusSub(gameId: string, sub: string): Promise<void> {
+    this.gameCampusSubs.set(gameId, sub);
+  }
+
+  async getGameCampusSub(gameId: string): Promise<string | null> {
+    return this.gameCampusSubs.get(gameId) ?? null;
+  }
+
+  async campusSubForSeat(gameId: string, slot: string): Promise<string | null> {
+    const seats = this.playerRecords.get(gameId);
+    if (seats && seats.size > 0) return seats.get(slot)?.campusSub ?? null;
+    return this.gameCampusSubs.get(gameId) ?? null;
   }
 
   async loadPlayers(gameId: string): Promise<PlayerRecord[]> {
@@ -1452,6 +1573,7 @@ export class InMemoryGameRepository implements GameRepository {
     this.concernEvents = this.concernEvents.filter((e) => e.gameId !== gameId);
     this.escalationFlags = this.escalationFlags.filter((e) => e.gameId !== gameId);
     this.gameIpAddresses.delete(gameId);
+    this.gameCampusSubs.delete(gameId);
     this.gameAges.delete(gameId);
     this.accessSecretHashes.delete(gameId);
     for (const [key, a] of [...this.answers]) {

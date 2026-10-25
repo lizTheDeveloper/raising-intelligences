@@ -57,3 +57,11 @@ test("a 403 (session ended on safety grounds) is reported as ended, not as a pla
   const { fetchFn } = fake(() => new Response("{}", { status: 403 }));
   assert.equal(await sendRepair({ gameId: "g", secret: "s", message: "hi", base: "/", fetchFn }), "ended");
 });
+
+test("in a campus cabinet the identity token rides along as x-campus-identity", async () => {
+  const { calls, fetchFn } = fake(() => new Response(null, { status: 204 }));
+  await sendRepair({ gameId: "g", secret: null, campusIdentity: "ident-1", message: "hi", base: "/", fetchFn });
+  assert.equal((calls[0].init?.headers as Record<string, string>)["x-campus-identity"], "ident-1");
+  await sendRepair({ gameId: "g", secret: null, message: "hi", base: "/", fetchFn });
+  assert.equal((calls[1].init?.headers as Record<string, string>)["x-campus-identity"], undefined);
+});
