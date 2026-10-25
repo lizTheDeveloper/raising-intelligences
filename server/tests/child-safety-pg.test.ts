@@ -6,7 +6,7 @@ import { PgGameRepository } from "../src/db/repository.js";
 import { confirmCase, dismissCase, logIp, purgeExpired, viewEvidence } from "../src/safety/child-safety/vault.js";
 import { backfillLegacyFlags } from "../src/safety/child-safety/maintenance.js";
 import { moderateParentMessage } from "../src/safety/moderation.js";
-import { issueCampusIdentity, resolveCampusIdentity } from "../src/security/campus-identity.js";
+import { REST_OCCUPANT, campusOccupant, issueCampusIdentity, resolveCampusIdentity, restSpeaker } from "../src/security/campus-identity.js";
 import { verifyCampusPass } from "../src/security/campus-pass.js";
 import { claimsFor, newCampusKeyPair, signPass } from "./helpers/campus-pass-fixture.js";
 import { buildServer } from "../src/app.js";
@@ -160,6 +160,30 @@ describe.skipIf(!process.env.DATABASE_URL)("child-safety vault on Postgres", () 
       expect((await pool.query(`SELECT 1 FROM campus_pass_jti WHERE jti = $1`, [c.jti])).rows).toHaveLength(0);
     });
 
+    it("a seat's campus id belongs to its occupant: same token keeps it, a new token replaces it", async () => {
+      const state = createGame("PgSeat");
+      await repo.saveGame(state);
+      const sub = uniqueSub();
+      await repo.savePlayer(state.id, "parent2", "V", "tok-victim", undefined, sub);
+      await repo.savePlayer(state.id, "parent2", "V", "tok-victim");
+      expect((await repo.loadPlayers(state.id))[0].campusSub).toBe(sub);
+      // The slot is re-assigned to someone else (a new token): the id goes.
+      await repo.savePlayer(state.id, "parent2", "Atk", "tok-attacker");
+      expect((await repo.loadPlayers(state.id))[0].campusSub).toBeUndefined();
+      const other = uniqueSub();
+      await repo.savePlayer(state.id, "parent2", "W", "tok-w", undefined, other);
+      expect((await repo.loadPlayers(state.id))[0].campusSub).toBe(other);
+    });
+
+    it("the IP log keeps each row's occupant", async () => {
+      const state = createGame("PgOccupant");
+      await repo.saveGame(state);
+      const { logIp: log } = await import("../src/safety/child-safety/vault.js");
+      await log(repo.childSafety, { ip: "198.51.100.63", gameRef: state.id, event: "message", slot: "parent1", occupant: "seat:abc" });
+      const [row] = await repo.childSafety.ipLogForGame(state.id, 0);
+      expect(row.occupant).toBe("seat:abc");
+    });
+
     it("legacy IP-log rows read back unverified", async () => {
       const state = createGame("PgLegacyIp");
       await repo.saveGame(state);
@@ -198,7 +222,11 @@ describe.skipIf(!process.env.DATABASE_URL)("child-safety vault on Postgres", () 
           model: "omni-moderation-test",
           results: [{ flagged: true, categories: { "sexual/minors": true }, category_scores: { "sexual/minors": 0.95 } }],
         }), { status: 200 }));
-        const r = await moderateParentMessage({ repo, games: new Map([[gameId, state]]), state, sender: "parent1", content: "PG CAMPUS TEST FIXTURE", ipAddress: ip1 });
+        // The creator's own request proves the identity, as the REST routes compute it.
+        const speaker = await restSpeaker(repo, gameId, identity);
+        expect(speaker).toEqual({ occupant: campusOccupant(sub), campusSub: sub });
+        expect(await restSpeaker(repo, gameId, undefined)).toEqual({ occupant: REST_OCCUPANT });
+        const r = await moderateParentMessage({ repo, games: new Map([[gameId, state]]), state, sender: "parent1", content: "PG CAMPUS TEST FIXTURE", ipAddress: ip1, speaker });
         vi.restoreAllMocks();
         expect(r.blocked).toBe(true);
 

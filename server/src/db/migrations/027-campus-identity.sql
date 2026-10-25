@@ -34,3 +34,12 @@ ALTER TABLE players ADD COLUMN IF NOT EXISTS campus_sub TEXT;
 -- becomes a vault identifier of kind 'campus' (bannable); an unverified one
 -- kind 'matrix' (evidence only).
 ALTER TABLE child_safety.ip_log ADD COLUMN IF NOT EXISTS account_verified BOOLEAN NOT NULL DEFAULT false;
+
+-- Who, within a seat, produced the row: "seat:<hash of the seat's reconnect
+-- token>" for a socket seat (a new token = a new occupant), "id:<hash of the
+-- campus id>" for a REST request that proved a campus identity, "rest" for
+-- any other REST request. A verified campus row is attributed to a flag only
+-- when it has the same occupant as the flagged sender, so a player who takes
+-- over a seat (or posts into a solo game by its id) can never get the seat's
+-- earlier, verified occupant flagged. NULL on rows written before this.
+ALTER TABLE child_safety.ip_log ADD COLUMN IF NOT EXISTS occupant TEXT;

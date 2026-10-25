@@ -125,7 +125,12 @@ export class CampusCabinet {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pass }),
       });
-      if (!res.ok) return; // refused: play goes on anonymously
+      if (!res.ok) {
+        // 503: the server spent the pass but couldn't store the identity —
+        // ask campus for a fresh one (still at most once a minute).
+        if (res.status === 503) this.identityUnknown();
+        return; // refused: play goes on anonymously
+      }
       const body = (await res.json()) as { identity?: unknown; name?: unknown };
       if (typeof body.identity !== "string" || typeof body.name !== "string") return;
       this.identity = body.identity;
@@ -172,4 +177,13 @@ export function campusIdentity(): string | undefined {
 /** Call when the server answered `campus: "unknown"` to a create or join. */
 export function campusIdentityUnknown(): void {
   activeCabinet?.identityUnknown();
+}
+/**
+ * Header for a solo game's REST message requests: proves the message comes
+ * from the campus identity that created the game (the server attributes a
+ * verified campus id to a message only then). Empty outside a cabinet.
+ */
+export function campusIdentityHeaders(): Record<string, string> {
+  const id = campusIdentity();
+  return id ? { "x-campus-identity": id } : {};
 }

@@ -1,7 +1,7 @@
 import type { GameRepository } from "../db/repository.js";
 import type { GameState, Sender } from "../types.js";
 import { logger } from "../logger.js";
-import { sanitizeClaimedUserId } from "../security/campus-identity.js";
+import { sanitizeClaimedUserId, type Speaker } from "../security/campus-identity.js";
 import {
   checkOpenAiModeration,
   CHILD_SAFETY_CATEGORIES,
@@ -126,6 +126,7 @@ async function preserveFlagEvidence(params: {
   userAgent: string | null;
   classifier?: ClassifierEvidence;
   isTest: boolean;
+  senderOccupant?: string | null;
 }): Promise<string | null> {
   const { repo, state, sender, content, reason, ipAddress, userAgent, classifier, isTest } = params;
   try {
@@ -167,6 +168,8 @@ async function preserveFlagEvidence(params: {
       // Same reasoning for the user agent: only trust it for the sender's own request.
       userAgent: classifier ? userAgent : null,
       identifiers,
+      // undefined (scene flags) lets the vault infer the seat's occupant.
+      ...(params.senderOccupant !== undefined ? { senderOccupant: params.senderOccupant } : {}),
       extra: { sender, phase: state.phase, eventNumber: state.currentEventNumber, childName: state.childName },
       isTest,
     });
@@ -215,6 +218,8 @@ export async function applyModerationBlock(params: {
   classifier?: ClassifierEvidence;
   /** Only the admin synthetic test hook sets this: the case is marked is_test. */
   syntheticTest?: boolean;
+  /** The flagged message's IP-log occupant (per-message flags). See EvidenceInput.senderOccupant. */
+  senderOccupant?: string | null;
 }): Promise<{ caseId: string | null }> {
   const { repo, games, state, sender, content, reason, ipAddress, banIp = true } = params;
 
@@ -224,7 +229,7 @@ export async function applyModerationBlock(params: {
   // failed, the flag keeps the content so nothing is lost.
   const caseId = await preserveFlagEvidence({
     repo, state, sender, content, reason, ipAddress, userAgent: params.userAgent ?? null, classifier: params.classifier,
-    isTest: params.syntheticTest ?? false,
+    isTest: params.syntheticTest ?? false, senderOccupant: params.senderOccupant,
   });
   const flagContent = caseId ? `[withheld: child-safety case ${caseId}]` : content;
 
@@ -291,6 +296,8 @@ export async function moderateParentMessage(params: {
   content: string;
   ipAddress: string | null;
   userAgent?: string | null;
+  /** Who sent it (IP-log occupant + any campus id this request proved). Callers always pass it; absent only in older tests. */
+  speaker?: Speaker;
 }): Promise<{ blocked: boolean }> {
   const { repo, games, state, sender, content, ipAddress } = params;
   const userAgent = params.userAgent ?? null;
@@ -298,17 +305,14 @@ export async function moderateParentMessage(params: {
   // Every parent message, on every surface, passes through here: this is the
   // IP log's per-message write (child_safety.ip_log, 90-day retention), so a
   // later scene-reader flag still has the IPs that wrote the scene.
-  // A seat with a verified campus id (web cabinet) carries it on every row,
-  // so a scene-reader flag still finds the sender's verified id.
-  let campusSub: string | null = null;
-  try {
-    campusSub = await repo.campusSubForSeat(state.id, sender);
-  } catch (err) {
-    logger.error("campus_sub_lookup_failed", { error: err instanceof Error ? err.message : String(err) });
-  }
+  // The row records who in the seat spoke (occupant) and, only when this
+  // very request/connection proved one, the speaker's verified campus id —
+  // so a later flag can tell this occupant from an earlier one of the seat.
+  const speaker = params.speaker;
   await logIp(repo.childSafety, {
     ip: ipAddress, gameRef: state.id, event: "message", slot: sender, userAgent,
-    ...(campusSub ? { accountId: campusSub, accountVerified: true } : {}),
+    occupant: speaker?.occupant ?? null,
+    ...(speaker?.campusSub ? { accountId: speaker.campusSub, accountVerified: true } : {}),
   });
 
   const result = await classifyParentMessage(content, categoriesForPhase(state.phase));
@@ -316,6 +320,7 @@ export async function moderateParentMessage(params: {
 
   await applyModerationBlock({
     repo, games, state, sender, content, reason: result.reason, ipAddress, userAgent,
+    senderOccupant: speaker?.occupant ?? null,
     classifier: { categories: result.categories ?? [], scores: result.scores, model: result.model },
   });
   return { blocked: true };

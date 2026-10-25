@@ -40,7 +40,9 @@ import {
 import { UUID_RE } from "../lib/validation.js";
 import { classifyBirthYear } from "../research/age.js";
 import { isResearchEnabled } from "../research/config.js";
-import { campusIdentityForRequest, isCampusSubBanned } from "../security/campus-identity.js";
+import {
+  CAMPUS_IDENTITY_HEADER, REST_OCCUPANT, campusIdentityForRequest, campusOccupant, isCampusSubBanned, restSpeaker,
+} from "../security/campus-identity.js";
 import { newGameSecret, requireGameSecret, verifyGameSecret, GAME_SECRET_HEADER } from "../security/game-secret.js";
 import { cleanRepairMessage } from "../research/repair.js";
 import { forgetSceneSummary } from "../research/moment-label.js";
@@ -126,7 +128,17 @@ export function createGameRoutes(
     const state = createGame(childName, relationshipType);
     games.set(state.id, state);
     await repo.saveGame(state);
-    if (campus.sub) await repo.recordGameCampusSub(state.id, campus.sub);
+    // Never blocks play: if the campus id can't be stored, the game goes on
+    // without it (it then has no verified id, exactly like an anonymous one).
+    let gameCampusSub: string | null = null;
+    if (campus.sub) {
+      try {
+        await repo.recordGameCampusSub(state.id, campus.sub);
+        gameCampusSub = campus.sub;
+      } catch (err) {
+        logger.error("campus_sub_record_failed", { gameId: state.id, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
     if (age?.ok) {
       await repo.recordAge(state.id, {
         birthYear: age.isAdult && isResearchEnabled() ? age.birthYear : null,
@@ -140,7 +152,8 @@ export function createGameRoutes(
     // Child-safety IP log (90-day retention; docs/child-safety.md).
     await logIp(repo.childSafety, {
       ip: req.ip, gameRef: state.id, event: "game_create", slot: "parent1", userAgent: req.get("user-agent") ?? null,
-      ...(campus.sub ? { accountId: campus.sub, accountVerified: true } : {}),
+      occupant: gameCampusSub ? campusOccupant(gameCampusSub) : REST_OCCUPANT,
+      ...(gameCampusSub ? { accountId: gameCampusSub, accountVerified: true } : {}),
     });
     // Per-game secret: only its hash is stored; the plaintext is returned once.
     const { secret, hash } = newGameSecret();
@@ -403,6 +416,7 @@ export function createGameRoutes(
             content,
             ipAddress: req.ip ?? null,
             userAgent: req.get("user-agent") ?? null,
+            speaker: await restSpeaker(repo, state.id, req.get(CAMPUS_IDENTITY_HEADER)),
           });
           if (moderation.blocked) {
             sseTerminated(res);
@@ -724,6 +738,7 @@ export function createGameRoutes(
           content: cleaned.message,
           ipAddress: req.ip ?? null,
           userAgent: req.get("user-agent") ?? null,
+          speaker: await restSpeaker(repo, state.id, req.get(CAMPUS_IDENTITY_HEADER)),
         });
         if (moderation.blocked) {
           res.status(403).json({ error: "This session has ended" });
@@ -931,6 +946,7 @@ export function createGameRoutes(
             content,
             ipAddress: req.ip ?? null,
             userAgent: req.get("user-agent") ?? null,
+            speaker: await restSpeaker(repo, state.id, req.get(CAMPUS_IDENTITY_HEADER)),
           });
           if (moderation.blocked) {
             sseTerminated(res);

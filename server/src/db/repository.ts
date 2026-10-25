@@ -82,7 +82,12 @@ export interface GameRepository {
   ): Promise<void>;
   /** Reconstruct an in-memory GameState from the latest checkpoint, or null. */
   loadGame(gameId: string): Promise<GameState | null>;
-  /** `campusSub` is a verified campus id (never client-claimed); like userId, an upsert never clears it. */
+  /**
+   * `campusSub` is a verified campus id (never client-claimed). It belongs to
+   * the seat's OCCUPANT: an upsert with the same token keeps an existing one
+   * (COALESCE, like userId), but a new token — the slot re-assigned to
+   * someone else — replaces it with the newcomer's own (or none).
+   */
   savePlayer(gameId: string, slot: string, displayName: string, token: string, userId?: string, campusSub?: string): Promise<void>;
   loadPlayers(gameId: string): Promise<PlayerRecord[]>;
 
@@ -99,6 +104,8 @@ export interface GameRepository {
   consumeCampusPassJti(jti: string, expMs: number, nowMs: number): Promise<boolean>;
   /** The verified campus id of a solo game's creator (`games.campus_sub`). */
   recordGameCampusSub(gameId: string, sub: string): Promise<void>;
+  /** `games.campus_sub`, or null. */
+  getGameCampusSub(gameId: string): Promise<string | null>;
   /**
    * The verified campus id that speaks for `slot` in this game, or null. A
    * seated (multiplayer) game answers from that seat's row only; a seatless
@@ -474,7 +481,9 @@ export class PgGameRepository implements GameRepository {
          display_name = EXCLUDED.display_name,
          token        = EXCLUDED.token,
          user_id      = COALESCE(EXCLUDED.user_id, players.user_id),
-         campus_sub   = COALESCE(EXCLUDED.campus_sub, players.campus_sub)`,
+         campus_sub   = CASE WHEN EXCLUDED.token = players.token
+                          THEN COALESCE(EXCLUDED.campus_sub, players.campus_sub)
+                          ELSE EXCLUDED.campus_sub END`,
       [gameId, slot, displayName, token, userId ?? null, campusSub ?? null]
     );
   }
@@ -506,6 +515,11 @@ export class PgGameRepository implements GameRepository {
 
   async recordGameCampusSub(gameId: string, sub: string): Promise<void> {
     await this.db.query(`UPDATE games SET campus_sub = $2 WHERE id = $1`, [gameId, sub]);
+  }
+
+  async getGameCampusSub(gameId: string): Promise<string | null> {
+    const { rows } = await this.db.query<{ campus_sub: string | null }>(`SELECT campus_sub FROM games WHERE id = $1`, [gameId]);
+    return rows[0]?.campus_sub ?? null;
   }
 
   async campusSubForSeat(gameId: string, slot: string): Promise<string | null> {
@@ -1254,8 +1268,10 @@ export class InMemoryGameRepository implements GameRepository {
   async savePlayer(gameId: string, slot: string, displayName: string, token: string, userId?: string, campusSub?: string): Promise<void> {
     const map = this.playerRecords.get(gameId) ?? new Map<string, PlayerRecord>();
     const existing = map.get(slot);
+    // campusSub belongs to the occupant: a new token drops the old one.
+    const keepCampus = existing && existing.token === token ? existing.campusSub : undefined;
     map.set(slot, {
-      slot, displayName, token, userId: userId ?? existing?.userId, campusSub: campusSub ?? existing?.campusSub,
+      slot, displayName, token, userId: userId ?? existing?.userId, campusSub: campusSub ?? keepCampus,
     });
     this.playerRecords.set(gameId, map);
   }
@@ -1280,6 +1296,10 @@ export class InMemoryGameRepository implements GameRepository {
 
   async recordGameCampusSub(gameId: string, sub: string): Promise<void> {
     this.gameCampusSubs.set(gameId, sub);
+  }
+
+  async getGameCampusSub(gameId: string): Promise<string | null> {
+    return this.gameCampusSubs.get(gameId) ?? null;
   }
 
   async campusSubForSeat(gameId: string, slot: string): Promise<string | null> {

@@ -57,7 +57,7 @@ import {
 import { generatePersonalitySeed } from "../game/personality.js";
 import { moderateParentMessage, applyModerationBlock, recordConcern } from "../safety/moderation.js";
 import { logIp } from "../safety/child-safety/vault.js";
-import { campusIdentityForRequest, isCampusSubBanned, sanitizeClaimedUserId } from "../security/campus-identity.js";
+import { campusIdentityForRequest, isCampusSubBanned, sanitizeClaimedUserId, seatOccupant } from "../security/campus-identity.js";
 import { evaluateEscalation } from "../safety/escalation.js";
 import { getSocketIp } from "../lib/client-ip.js";
 import { buildSceneTranscript } from "../game/context-assembler.js";
@@ -116,6 +116,10 @@ const HANDOFF_REJECTED = "That link has expired or was already used. Ask for a n
 interface SocketData {
   gameId?: string;
   slot?: Sender;
+  /** IP-log occupant of the seat this socket holds (its token, hashed). */
+  occupant?: string;
+  /** The seat's verified campus id, bound with the seat (web cabinets). */
+  campusSub?: string | null;
 }
 
 // Mirrors routes/game.ts's MAX_MESSAGE_LENGTH — REST's /therapy-message
@@ -193,10 +197,22 @@ function slotRoom(gameId: string, slot: Sender): string {
  * one (web cabinet), else the client-claimed Matrix userId, unverified. (A
  * claimed userId still reaches a case through the players row.)
  */
-function seatAccount(player: { campusSub?: string }, claimedUserId: string | undefined): { accountId: string | null; accountVerified: boolean } {
+function seatAccount(
+  player: { campusSub?: string; token: string },
+  claimedUserId: string | undefined,
+): { accountId: string | null; accountVerified: boolean; occupant: string } {
+  const occupant = seatOccupant(player.token);
   return player.campusSub
-    ? { accountId: player.campusSub, accountVerified: true }
-    : { accountId: claimedUserId ?? null, accountVerified: false };
+    ? { accountId: player.campusSub, accountVerified: true, occupant }
+    : { accountId: claimedUserId ?? null, accountVerified: false, occupant };
+}
+
+/** Binds a socket to the seat it now holds: slot, occupant and the seat's own campus id. */
+function bindSeat(data: SocketData, gameId: string, player: { slot: Sender; token: string; campusSub?: string }): void {
+  data.gameId = gameId;
+  data.slot = player.slot;
+  data.occupant = seatOccupant(player.token);
+  data.campusSub = player.campusSub ?? null;
 }
 
 const NO_CAMPUS: { sub: string | null; status?: "verified" | "unknown" } = { sub: null };
@@ -668,8 +684,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         userAgent: socket.handshake.headers["user-agent"] ?? null, ...seatAccount(added.player, claimedUserId),
       });
 
-      data.gameId = state.id;
-      data.slot = added.player.slot;
+      bindSeat(data, state.id, added.player);
       await socket.join(state.id);
       await socket.join(slotRoom(state.id, added.player.slot));
 
@@ -778,19 +793,25 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       // slot, after which this is an ordinary reconnect and inherits all of its
       // behaviour, including preserving the player's ready flag.
       if (handoff) {
-        const player = getPlayerBySlot(session, handoff.slot);
+        let player = getPlayerBySlot(session, handoff.slot);
         // The slot has no player record at all: the game was reset or the
         // players row is gone. Nothing to hand off to.
         if (!player) return fail(HANDOFF_REJECTED);
         // A seat whose verified campus id is banned can't move to a new device either.
-        if (player.campusSub && (await isCampusSubBanned(repo, player.campusSub))) return fail("Forbidden");
+        if (player.campusSub) {
+          if (await isCampusSubBanned(repo, player.campusSub)) return fail("Forbidden");
+          // Re-read after the await: never write back a session another
+          // handler changed meanwhile (a co-player's join, a reconnect).
+          session = sessions.get(gameId) ?? session;
+          player = getPlayerBySlot(session, handoff.slot);
+          if (!player) return fail(HANDOFF_REJECTED);
+        }
 
         supersedeActiveSocket(player, socket.id);
         const moved = reconnectPlayer(session, player.token, socket.id);
         session = moved.session;
         sessions.set(gameId, session);
-        data.gameId = gameId;
-        data.slot = moved.player.slot;
+        bindSeat(data, gameId, moved.player);
         await socket.join(gameId);
         await socket.join(slotRoom(gameId, moved.player.slot));
         // The new device gets the ordinary long-lived credential, which it
@@ -807,10 +828,15 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
       // Token-based reconnect: returning player reclaims their slot
       if (payload.playerToken) {
-        const existing = getPlayerByToken(session, payload.playerToken);
-        if (existing) {
+        let existing = getPlayerByToken(session, payload.playerToken);
+        if (existing?.campusSub) {
           // The seat's own verified campus id is banned: no way back in.
-          if (existing.campusSub && (await isCampusSubBanned(repo, existing.campusSub))) return fail("Forbidden");
+          if (await isCampusSubBanned(repo, existing.campusSub)) return fail("Forbidden");
+          // Re-read after the await: never write back a stale session.
+          session = sessions.get(gameId) ?? session;
+          existing = getPlayerByToken(session, payload.playerToken);
+        }
+        if (existing) {
           // Symmetry with the handoff path: if a *live* socket currently holds
           // this slot, it is being taken over and must be told. This is what
           // makes the reverse direction (taking the game back on the device you
@@ -831,8 +857,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
             const pl = reconnected.player;
             await repo.savePlayer(gameId, pl.slot, pl.displayName, pl.token, pl.userId, pl.campusSub);
           }
-          data.gameId = gameId;
-          data.slot = reconnected.player.slot;
+          bindSeat(data, gameId, reconnected.player);
           await socket.join(gameId);
           await socket.join(slotRoom(gameId, reconnected.player.slot));
           await logIp(repo.childSafety, {
@@ -874,8 +899,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       };
       clearParentContext();
 
-      data.gameId = gameId;
-      data.slot = added.player.slot;
+      bindSeat(data, gameId, added.player);
       await socket.join(gameId);
       await socket.join(slotRoom(gameId, added.player.slot));
 
@@ -1204,6 +1228,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           content: payload.content.trim(),
           ipAddress: getSocketIp(socket),
           userAgent: socket.handshake.headers["user-agent"] ?? null,
+          speaker: { occupant: data.occupant ?? "socket", campusSub: data.campusSub ?? null },
         });
         if (moderation.blocked) {
           fail("This session has ended.");
@@ -1433,6 +1458,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           content: trimmedContent,
           ipAddress: getSocketIp(socket),
           userAgent: socket.handshake.headers["user-agent"] ?? null,
+          speaker: { occupant: data.occupant ?? "socket", campusSub: data.campusSub ?? null },
         });
         if (moderation.blocked) {
           fail("This session has ended.");

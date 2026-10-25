@@ -117,6 +117,11 @@ export interface IpLogEntry {
    * at /api/campus-pass). Rows written before migration 027 read false.
    */
   accountVerified: boolean;
+  /**
+   * Who within the seat produced the row (migration 027): "seat:<token hash>",
+   * "id:<campus id hash>", "rest", or null on older rows. See preserveEvidence.
+   */
+  occupant: string | null;
   at: number;
 }
 
@@ -386,20 +391,20 @@ export class PgChildSafetyStore implements ChildSafetyStore {
 
   async insertIpLog(e: IpLogEntry): Promise<void> {
     await this.db.query(
-      `INSERT INTO child_safety.ip_log (ip, game_ref, event, slot, user_agent, account_id, account_verified, at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [e.ip, e.gameRef, e.event, e.slot, e.userAgent, e.accountId, e.accountVerified === true, new Date(e.at)],
+      `INSERT INTO child_safety.ip_log (ip, game_ref, event, slot, user_agent, account_id, account_verified, occupant, at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [e.ip, e.gameRef, e.event, e.slot, e.userAgent, e.accountId, e.accountVerified === true, e.occupant ?? null, new Date(e.at)],
     );
   }
 
   async ipLogForGame(gameRef: string, sinceMs: number): Promise<IpLogEntry[]> {
     const { rows } = await this.db.query(
-      `SELECT ip, game_ref, event, slot, user_agent, account_id, account_verified, at FROM child_safety.ip_log
+      `SELECT ip, game_ref, event, slot, user_agent, account_id, account_verified, occupant, at FROM child_safety.ip_log
         WHERE game_ref = $1 AND at >= $2 ORDER BY at`,
       [gameRef, new Date(sinceMs)],
     );
     return rows.map((r) => ({
       ip: r.ip, gameRef: r.game_ref, event: r.event, slot: r.slot ?? null, userAgent: r.user_agent, accountId: r.account_id,
-      accountVerified: r.account_verified === true, at: new Date(r.at).getTime(),
+      accountVerified: r.account_verified === true, occupant: r.occupant ?? null, at: new Date(r.at).getTime(),
     }));
   }
 

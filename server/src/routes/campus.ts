@@ -22,7 +22,16 @@ export function createCampusRoutes(repo: GameRepository, opts: { limit?: Request
       res.status(400).json({ error: "pass_refused" });
       return;
     }
-    const identity = await issueCampusIdentity(repo, { sub: verified.sub, name: verified.name });
+    let identity: string;
+    try {
+      identity = await issueCampusIdentity(repo, { sub: verified.sub, name: verified.name });
+    } catch (err) {
+      // The jti is already spent, so this pass is gone: the client asks
+      // campus for a fresh one (mg:ready) and plays anonymously meanwhile.
+      logger.error("campus_identity_issue_failed", { jti: verified.jti, error: err instanceof Error ? err.message : String(err) });
+      res.status(503).json({ error: "campus_identity_unavailable" });
+      return;
+    }
     logger.info("campus_pass_exchanged", { jti: verified.jti });
     res.json({ identity, name: verified.name, sub: verified.sub });
   });

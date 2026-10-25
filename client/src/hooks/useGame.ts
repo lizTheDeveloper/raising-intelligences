@@ -3,7 +3,7 @@ import { saveGameSecret, saveResearchHint, getGameSecret } from "./gameSecret";
 import { sendRepair, type RepairResult } from "../repairClient";
 import { readMemorySummary } from "../memorySummary";
 import { track, mark, secondsSince, bucketSeconds, bucketHours } from "../analytics";
-import { campusIdentity, campusIdentityUnknown } from "../campusCabinet";
+import { campusIdentity, campusIdentityHeaders, campusIdentityUnknown } from "../campusCabinet";
 
 // Saved-kids storage lives in localStore.ts (guarded: storage can throw).
 export { getSavedKids, saveKid, mergeKids } from "../localStore";
@@ -428,7 +428,7 @@ export function useGame() {
       try {
         const res = await fetch(`${API}/game/${gameId}/message`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...campusIdentityHeaders() },
           body: JSON.stringify({ sender: "parent1", content }),
         });
 
@@ -617,6 +617,7 @@ export function useGame() {
     const result = await sendRepair({
       gameId,
       secret: getGameSecret(gameId),
+      campusIdentity: campusIdentity(),
       message,
       base: import.meta.env.BASE_URL,
       fetchFn: (input, init) => fetch(input, init),
@@ -676,7 +677,7 @@ export function useGame() {
       try {
         const res = await fetch(`${API}/game/${gameId}/therapy-message`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...campusIdentityHeaders() },
           body: JSON.stringify({ content }),
         });
 

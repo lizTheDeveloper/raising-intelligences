@@ -58,6 +58,14 @@ export interface EvidenceInput {
   /** Seat whose content was flagged (parent1 / parent2). Scopes bans and the report to that sender. */
   sender?: string | null;
   /**
+   * Who in that seat sent it (the IP-log `occupant` of the flagged message),
+   * when known — a per-message flag knows it. A verified campus id from the
+   * IP log is flagged only when its rows have this same occupant. Absent (a
+   * scene-reader flag): the seat's single occupant, if its rows show only
+   * one; otherwise campus ids stay participants for a reviewer to include.
+   */
+  senderOccupant?: string | null;
+  /**
    * Whether ipAddress is the flagged sender's own request (true for a
    * per-message flag). False for a scene-reader flag, where the request that
    * ended the scene may have come from the co-player: the sender's IPs then
@@ -176,6 +184,17 @@ export async function preserveEvidence(
   const senderOwns = (slot: string | null) => sender !== null && slot === sender;
   const requestIpIsSender = input.requestIpIsSender ?? true;
   const senderIps = new Set(ipHistory.filter((e) => senderOwns(e.slot)).map((e) => e.ip));
+  // A verified campus id is the sender's only if the rows carrying it come
+  // from the same OCCUPANT of the seat as the flagged content — never just
+  // the same slot: a slot can change hands (a disconnected seat taken over,
+  // a solo game posted into by its id), and the earlier occupant's verified
+  // id must not become the newcomer's.
+  const senderOccupant: string | null = (() => {
+    if (input.senderOccupant !== undefined) return input.senderOccupant;
+    const seen = new Set(ipHistory.filter((e) => senderOwns(e.slot) && e.occupant).map((e) => e.occupant as string));
+    return seen.size === 1 ? [...seen][0] : null;
+  })();
+  const campusIsSender = (e: IpLogEntry) => senderOwns(e.slot) && senderOccupant !== null && e.occupant === senderOccupant;
   const requestIpRole: "flagged" | "participant" =
     requestIpIsSender || (input.ipAddress !== null && senderIps.has(input.ipAddress)) ? "flagged" : "participant";
   const identifiers = dedupeIdentifiers([
@@ -190,7 +209,7 @@ export async function preserveEvidence(
     // can never merge into a verified campus id.
     ...ipHistory.filter((e) => e.accountId).map((e): Identifier =>
       e.accountVerified === true
-        ? { kind: "campus", value: e.accountId as string, role: senderOwns(e.slot) ? "flagged" : "participant", verified: true, slot: e.slot }
+        ? { kind: "campus", value: e.accountId as string, role: campusIsSender(e) ? "flagged" : "participant", verified: true, slot: e.slot }
         : { kind: "matrix", value: e.accountId as string, role: senderOwns(e.slot) ? "flagged" : "participant", verified: false, slot: e.slot },
     ),
     ...(input.identifiers ?? []).map((i): Identifier => ({ ...i, role: i.role ?? "flagged", verified: i.verified ?? false })),
@@ -537,6 +556,8 @@ export async function logIp(
     slot?: string | null; userAgent?: string | null; accountId?: string | null;
     /** True only for an account id the server verified (a campus identity). */
     accountVerified?: boolean;
+    /** Who within the seat produced the row (see IpLogEntry.occupant). */
+    occupant?: string | null;
   },
   now: number = Date.now(),
 ): Promise<void> {
@@ -550,6 +571,7 @@ export async function logIp(
       userAgent: entry.userAgent ? entry.userAgent.slice(0, 512) : null,
       accountId: entry.accountId ?? null,
       accountVerified: !!entry.accountId && entry.accountVerified === true,
+      occupant: entry.occupant ?? null,
       at: now,
     });
   } catch (err) {

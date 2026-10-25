@@ -4,6 +4,7 @@ import {
   CAMPUS_ORIGIN,
   CampusCabinet,
   campusIdentity,
+  campusIdentityHeaders,
   campusIdentityUnknown,
   campusPassUrl,
   isCabinetActive,
@@ -101,7 +102,10 @@ test("boot posts mg:ready to the campus origin only; a pass is exchanged, kept, 
   setActiveCabinet(c);
   assert.equal(isCabinetActive(), true);
   assert.equal(campusIdentity(), "ident-1");
+  // Solo REST messages prove the identity with this header.
+  assert.deepEqual(campusIdentityHeaders(), { "x-campus-identity": "ident-1" });
   setActiveCabinet(null);
+  assert.deepEqual(campusIdentityHeaders(), {});
 });
 
 test("messages from another origin, another source, or of the wrong shape are ignored", async () => {
@@ -194,4 +198,17 @@ test("a reload restores the identity from sessionStorage; blocked storage doesn'
   await flush();
   assert.equal(c.identity, "ident-1");
   assert.doesNotThrow(() => c.identityUnknown());
+});
+
+test("a 503 from the exchange (pass spent, identity not stored) re-asks campus, at most once a minute", async () => {
+  let now = 5_000_000;
+  const w = fakeWindow();
+  const f = fakeFetch(() => new Response(JSON.stringify({ error: "campus_identity_unavailable" }), { status: 503 }));
+  const c = new CampusCabinet({ win: w.win, base: BASE, fetchImpl: f.fetchImpl, now: () => now });
+  c.start();
+  now += 61_000;
+  w.deliver({ type: "mg:pass", v: 1, pass: "cps.a.b" });
+  await flush();
+  assert.equal(w.posted.filter((p) => (p.msg as { type: string }).type === "mg:ready").length, 2);
+  assert.equal(c.identity, null);
 });

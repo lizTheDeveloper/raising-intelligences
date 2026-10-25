@@ -86,3 +86,44 @@ export async function isCampusSubBanned(repo: GameRepository, sub: string | null
     return false;
   });
 }
+
+// ── Who is speaking (IP-log occupant) ──────────────────────────────────────
+
+/** REST requests prove a campus identity by sending the identity token in this header. */
+export const CAMPUS_IDENTITY_HEADER = "x-campus-identity";
+
+/** The occupant of a socket seat: its reconnect token, hashed. A new token is a new occupant. */
+export function seatOccupant(playerToken: string): string {
+  return `seat:${createHash("sha256").update(playerToken).digest("hex").slice(0, 32)}`;
+}
+
+/** The occupant of a REST request that proved campus id `sub`. */
+export function campusOccupant(sub: string): string {
+  return `id:${createHash("sha256").update(sub).digest("hex").slice(0, 32)}`;
+}
+
+/** The occupant of any REST request that proved nothing. */
+export const REST_OCCUPANT = "rest";
+
+/** Who sent a parent message: the IP-log occupant, and the verified campus id when the sender proved one. */
+export interface Speaker {
+  occupant: string;
+  campusSub?: string | null;
+}
+
+/**
+ * The speaker of a REST request on a game. Verified only when the request
+ * itself carries an identity token for the campus id that created this solo
+ * game: the REST message routes take no other credential, so anyone with the
+ * game id could otherwise speak "as" the creator. Never throws.
+ */
+export async function restSpeaker(repo: GameRepository, gameId: string, identityHeader: unknown): Promise<Speaker> {
+  if (typeof identityHeader !== "string" || !identityHeader) return { occupant: REST_OCCUPANT };
+  try {
+    const [id, gameSub] = await Promise.all([resolveCampusIdentity(repo, identityHeader), repo.getGameCampusSub(gameId)]);
+    if (id && gameSub && id.sub === gameSub) return { occupant: campusOccupant(id.sub), campusSub: id.sub };
+  } catch (err) {
+    logger.error("campus_speaker_lookup_failed", { error: err instanceof Error ? err.message : String(err) });
+  }
+  return { occupant: REST_OCCUPANT };
+}

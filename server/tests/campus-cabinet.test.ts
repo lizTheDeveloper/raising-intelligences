@@ -4,8 +4,8 @@ import { createTestServer, type TestServer } from "./helpers/test-server.js";
 import { TestClient } from "./helpers/socket-client.js";
 import { claimsFor, newCampusKeyPair, signPass } from "./helpers/campus-pass-fixture.js";
 import { SOCKET_EVENTS as E } from "../src/socket/protocol.js";
-import { moderateParentMessage } from "../src/safety/moderation.js";
-import { bannableIdentifiers, confirmCase, dedupeIdentifiers, viewEvidence } from "../src/safety/child-safety/vault.js";
+import { bannableIdentifiers, confirmCase, dedupeIdentifiers, logIp, preserveEvidence, viewEvidence } from "../src/safety/child-safety/vault.js";
+import { InMemoryChildSafetyStore } from "../src/safety/child-safety/store.js";
 import { logger } from "../src/logger.js";
 import { resolveCampusIdentity } from "../src/security/campus-identity.js";
 import { buildReportPackage, reporterInfoFromEnv } from "../src/safety/child-safety/report.js";
@@ -24,17 +24,17 @@ function passFor(sub: string, name = "Synthetic Student"): string {
   return signPass(claimsFor({ sub, name }), keys.privateKeyB64);
 }
 
+/** Flags every moderated message; every other fetch (the test's own HTTP calls) passes through. */
 function mockModerationFlag() {
   process.env.OPENAI_API_KEY = "sk-test";
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response(
-      JSON.stringify({
-        model: "omni-moderation-2024-09-26",
-        results: [{ flagged: true, categories: { "sexual/minors": true }, category_scores: { "sexual/minors": 0.97 } }],
-      }),
-      { status: 200 },
-    ),
-  );
+  const real = globalThis.fetch.bind(globalThis);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url: string | URL | Request, init?: RequestInit) =>
+    String(url).startsWith("https://api.openai.com/")
+      ? new Response(JSON.stringify({
+          model: "omni-moderation-2024-09-26",
+          results: [{ flagged: true, categories: { "sexual/minors": true }, category_scores: { "sexual/minors": 0.97 } }],
+        }), { status: 200 })
+      : real(url as string, init));
 }
 
 describe("campus web cabinet (server)", () => {
@@ -67,6 +67,32 @@ describe("campus web cabinet (server)", () => {
     expect(res.status).toBe(200);
     return (await res.json()).identity as string;
   }
+
+  /** A solo REST message, end to end (moderation flags it before any LLM call). */
+  async function restMessage(gameId: string, sender: "parent1" | "parent2", ip: string, identity?: string): Promise<void> {
+    const live = server.games.get(gameId)!;
+    if (live.phase !== "ended") server.games.set(gameId, { ...live, phase: "family_chat" });
+    const res = await fetch(`${server.baseUrl}/api/game/${gameId}/message`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json", "X-Forwarded-For": ip, "User-Agent": "SyntheticUA",
+        ...(identity ? { "X-Campus-Identity": identity } : {}),
+      },
+      body: JSON.stringify({ sender, content: FIXTURE }),
+    });
+    await res.text();
+  }
+
+  /** A socket PARENT_MESSAGE, end to end; resolves once the server has ended the session on the flag. */
+  async function socketFlag(c: TestClient, gameId: string): Promise<void> {
+    const live = server.games.get(gameId)!;
+    server.games.set(gameId, { ...live, phase: "family_chat" });
+    const ended = c.waitFor<{ error: string }>(E.ERROR, (e) => e.error === "This session has ended.");
+    c.emit(E.PARENT_MESSAGE, { content: FIXTURE });
+    await ended;
+  }
+
+  const caseFor = (gameId: string) => [...server.memRepo.childSafety.cases.values()].find((x) => x.gameRef === gameId)!;
 
   async function socketClient(ip = freshIp()): Promise<TestClient> {
     // A forwarded IP per seat, so seats get distinct server-observed IPs.
@@ -165,17 +191,15 @@ describe("campus web cabinet (server)", () => {
     const identity = await exchange(sub);
     const ip = freshIp();
     const { gameId } = await (await post("/api/game", { childName: "Testkid", campusIdentity: identity }, ip)).json();
-    const state = server.games.get(gameId)!;
 
     mockModerationFlag();
     // Sender parent2: in a solo game the same person types for both parents.
-    const r = await moderateParentMessage({
-      repo: server.memRepo, games: server.games, state, sender: "parent2", content: FIXTURE, ipAddress: ip, userAgent: "SyntheticUA",
-    });
+    // The request proves the identity (X-Campus-Identity), so its row is verified.
+    await restMessage(gameId, "parent2", ip, identity);
     vi.restoreAllMocks();
-    expect(r.blocked).toBe(true);
+    expect(server.games.get(gameId)!.phase).toBe("ended");
 
-    const c = [...server.memRepo.childSafety.cases.values()].find((x) => x.gameRef === gameId)!;
+    const c = caseFor(gameId);
     expect(c.identifiers).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: "campus", value: sub, verified: true, role: "flagged", slot: "parent2" }),
     ]));
@@ -232,11 +256,10 @@ describe("campus web cabinet (server)", () => {
       expect.objectContaining({ event: "socket_join", slot: "parent2", accountId: subB, accountVerified: true }),
     ]));
 
-    const state = server.games.get(ja.gameId)!;
     mockModerationFlag();
-    await moderateParentMessage({ repo: server.memRepo, games: server.games, state, sender: "parent2", content: FIXTURE, ipAddress: ipB });
+    await socketFlag(b, ja.gameId);
     vi.restoreAllMocks();
-    const c = [...server.memRepo.childSafety.cases.values()].find((x) => x.gameRef === ja.gameId)!;
+    const c = caseFor(ja.gameId);
     expect(c.identifiers).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: "campus", value: subB, verified: true, role: "flagged" }),
       expect.objectContaining({ kind: "campus", value: subA, verified: true, role: "participant" }),
@@ -284,11 +307,10 @@ describe("campus web cabinet (server)", () => {
     expect((await server.memRepo.loadPlayers(ag.gameId)).find((p) => p.slot === "parent1")?.userId).toBeUndefined();
 
     // The attacker (parent1) is flagged.
-    const state = server.games.get(ag.gameId)!;
     mockModerationFlag();
-    await moderateParentMessage({ repo: server.memRepo, games: server.games, state, sender: "parent1", content: FIXTURE, ipAddress: "198.51.100.230" });
+    await socketFlag(atk, ag.gameId);
     vi.restoreAllMocks();
-    const c = [...server.memRepo.childSafety.cases.values()].find((x) => x.gameRef === ag.gameId)!;
+    const c = caseFor(ag.gameId);
     // The victim appears only as a verified participant, never flagged.
     const victimIds = c.identifiers.filter((i) => i.value.toLowerCase() === victim);
     expect(victimIds).toEqual([expect.objectContaining({ kind: "campus", role: "participant", verified: true })]);
@@ -298,6 +320,121 @@ describe("campus web cabinet (server)", () => {
     expect(await server.memRepo.childSafety.isIdentifierBanned({ kind: "matrix", value: victim })).toBe(false);
     // The victim can still start games.
     expect((await post("/api/game", { childName: "Testkid", campusIdentity: idV })).status).toBe(200);
+  });
+
+  // ── Fix round 1: a seat's verified id belongs to its OCCUPANT, not its slot ─
+
+  it("security: taking over a seat a verified student left never gets them flagged or banned", async () => {
+    const victim = "@seat-victim:themultiverse.school";
+    const host = await socketClient();
+    const hJoined = host.once<{ gameId: string }>(E.JOINED);
+    host.emit(E.CREATE_GAME, { childName: "Testkid" });
+    const g = await hJoined;
+    // The victim takes parent2 with a verified campus identity, then leaves.
+    const v = await socketClient();
+    const vJoined = v.once<{ slot: string }>(E.JOINED);
+    v.emit(E.JOIN_GAME, { gameId: g.gameId, campusIdentity: await exchange(victim) });
+    expect((await vJoined).slot).toBe("parent2");
+    const gone = host.waitFor<{ players: Array<{ slot: string; connected: boolean }> }>(E.LOBBY,
+      (l) => l.players.some((p) => p.slot === "parent2" && !p.connected));
+    v.close();
+    await gone;
+    // The attacker follows the invite link and reclaims parent2.
+    const atk = await socketClient();
+    const aJoined = atk.once<{ slot: string }>(E.JOINED);
+    atk.emit(E.JOIN_GAME, { gameId: g.gameId });
+    expect((await aJoined).slot).toBe("parent2");
+    // The seat's campus id went with the victim.
+    expect((await server.memRepo.loadPlayers(g.gameId)).find((p) => p.slot === "parent2")?.campusSub).toBeUndefined();
+
+    mockModerationFlag();
+    await socketFlag(atk, g.gameId);
+    vi.restoreAllMocks();
+    const c = caseFor(g.gameId);
+    expect(c.identifiers.filter((i) => i.value === victim)).toEqual([
+      expect.objectContaining({ kind: "campus", role: "participant", verified: true, slot: "parent2" }),
+    ]);
+    expect(bannableIdentifiers(c).some((i) => i.value === victim)).toBe(false);
+    const conf = await confirmCase(server.memRepo.childSafety, c.id, "reviewer", null, async () => {});
+    expect(conf.banned.some((b) => b.value === victim)).toBe(false);
+    expect(await server.memRepo.childSafety.isIdentifierBanned({ kind: "campus", value: victim })).toBe(false);
+  });
+
+  it("security: a solo game's creator is never flagged for a message they didn't send (REST by id, or a socket joiner)", async () => {
+    const creator = "@solo-creator:themultiverse.school";
+    const identity = await exchange(creator);
+    // (1) Anyone with the game id can post to the REST message route; without
+    // the creator's identity token their message is not the creator's.
+    const g1 = (await (await post("/api/game", { childName: "Testkid", campusIdentity: identity })).json()).gameId as string;
+    mockModerationFlag();
+    await restMessage(g1, "parent1", freshIp());
+    vi.restoreAllMocks();
+    let c = caseFor(g1);
+    expect(c.identifiers.filter((i) => i.value === creator)).toEqual([expect.objectContaining({ kind: "campus", role: "participant" })]);
+    expect(bannableIdentifiers(c).some((i) => i.value === creator)).toBe(false);
+
+    // (2) A socket joiner takes parent1 of the solo game by its id.
+    const g2 = (await (await post("/api/game", { childName: "Testkid", campusIdentity: identity })).json()).gameId as string;
+    const atk = await socketClient();
+    const joined = atk.once<{ slot: string }>(E.JOINED);
+    atk.emit(E.JOIN_GAME, { gameId: g2 });
+    expect((await joined).slot).toBe("parent1");
+    mockModerationFlag();
+    await socketFlag(atk, g2);
+    vi.restoreAllMocks();
+    c = caseFor(g2);
+    expect(c.identifiers.filter((i) => i.value === creator)).toEqual([expect.objectContaining({ kind: "campus", role: "participant" })]);
+    await confirmCase(server.memRepo.childSafety, c.id, "reviewer", null, async () => {});
+    expect(await server.memRepo.childSafety.isIdentifierBanned({ kind: "campus", value: creator })).toBe(false);
+  });
+
+  it("a token rejoin waiting on its campus ban check never drops a co-player who joined meanwhile", async () => {
+    const sub = "@race-seat:themultiverse.school";
+    const a = await socketClient();
+    const aJoined = a.once<{ gameId: string; playerToken: string }>(E.JOINED);
+    a.emit(E.CREATE_GAME, { childName: "Testkid", campusIdentity: await exchange(sub) });
+    const ja = await aJoined;
+
+    // Hold the campus ban check of the rejoin below.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let held = 0;
+    const store = server.memRepo.childSafety;
+    const orig = store.isIdentifierBanned.bind(store);
+    vi.spyOn(store, "isIdentifierBanned").mockImplementation(async (id) => {
+      if (id.kind === "campus") { held++; await gate; }
+      return orig(id);
+    });
+
+    const a2 = await socketClient();
+    const rejoined = a2.once<{ slot: string }>(E.JOINED);
+    a2.emit(E.JOIN_GAME, { gameId: ja.gameId, playerToken: ja.playerToken });
+    await vi.waitFor(() => expect(held).toBe(1));
+    // While it waits, a co-player joins.
+    const b = await socketClient();
+    const bJoined = b.once<{ slot: string }>(E.JOINED);
+    b.emit(E.JOIN_GAME, { gameId: ja.gameId });
+    expect((await bJoined).slot).toBe("parent2");
+    release();
+    expect((await rejoined).slot).toBe("parent1");
+    vi.restoreAllMocks();
+    expect(server.sessions.get(ja.gameId)!.players.map((p) => p.slot).sort()).toEqual(["parent1", "parent2"]);
+  });
+
+  it("a failure storing the identity after the jti is spent answers 503 JSON; one storing the game's campus id never blocks the game", async () => {
+    const save = vi.spyOn(server.memRepo, "saveCampusIdentity").mockRejectedValueOnce(new Error("db down (synthetic)"));
+    const res = await post("/api/campus-pass", { pass: passFor("@issue-fails:themultiverse.school") });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "campus_identity_unavailable" });
+    save.mockRestore();
+
+    const identity = await exchange("@record-fails:themultiverse.school");
+    vi.spyOn(server.memRepo, "recordGameCampusSub").mockRejectedValueOnce(new Error("db down (synthetic)"));
+    const created = await post("/api/game", { childName: "Testkid", campusIdentity: identity });
+    expect(created.status).toBe(200);
+    const { gameId } = await created.json();
+    // Not stored, so not claimed in the IP log either.
+    expect((await server.memRepo.childSafety.ipLogForGame(gameId, 0))[0]).toMatchObject({ accountId: null, accountVerified: false });
   });
 
   it("a seat that joined before its cabinet sign-in finished takes the campus id on rejoin", async () => {
@@ -329,11 +466,10 @@ describe("campus web cabinet (server)", () => {
     expect(rows[0]).toMatchObject({ accountId: claimed, accountVerified: false });
     expect(await server.memRepo.campusSubForSeat(j.gameId, "parent1")).toBeNull();
 
-    const state = server.games.get(j.gameId)!;
     mockModerationFlag();
-    await moderateParentMessage({ repo: server.memRepo, games: server.games, state, sender: "parent1", content: FIXTURE, ipAddress: "198.51.100.200" });
+    await socketFlag(a, j.gameId);
     vi.restoreAllMocks();
-    const c = [...server.memRepo.childSafety.cases.values()].find((x) => x.gameRef === j.gameId)!;
+    const c = caseFor(j.gameId);
     const matrix = c.identifiers.filter((i) => i.kind === "matrix");
     expect(matrix).toEqual([expect.objectContaining({ value: claimed, verified: false })]);
     await confirmCase(server.memRepo.childSafety, c.id, "reviewer", null, async () => {});
@@ -357,5 +493,32 @@ describe("identifier dedupe keeps role and verified paired", () => {
       { kind: "ip", value: "198.51.100.5", role: "flagged", verified: true, slot: "parent1" },
     ]);
     expect(merged).toEqual([expect.objectContaining({ role: "flagged", verified: true, slot: "parent1" })]);
+  });
+});
+
+describe("scene-reader flags infer the seat's occupant", () => {
+  const V = "@scene-v:themultiverse.school";
+  async function sceneCase(rows: Array<{ slot: string; occupant: string; campus?: boolean }>) {
+    const store = new InMemoryChildSafetyStore();
+    for (const r of rows) {
+      await logIp(store, { ip: "198.51.100.77", gameRef: "g-scene", event: "message", slot: r.slot, occupant: r.occupant,
+        ...(r.campus ? { accountId: V, accountVerified: true } : {}) });
+    }
+    const { caseId } = await preserveEvidence(store, {
+      source: "ri_scene", content: FIXTURE, context: [], categories: ["scene_reader:block"], gameRef: "g-scene",
+      ipAddress: null, userAgent: null, sender: "parent1", requestIpIsSender: false,
+    });
+    return (await store.getCase(caseId))!;
+  }
+
+  it("one occupant in the seat: their verified campus id is flagged (a genuine offender stays bannable)", async () => {
+    const c = await sceneCase([{ slot: "parent1", occupant: "seat:a", campus: true }, { slot: "parent1", occupant: "seat:a", campus: true }]);
+    expect(bannableIdentifiers(c).some((i) => i.kind === "campus" && i.value === V)).toBe(true);
+  });
+
+  it("the seat changed hands: campus ids stay participants for a reviewer to include", async () => {
+    const c = await sceneCase([{ slot: "parent1", occupant: "seat:a", campus: true }, { slot: "parent1", occupant: "seat:b" }]);
+    expect(bannableIdentifiers(c).some((i) => i.kind === "campus")).toBe(false);
+    expect(c.identifiers).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "campus", value: V, role: "participant", verified: true })]));
   });
 });
