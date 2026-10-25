@@ -26,8 +26,8 @@ export class TestClient {
   kidStream = "";
   private stateLog: ViewerState[] = [];
 
-  constructor(baseUrl: string) {
-    this.socket = io(baseUrl, { transports: ["websocket"], forceNew: true });
+  constructor(baseUrl: string, opts: { extraHeaders?: Record<string, string> } = {}) {
+    this.socket = io(baseUrl, { transports: ["websocket"], forceNew: true, extraHeaders: opts.extraHeaders });
     this.socket.on(E.LOBBY, (l: LobbyState) => (this.lastLobby = l));
     this.socket.on(E.STATE, (s: ViewerState) => {
       this.lastState = s;

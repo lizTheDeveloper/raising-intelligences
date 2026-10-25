@@ -30,8 +30,9 @@ export interface Identifier {
   role?: "flagged" | "participant";
   /**
    * True only for identifiers the server itself observed or authenticated
-   * (a request IP, a verified session). Client-claimed IDs (RI's Matrix
-   * userId) are false: kept as "claimed, unverified", never banned or reported.
+   * (a request IP, a campus identity from a verified launch pass). Client-
+   * claimed IDs (RI's Matrix userId) are false: kept as "claimed, unverified",
+   * never banned or reported.
    */
   verified?: boolean;
   /** Seat that produced it (parent1 / parent2), when known. */
@@ -106,8 +107,16 @@ export interface IpLogEntry {
   /** parent1 / parent2 when the seat is known. */
   slot: string | null;
   userAgent: string | null;
-  /** Client-claimed account id (RI: Matrix userId). Unverified. */
+  /**
+   * Account id seen for this seat: a client-claimed Matrix userId (unverified),
+   * or a campus identity the server verified itself (accountVerified).
+   */
   accountId: string | null;
+  /**
+   * True only when the server verified accountId (a campus launch pass traded
+   * at /api/campus-pass). Rows written before migration 027 read false.
+   */
+  accountVerified: boolean;
   at: number;
 }
 
@@ -377,20 +386,20 @@ export class PgChildSafetyStore implements ChildSafetyStore {
 
   async insertIpLog(e: IpLogEntry): Promise<void> {
     await this.db.query(
-      `INSERT INTO child_safety.ip_log (ip, game_ref, event, slot, user_agent, account_id, at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [e.ip, e.gameRef, e.event, e.slot, e.userAgent, e.accountId, new Date(e.at)],
+      `INSERT INTO child_safety.ip_log (ip, game_ref, event, slot, user_agent, account_id, account_verified, at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [e.ip, e.gameRef, e.event, e.slot, e.userAgent, e.accountId, e.accountVerified === true, new Date(e.at)],
     );
   }
 
   async ipLogForGame(gameRef: string, sinceMs: number): Promise<IpLogEntry[]> {
     const { rows } = await this.db.query(
-      `SELECT ip, game_ref, event, slot, user_agent, account_id, at FROM child_safety.ip_log
+      `SELECT ip, game_ref, event, slot, user_agent, account_id, account_verified, at FROM child_safety.ip_log
         WHERE game_ref = $1 AND at >= $2 ORDER BY at`,
       [gameRef, new Date(sinceMs)],
     );
     return rows.map((r) => ({
       ip: r.ip, gameRef: r.game_ref, event: r.event, slot: r.slot ?? null, userAgent: r.user_agent, accountId: r.account_id,
-      at: new Date(r.at).getTime(),
+      accountVerified: r.account_verified === true, at: new Date(r.at).getTime(),
     }));
   }
 

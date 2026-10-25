@@ -14,8 +14,9 @@ import type { CaseRow, CaseStatus, ChildSafetyStore, Identifier, IpLogEntry } fr
  *   dismissed — a reviewer judged it a false positive (reason required).
  *               Purged CHILD_SAFETY_DISMISSED_RETENTION_DAYS (90) later.
  *   confirmed — a reviewer judged it reportable. Locked: never purged; the
- *               flagged sender's verified identifiers (server-observed IPs)
- *               are banned and cannot be unbanned. Co-players' identifiers
+ *               flagged sender's verified identifiers (server-observed IPs,
+ *               and a campus identity verified from a launch pass) are banned
+ *               and cannot be unbanned. Co-players' identifiers
  *               are banned only if a reviewer includes them, with a reason.
  *   reported  — a human filed it at report.cybertip.org and recorded the
  *               report id. Still locked; retain_until runs one year (or the
@@ -176,9 +177,12 @@ export async function preserveEvidence(
     ...ipHistory.map((e): Identifier => ({
       kind: "ip", value: e.ip, role: senderOwns(e.slot) ? "flagged" : "participant", verified: true, slot: e.slot,
     })),
-    // Client-claimed account ids (RI's Matrix userId): evidence only, never a ban.
+    // Account ids: a client-claimed Matrix userId is evidence only, never a
+    // ban. A campus identity the server verified (accountVerified, from a
+    // campus launch pass) stays verified, so confirm bans it like an IP.
     ...ipHistory.filter((e) => e.accountId).map((e): Identifier => ({
-      kind: "matrix", value: e.accountId as string, role: senderOwns(e.slot) ? "flagged" : "participant", verified: false, slot: e.slot,
+      kind: "matrix", value: e.accountId as string, role: senderOwns(e.slot) ? "flagged" : "participant",
+      verified: e.accountVerified === true, slot: e.slot,
     })),
     ...(input.identifiers ?? []).map((i): Identifier => ({ ...i, role: i.role ?? "flagged", verified: i.verified ?? false })),
   ]);
@@ -519,6 +523,8 @@ export async function logIp(
   entry: {
     ip: string | null | undefined; gameRef: string | null; event: string;
     slot?: string | null; userAgent?: string | null; accountId?: string | null;
+    /** True only for an account id the server verified (a campus identity). */
+    accountVerified?: boolean;
   },
   now: number = Date.now(),
 ): Promise<void> {
@@ -531,6 +537,7 @@ export async function logIp(
       slot: entry.slot ?? null,
       userAgent: entry.userAgent ? entry.userAgent.slice(0, 512) : null,
       accountId: entry.accountId ?? null,
+      accountVerified: !!entry.accountId && entry.accountVerified === true,
       at: now,
     });
   } catch (err) {

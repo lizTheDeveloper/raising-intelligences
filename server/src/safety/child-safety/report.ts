@@ -61,7 +61,8 @@ export interface ReportPackage {
     identifiers: Array<{ kind: string; value: string; includedBy?: string; includedReason?: string }>;
     /** IDs the client claimed (e.g. a Matrix userId) — never verified by the service. */
     claimedUnverified: Array<{ kind: string; value: string }>;
-    accountVerified: false;
+    /** True when a verified account id (a campus identity) is among `identifiers`. */
+    accountVerified: boolean;
   };
   content: {
     text: string;
@@ -188,7 +189,7 @@ export function buildReportPackage(c: CaseSummary, e: EvidencePayload, reporter:
         ...(i.includedBy ? { includedBy: i.includedBy, includedReason: i.includedReason } : {}),
       })),
       claimedUnverified: flagged.filter((i) => !identifierVerified(i)).map((i) => ({ kind: i.kind, value: i.value })),
-      accountVerified: false,
+      accountVerified: flaggedVerified.some((i) => i.kind !== "ip"),
     },
     content: {
       text: e.content,

@@ -295,7 +295,18 @@ export async function moderateParentMessage(params: {
   // Every parent message, on every surface, passes through here: this is the
   // IP log's per-message write (child_safety.ip_log, 90-day retention), so a
   // later scene-reader flag still has the IPs that wrote the scene.
-  await logIp(repo.childSafety, { ip: ipAddress, gameRef: state.id, event: "message", slot: sender, userAgent });
+  // A seat with a verified campus id (web cabinet) carries it on every row,
+  // so a scene-reader flag still finds the sender's verified id.
+  let campusSub: string | null = null;
+  try {
+    campusSub = await repo.campusSubForSeat(state.id, sender);
+  } catch (err) {
+    logger.error("campus_sub_lookup_failed", { error: err instanceof Error ? err.message : String(err) });
+  }
+  await logIp(repo.childSafety, {
+    ip: ipAddress, gameRef: state.id, event: "message", slot: sender, userAgent,
+    ...(campusSub ? { accountId: campusSub, accountVerified: true } : {}),
+  });
 
   const result = await classifyParentMessage(content, categoriesForPhase(state.phase));
   if (!result.flagged) return { blocked: false };

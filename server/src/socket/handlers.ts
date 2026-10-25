@@ -57,6 +57,7 @@ import {
 import { generatePersonalitySeed } from "../game/personality.js";
 import { moderateParentMessage, applyModerationBlock, recordConcern } from "../safety/moderation.js";
 import { logIp } from "../safety/child-safety/vault.js";
+import { campusIdentityForRequest, isCampusSubBanned } from "../security/campus-identity.js";
 import { evaluateEscalation } from "../safety/escalation.js";
 import { getSocketIp } from "../lib/client-ip.js";
 import { buildSceneTranscript } from "../game/context-assembler.js";
@@ -185,6 +186,22 @@ function normalizeRehydrated(state: GameState): GameState {
  */
 function slotRoom(gameId: string, slot: Sender): string {
   return `${gameId}:${slot}`;
+}
+
+/**
+ * The IP-log account fields for a seat: its verified campus id when it has
+ * one (web cabinet), else the client-claimed Matrix userId, unverified. (A
+ * claimed userId still reaches a case through the players row.)
+ */
+function seatAccount(player: { campusSub?: string }, claimedUserId: string | undefined): { accountId: string | null; accountVerified: boolean } {
+  return player.campusSub
+    ? { accountId: player.campusSub, accountVerified: true }
+    : { accountId: claimedUserId ?? null, accountVerified: false };
+}
+
+/** JOINED's `campus` field: only when an identity was sent ("unknown" → the cabinet asks campus for a new pass). */
+function campusField(campus: { status?: "verified" | "unknown" }): { campus?: "verified" | "unknown" } {
+  return campus.status ? { campus: campus.status } : {};
 }
 
 /**
@@ -622,6 +639,10 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       if (payload.userId && (await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: payload.userId }).catch(() => false))) {
         return fail("Forbidden");
       }
+      // Web cabinets: a verified campus id, refused if a confirmed case banned
+      // it. Unknown/expired identities are ignored (anonymous play).
+      const campus = await campusIdentityForRequest(repo, payload.campusIdentity);
+      if (await isCampusSubBanned(repo, campus.sub)) return fail("Forbidden");
       const state = createGame(payload.childName, payload.relationshipType);
       games.set(state.id, state);
       await repo.saveGame(state);
@@ -631,12 +652,12 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       await repo.recordGameIp(state.id, getSocketIp(socket));
 
       let session = createSession(state.id);
-      const added = addPlayer(session, socket.id, payload.displayName, payload.userId);
+      const added = addPlayer(session, socket.id, payload.displayName, payload.userId, campus.sub ?? undefined);
       session = added.session;
       sessions.set(state.id, session);
       await logIp(repo.childSafety, {
         ip: getSocketIp(socket), gameRef: state.id, event: "socket_create", slot: added.player.slot,
-        userAgent: socket.handshake.headers["user-agent"] ?? null, accountId: payload.userId ?? null,
+        userAgent: socket.handshake.headers["user-agent"] ?? null, ...seatAccount(added.player, payload.userId),
       });
 
       data.gameId = state.id;
@@ -644,8 +665,8 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       await socket.join(state.id);
       await socket.join(slotRoom(state.id, added.player.slot));
 
-      await repo.savePlayer(state.id, added.player.slot, added.player.displayName, added.player.token, added.player.userId);
-      socket.emit(E.JOINED, { gameId: state.id, slot: added.player.slot, playerToken: added.player.token });
+      await repo.savePlayer(state.id, added.player.slot, added.player.displayName, added.player.token, added.player.userId, added.player.campusSub);
+      socket.emit(E.JOINED, { gameId: state.id, slot: added.player.slot, playerToken: added.player.token, ...campusField(campus) });
       broadcastLobby(state.id);
       generateFirstPortrait(state.id).catch(() => {});
     });
@@ -673,6 +694,9 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       if (payload.userId && (await repo.childSafety.isIdentifierBanned({ kind: "matrix", value: payload.userId }).catch(() => false))) {
         return fail("Forbidden");
       }
+      // A campus id is verified, so its ban is the strong control here.
+      const campus = await campusIdentityForRequest(repo, payload.campusIdentity);
+      if (await isCampusSubBanned(repo, campus.sub)) return fail("Forbidden");
 
       // Load game state if not in memory
       let state = games.get(gameId);
@@ -728,6 +752,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
                 connected: false,
                 token: rec.token,
                 userId: rec.userId,
+                ...(rec.campusSub ? { campusSub: rec.campusSub } : {}),
               },
             ],
           };
@@ -770,14 +795,24 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       if (payload.playerToken) {
         const existing = getPlayerByToken(session, payload.playerToken);
         if (existing) {
+          // The seat's own verified campus id is banned: no way back in.
+          if (await isCampusSubBanned(repo, existing.campusSub ?? null)) return fail("Forbidden");
           // Symmetry with the handoff path: if a *live* socket currently holds
           // this slot, it is being taken over and must be told. This is what
           // makes the reverse direction (taking the game back on the device you
           // handed off from) non-silent — without it the phone would keep a
           // ready button that no longer reaches the server.
           supersedeActiveSocket(existing, socket.id);
-          const reconnected = reconnectPlayer(session, payload.playerToken, socket.id);
+          let reconnected = reconnectPlayer(session, payload.playerToken, socket.id);
           session = reconnected.session;
+          // A seat that started before its cabinet sign-in finished takes the
+          // verified campus id on its first rejoin; one it already has stays.
+          if (campus.sub && !reconnected.player.campusSub) {
+            const player = { ...reconnected.player, campusSub: campus.sub };
+            session = { ...session, players: session.players.map((p) => (p.slot === player.slot ? player : p)) };
+            reconnected = { session, player };
+            await repo.savePlayer(gameId, player.slot, player.displayName, player.token, player.userId, campus.sub);
+          }
           sessions.set(gameId, session);
           data.gameId = gameId;
           data.slot = reconnected.player.slot;
@@ -785,9 +820,9 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           await socket.join(slotRoom(gameId, reconnected.player.slot));
           await logIp(repo.childSafety, {
             ip: getSocketIp(socket), gameRef: gameId, event: "socket_rejoin", slot: reconnected.player.slot,
-            userAgent: socket.handshake.headers["user-agent"] ?? null, accountId: reconnected.player.userId ?? null,
+            userAgent: socket.handshake.headers["user-agent"] ?? null, ...seatAccount(reconnected.player, reconnected.player.userId),
           });
-          socket.emit(E.JOINED, { gameId, slot: reconnected.player.slot, playerToken: reconnected.player.token });
+          socket.emit(E.JOINED, { gameId, slot: reconnected.player.slot, playerToken: reconnected.player.token, ...campusField(campus) });
           broadcastLobby(gameId);
           // Reconnect used to emit STATE but never GENERATING, so a returning
           // client kept whatever stale generating flag it had. The flag now
@@ -803,7 +838,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       // New player: assign to first free slot
       let added;
       try {
-        added = addPlayer(session, socket.id, payload.displayName, payload.userId);
+        added = addPlayer(session, socket.id, payload.displayName, payload.userId, campus.sub ?? undefined);
       } catch {
         return fail("This game already has two players");
       }
@@ -827,13 +862,13 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       await socket.join(gameId);
       await socket.join(slotRoom(gameId, added.player.slot));
 
-      await repo.savePlayer(gameId, added.player.slot, added.player.displayName, added.player.token, added.player.userId);
+      await repo.savePlayer(gameId, added.player.slot, added.player.displayName, added.player.token, added.player.userId, added.player.campusSub);
       await logIp(repo.childSafety, {
         ip: getSocketIp(socket), gameRef: gameId, event: "socket_join", slot: added.player.slot,
-        userAgent: socket.handshake.headers["user-agent"] ?? null, accountId: added.player.userId ?? null,
+        userAgent: socket.handshake.headers["user-agent"] ?? null, ...seatAccount(added.player, added.player.userId),
       });
       clearParentContext();
-      socket.emit(E.JOINED, { gameId, slot: added.player.slot, playerToken: added.player.token });
+      socket.emit(E.JOINED, { gameId, slot: added.player.slot, playerToken: added.player.token, ...campusField(campus) });
       broadcastLobby(gameId);
       socket.emit(
         E.STATE,

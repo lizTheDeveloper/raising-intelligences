@@ -14,6 +14,8 @@ export interface CreateGamePayload {
   /** Matrix user id of the creating player, when signed in. Server-side only —
    * never echoed back in lobby/public player views. */
   userId?: string;
+  /** Web cabinets: identity token from POST /api/campus-pass (verified server-side). */
+  campusIdentity?: string;
 }
 export interface JoinGamePayload {
   gameId: string;
@@ -21,6 +23,8 @@ export interface JoinGamePayload {
   playerToken?: string;
   /** Matrix user id of the joining player, when signed in. */
   userId?: string;
+  /** Web cabinets: identity token from POST /api/campus-pass (verified server-side). */
+  campusIdentity?: string;
   /**
    * A single-use device-handoff code (see REQUEST_HANDOFF). Redeeming it binds
    * this socket to the slot the code was minted for and issues the normal
