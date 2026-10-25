@@ -516,6 +516,22 @@ describe("child-safety review queue (HTTP)", () => {
     expect((await ingest({ source: "whispers", recordKind: "other", content: "x", externalRef: "burst-3" })).status).toBe(400);
   });
 
+  it("an unauthenticated 2 MB POST is refused (401) before its body is read or parsed", async () => {
+    // Not JSON: had any parser read it first, the answer would be 400, not 401.
+    const junk = "{" + "x".repeat(2 * 1024 * 1024 - 2);
+    const res = await fetch(`${server.baseUrl}/api/internal/child-safety/evidence`, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer wrong" }, body: junk,
+    });
+    expect(res.status).toBe(401);
+    const before = server.memRepo.childSafety.cases.size;
+    // With the token the same body reaches the parser (400), and still files nothing.
+    const authed = await fetch(`${server.baseUrl}/api/internal/child-safety/evidence`, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${INGEST}` }, body: junk,
+    });
+    expect([400, 413]).toContain(authed.status);
+    expect(server.memRepo.childSafety.cases.size).toBe(before);
+  });
+
   it("ingest takes whole passages up to 500k characters, and refuses more rather than cutting", async () => {
     const big = "b".repeat(300_000);
     let res = await ingest({ source: "whispers", content: big, externalRef: "big-1" });

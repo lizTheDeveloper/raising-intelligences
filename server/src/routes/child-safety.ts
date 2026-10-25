@@ -1,4 +1,4 @@
-import { Router } from "express";
+import express, { Router } from "express";
 import type { Request, Response, NextFunction } from "express";
 import { timingSafeEqual } from "node:crypto";
 import rateLimit from "express-rate-limit";
@@ -272,6 +272,8 @@ const str = (v: unknown, max: number): string | null => (typeof v === "string" &
  * Returns {caseId, created}.
  */
 export const INGEST_CONTENT_MAX = 500_000;
+/** Full path of the ingest route (the app's global JSON parser skips it). */
+export const INGEST_PATH = "/api/internal/child-safety/evidence";
 const HEX64 = /^[0-9a-f]{64}$/;
 
 export interface SuppressedBurst {
@@ -309,7 +311,9 @@ export function burstContent(b: SuppressedBurst): string {
 export function createChildSafetyIngestRoutes(repo: GameRepository): Router {
   const router = Router();
   const limiter = rateLimit({ windowMs: 60_000, max: 120, standardHeaders: true, legacyHeaders: false });
-  router.post("/internal/child-safety/evidence", limiter, requireIngestToken, noStore, async (req, res) => {
+  // The body is parsed here, after the rate limit and the token check, with
+  // room for whole passages; the app's global JSON parser skips this path.
+  router.post("/internal/child-safety/evidence", limiter, requireIngestToken, express.json({ limit: "2mb" }), noStore, async (req, res) => {
     try {
       const b = (req.body ?? {}) as Record<string, unknown>;
       const source = str(b.source, 40);
