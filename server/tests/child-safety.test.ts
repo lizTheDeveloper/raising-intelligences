@@ -511,6 +511,17 @@ describe("child-safety review queue (HTTP)", () => {
     expect(view.evidence.content).not.toContain("6.6.6.6");
     expect(view.evidence.content).not.toContain("not-a-hash");
     expect(view.evidence.extra.suppressedBurst).toMatchObject({ count: 12, sha256: [hash] });
+    // Structured samples: each kept with its own sender, never parsed out of text.
+    const sample = { incidentAt: 1500, content: FIXTURE, contentSha256: "b".repeat(64), ipAddress: "198.51.100.92", userAgent: "UA-s", gameRef: "w-3", identifiers: [{ kind: "whispers_seat", value: "seat-2", verified: true }] };
+    const res2 = await ingest({
+      source: "whispers", recordKind: "suppressed_burst", gameRef: "w-3", externalRef: "burst-s", ipAddress: "198.51.100.92",
+      identifiers: [{ kind: "ip", value: "198.51.100.92", verified: true }],
+      suppressedBurst: { key: { kind: "ip", value: "198.51.100.92" }, count: 3, firstAt: 1000, lastAt: 2000, sha256: [hash], samples: [sample, { bogus: true }] },
+    });
+    const id2 = (await res2.json()).caseId;
+    const view2 = await (await fetch(`${server.baseUrl}/api/admin/child-safety/cases/${id2}/view`, { method: "POST", headers: h() })).json();
+    expect(view2.evidence.extra.suppressedBurst.samples).toEqual([sample]);
+    expect(view2.evidence.content).toContain("1 of them are kept in full");
     // Malformed bursts are refused.
     expect((await ingest({ source: "whispers", recordKind: "suppressed_burst", externalRef: "burst-2", suppressedBurst: { count: 0 } })).status).toBe(400);
     expect((await ingest({ source: "whispers", recordKind: "other", content: "x", externalRef: "burst-3" })).status).toBe(400);
@@ -540,6 +551,11 @@ describe("child-safety review queue (HTTP)", () => {
     expect(row.contentSha256).toBe(createHash("sha256").update(big).digest("hex"));
     res = await ingest({ source: "whispers", content: "c".repeat(500_001), externalRef: "big-2" });
     expect(res.status).toBe(413);
+    // A sender that capped an oversized flag records the original's hash and length.
+    res = await ingest({ source: "whispers", content: "d".repeat(10), externalRef: "big-3", contentTruncated: { originalSha256: "e".repeat(64), originalLength: 900_000 } });
+    const id3 = (await res.json()).caseId;
+    const v3 = await (await fetch(`${server.baseUrl}/api/admin/child-safety/cases/${id3}/view`, { method: "POST", headers: h() })).json();
+    expect(v3.evidence.extra.contentTruncated).toEqual({ originalSha256: "e".repeat(64), originalLength: 900_000 });
   });
 });
 

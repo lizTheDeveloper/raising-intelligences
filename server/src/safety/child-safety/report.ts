@@ -67,6 +67,10 @@ export interface ReportPackage {
     text: string;
     sha256: string;
     contextTranscript: Array<{ speaker: string; content: string; at: string | null }>;
+    /** For a suppressed-burst record: the flags kept in full, each with its own sender. */
+    suppressedSamples?: Array<{ incidentAt: string; content: string; sha256: string; ipAddress: string | null; userAgent: string | null; gameRef: string | null; identifiers: Array<{ kind: string; value: string; verified: boolean }> }>;
+    /** The sender capped an oversized flag: the original's SHA-256 and length (full text kept by the sender). */
+    truncatedOriginal?: { sha256: string; length: number };
     locationOnService: string;
     viewedByEsp: true;
     publiclyAvailable: false;
@@ -88,6 +92,18 @@ export interface ReportPackage {
 }
 
 const iso = (ms: number | null | undefined): string | null => (ms ? new Date(ms).toISOString() : null);
+
+type SampleExtra = { incidentAt: number; content: string; contentSha256: string; ipAddress: string | null; userAgent: string | null; gameRef: string | null; identifiers: Array<{ kind: string; value: string; verified: boolean; role?: string }> };
+function suppressedExtras(extra: Record<string, unknown>): Pick<ReportPackage["content"], "suppressedSamples" | "truncatedOriginal"> {
+  const burst = extra.suppressedBurst as { samples?: SampleExtra[] } | undefined;
+  const trunc = extra.contentTruncated as { originalSha256: string; originalLength: number } | undefined;
+  return {
+    ...(burst?.samples?.length
+      ? { suppressedSamples: burst.samples.map((s) => ({ incidentAt: new Date(s.incidentAt).toISOString(), content: s.content, sha256: s.contentSha256, ipAddress: s.ipAddress, userAgent: s.userAgent, gameRef: s.gameRef, identifiers: s.identifiers.filter((i) => !i.role).map((i) => ({ kind: i.kind, value: i.value, verified: i.verified })) })) }
+      : {}),
+    ...(trunc ? { truncatedOriginal: { sha256: trunc.originalSha256, length: trunc.originalLength } } : {}),
+  };
+}
 
 export function buildReportPackage(c: CaseSummary, e: EvidencePayload, reporter: ReporterInfo, now = Date.now()): ReportPackage {
   // Only the flagged sender's identifiers (and any a reviewer explicitly
@@ -136,6 +152,7 @@ export function buildReportPackage(c: CaseSummary, e: EvidencePayload, reporter:
       text: e.content,
       sha256: e.contentSha256,
       contextTranscript: e.context.map((t) => ({ speaker: t.speaker, content: t.content, at: iso(t.at ?? null) })),
+      ...suppressedExtras(e.extra),
       locationOnService: `In-game chat, game ${e.gameRef ?? "(unknown)"}`,
       viewedByEsp: true,
       publiclyAvailable: false,

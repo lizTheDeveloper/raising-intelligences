@@ -164,6 +164,8 @@ The body is JSON with these fields:
 
 Every field is structured. Attribution comes only from `ipAddress`, `userAgent` and `identifiers`, never from `content`. One flag is one case; `content` may be up to 500,000 characters, and a longer one is refused (413) rather than cut.
 
-A **suppressed burst** is what a sending service files when one sender (one seat, or one IP) goes over its per-window case cap. It sends no `content`. Instead it sends `suppressedBurst: {key: {kind, value}, count, firstAt, lastAt, sha256: [up to 200 hex digests]}`, under that sender's own `identifiers` and `ipAddress`. RI writes the case text from those validated fields only. The list marks these cases "suppressed burst".
+A **suppressed burst** is what a sending service files when one sender (one seat, or one IP) goes over its per-window case cap. It sends no `content`. Instead it sends `suppressedBurst: {key: {kind, value}, count, firstAt, lastAt, sha256: [up to 200 hex digests], samples: [up to 10]}`, under that key's own `identifiers` and `ipAddress`. Each sample is one suppressed flag kept in full with its own sender, as structured fields: `{incidentAt, content, contentSha256, ipAddress, userAgent, gameRef, identifiers}`. RI writes the case text from validated fields only. The evidence view and the report package list each sample with its own sender.
+
+A sender that has to cap an oversized flag sends `contentTruncated: {originalSha256, originalLength}`. The full original stays in the sender's outbox for manual retrieval. The list marks these cases "suppressed burst".
 
 The endpoint returns `{caseId, created}`. Cases filed this way go through the same review queue and retention as RI's own.

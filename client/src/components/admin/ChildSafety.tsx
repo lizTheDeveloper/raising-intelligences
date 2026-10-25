@@ -56,7 +56,13 @@ interface Evidence {
   userAgent: string | null;
   sender?: string | null;
   ipHistory: Array<{ ip: string; event: string; at: number; slot?: string | null }>;
-  extra?: { suppressedBurst?: { key: { kind: string; value: string }; count: number; firstAt: number; lastAt: number; sha256: string[] } };
+  extra?: {
+    suppressedBurst?: {
+      key: { kind: string; value: string }; count: number; firstAt: number; lastAt: number; sha256: string[];
+      samples?: Array<{ incidentAt: number; content: string; contentSha256: string; ipAddress: string | null; userAgent: string | null; gameRef: string | null; identifiers: Ident[] }>;
+    };
+    contentTruncated?: { originalSha256: string; originalLength: number };
+  };
 }
 
 const STATUS_FILTERS = ["open", "confirmed", "reported", "dismissed", "released"] as const;
@@ -290,9 +296,28 @@ export function ChildSafety({ token }: { token: string }) {
               <p>
                 {viewing.evidence.extra.suppressedBurst.count} flags from {viewing.evidence.extra.suppressedBurst.key.kind}{" "}
                 <code>{viewing.evidence.extra.suppressedBurst.key.value}</code> between {fmt(viewing.evidence.extra.suppressedBurst.firstAt)} and{" "}
-                {fmt(viewing.evidence.extra.suppressedBurst.lastAt)}, over the sending service's case cap. Content was not kept; {viewing.evidence.extra.suppressedBurst.sha256.length} SHA-256 hashes are listed below.
+                {fmt(viewing.evidence.extra.suppressedBurst.lastAt)}, over the sending service's case cap. {viewing.evidence.extra.suppressedBurst.samples?.length ?? 0} kept in full below, each with its own sender; {viewing.evidence.extra.suppressedBurst.sha256.length} SHA-256 hashes in the content.
               </p>
+              {(viewing.evidence.extra.suppressedBurst.samples ?? []).map((smp, k) => (
+                <div key={k} style={{ borderLeft: "3px solid #fc6", paddingLeft: 8, margin: "8px 0" }}>
+                  <div>Sample {k + 1} · {fmt(smp.incidentAt)} · IP <code>{smp.ipAddress ?? "—"}</code> · game <code>{smp.gameRef ?? "—"}</code></div>
+                  <div>UA: {smp.userAgent ?? "—"}</div>
+                  <ul>
+                    {smp.identifiers.map((i) => (
+                      <li key={`${i.kind}:${i.value}`}>{i.kind}: <code>{i.value}</code>{i.role ? " (participant)" : ""}{!i.verified && <em> (claimed, unverified)</em>}</li>
+                    ))}
+                  </ul>
+                  <div>SHA-256 <code>{smp.contentSha256}</code></div>
+                  <pre style={{ whiteSpace: "pre-wrap" }}>{smp.content}</pre>
+                </div>
+              ))}
             </>
+          )}
+          {viewing.evidence.extra?.contentTruncated && (
+            <p>
+              The sender capped this flag at the ingest limit. Original: {viewing.evidence.extra.contentTruncated.originalLength} characters, SHA-256{" "}
+              <code>{viewing.evidence.extra.contentTruncated.originalSha256}</code>; the full text is kept in the sending service's outbox for manual retrieval.
+            </p>
           )}
           <h4>Flagged content</h4>
           <pre style={{ whiteSpace: "pre-wrap" }}>{viewing.evidence.content}</pre>

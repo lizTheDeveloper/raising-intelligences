@@ -276,12 +276,47 @@ export const INGEST_CONTENT_MAX = 500_000;
 export const INGEST_PATH = "/api/internal/child-safety/evidence";
 const HEX64 = /^[0-9a-f]{64}$/;
 
+/** One suppressed flag kept in full: its own content and its own sender, as structured fields. */
+export interface SuppressedSample {
+  incidentAt: number;
+  content: string;
+  contentSha256: string;
+  ipAddress: string | null;
+  userAgent: string | null;
+  gameRef: string | null;
+  identifiers: Array<{ kind: string; value: string; verified: boolean; role?: "participant" }>;
+}
+
 export interface SuppressedBurst {
   key: { kind: string; value: string };
   count: number;
   firstAt: number;
   lastAt: number;
   sha256: string[];
+  /** Up to 10 of the suppressed flags in full, each with its own identity. */
+  samples: SuppressedSample[];
+}
+
+const SAMPLE_MAX = 10;
+const SAMPLE_CONTENT_MAX = 60_000;
+
+function parseSample(v: unknown): SuppressedSample | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  const incidentAt = typeof o.incidentAt === "number" ? o.incidentAt : typeof o.incidentAt === "string" ? Date.parse(o.incidentAt) : NaN;
+  const content = typeof o.content === "string" && o.content.length > 0 ? o.content.slice(0, SAMPLE_CONTENT_MAX) : null;
+  const sha = typeof o.contentSha256 === "string" && HEX64.test(o.contentSha256) ? o.contentSha256 : null;
+  if (!Number.isFinite(incidentAt) || !content || !sha) return null;
+  const s = (x: unknown, max: number) => (typeof x === "string" && x.length > 0 ? x.slice(0, max) : null);
+  const identifiers = Array.isArray(o.identifiers)
+    ? (o.identifiers as unknown[]).slice(0, 50).flatMap((i) => {
+        const r = i as Record<string, unknown>;
+        const kind = s(r?.kind, 40);
+        const value = s(r?.value, 300);
+        return kind && value ? [{ kind, value, verified: r.verified === true, ...(r.role === "participant" ? { role: "participant" as const } : {}) }] : [];
+      })
+    : [];
+  return { incidentAt, content, contentSha256: sha, ipAddress: s(o.ipAddress, 100), userAgent: s(o.userAgent, 512), gameRef: s(o.gameRef, 200), identifiers };
 }
 
 /** Validates a suppressedBurst record; null when malformed. */
@@ -297,7 +332,8 @@ export function parseSuppressedBurst(v: unknown): SuppressedBurst | null {
   const lastAt = time(o.lastAt);
   if (!kind || !value || !count || !Number.isFinite(firstAt) || !Number.isFinite(lastAt)) return null;
   const sha256 = Array.isArray(o.sha256) ? (o.sha256 as unknown[]).filter((h): h is string => typeof h === "string" && HEX64.test(h)).slice(0, 200) : [];
-  return { key: { kind, value }, count, firstAt, lastAt, sha256 };
+  const samples = Array.isArray(o.samples) ? (o.samples as unknown[]).slice(0, SAMPLE_MAX).map(parseSample).filter((x): x is SuppressedSample => x !== null) : [];
+  return { key: { kind, value }, count, firstAt, lastAt, sha256, samples };
 }
 
 /** The case text of a burst record — from validated fields only. */
@@ -305,6 +341,7 @@ export function burstContent(b: SuppressedBurst): string {
   return [
     `Suppressed burst: ${b.count} further flag${b.count === 1 ? "" : "s"} from ${b.key.kind} ${JSON.stringify(b.key.value)} went over the sending service's per-window case cap and were not filed as separate cases.`,
     `First ${new Date(b.firstAt).toISOString()}, last ${new Date(b.lastAt).toISOString()}.`,
+    `${b.samples.length} of them are kept in full as structured samples, each with its own sender (see the samples in the evidence view and the report package).`,
     b.sha256.length ? `SHA-256 of the suppressed content (${b.sha256.length}${b.sha256.length < b.count ? ` of ${b.count}` : ""}):\n${b.sha256.join("\n")}` : "No content hashes were kept.",
   ].join("\n");
 }
@@ -332,6 +369,11 @@ export function createChildSafetyIngestRoutes(repo: GameRepository): Router {
         return;
       }
       const content = burst ? burstContent(burst) : str(b.content, INGEST_CONTENT_MAX);
+      // A sender that capped an oversized flag says so: the original's hash and length.
+      const t = b.contentTruncated as Record<string, unknown> | undefined;
+      const truncated = t && typeof t.originalSha256 === "string" && HEX64.test(t.originalSha256) && typeof t.originalLength === "number"
+        ? { originalSha256: t.originalSha256, originalLength: t.originalLength }
+        : null;
       if (!source || !/^[a-z0-9_]+$/.test(source) || !content) {
         res.status(400).json({ error: "source ([a-z0-9_]) and content are required" });
         return;
@@ -391,7 +433,11 @@ export function createChildSafetyIngestRoutes(repo: GameRepository): Router {
         isTest,
         groupRef: str(b.groupRef, 200),
         recordKind,
-        extra: { ingestedFrom: source, ...(burst ? { suppressedBurst: burst } : {}) },
+        extra: {
+          ingestedFrom: source,
+          ...(burst ? { suppressedBurst: burst } : {}),
+          ...(truncated ? { contentTruncated: truncated } : {}),
+        },
       });
       res.status(result.created ? 201 : 200).json(result);
     } catch (err) {
