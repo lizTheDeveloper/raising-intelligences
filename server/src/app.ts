@@ -13,6 +13,7 @@ import { createAdminRoutes } from "./routes/admin.js";
 import { createAlbumRoutes } from "./routes/album.js";
 import { createResearchRoutes } from "./routes/research.js";
 import { createSupportRoutes } from "./routes/support.js";
+import { createChildSafetyAdminRoutes, createChildSafetyIngestRoutes } from "./routes/child-safety.js";
 import type { AdminQueries } from "./db/admin-queries.js";
 import { ConversationEngine } from "./game/conversation-engine.js";
 import { EndgameEngine } from "./game/endgame-engine.js";
@@ -199,6 +200,11 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   // the router's own routes), capping the whole API at the checkout-specific
   // rate instead of just the one endpoint.
   app.use("/api", createSupportRoutes(supportCheckoutLimit));
+  // Child safety: evidence ingestion (own token) must be mounted before the
+  // admin router, whose router-level requireAdmin answers every /api path
+  // that reaches it. The review queue is admin-only on its own.
+  app.use("/api", createChildSafetyIngestRoutes(repo));
+  app.use("/api", createChildSafetyAdminRoutes(repo));
   if (adminQueries) {
     app.use("/api", createAdminRoutes(adminQueries, repo));
   }

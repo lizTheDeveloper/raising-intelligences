@@ -326,6 +326,12 @@ describe("intervention ladder — full drive through the real REST routes", () =
     expect(afterBlock?.therapyMessages).toHaveLength(1);
 
     const flags = repo.getModerationFlags();
-    expect(flags.some((f) => f.gameId === gameId && f.content === "the flagged message text")).toBe(true);
+    expect(flags.some((f) => f.gameId === gameId && f.content.startsWith("[withheld: child-safety case "))).toBe(true);
+    // The content itself is preserved in the evidence vault.
+    const { viewEvidence } = await import("../src/safety/child-safety/vault.js");
+    const c = [...repo.childSafety.cases.values()].find((x) => x.gameRef === gameId);
+    expect(c).toBeDefined();
+    const { evidence } = await viewEvidence(repo.childSafety, c!.id, "test-reviewer", null);
+    expect(evidence.content).toBe("the flagged message text");
   });
 });

@@ -113,9 +113,11 @@ describe("moderateParentMessage", () => {
     expect(flags[0]).toMatchObject({
       gameId: state.id,
       sender: "parent1",
-      content: "the flagged message text",
       ipAddress: "9.9.9.9",
     });
+    // The content now lives in the child-safety evidence vault; the flag points at the case.
+    expect(flags[0].content).toMatch(/^\[withheld: child-safety case [0-9a-f-]{36}\]$/);
+    expect(repo.childSafety.cases.size).toBe(1);
     expect(flags[0].reason).toContain("openai_moderation:");
 
     expect(await repo.isIpBanned("9.9.9.9")).toBe(true);

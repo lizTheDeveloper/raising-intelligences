@@ -141,6 +141,11 @@ export function createAdminRoutes(adminQueries: AdminQueries, repo: GameReposito
         res.status(400).json({ error: "ip is required" });
         return;
       }
+      // A confirmed child-safety case locks its IPs against unban.
+      if (await repo.childSafety.isIdentifierBanned({ kind: "ip", value: ip })) {
+        res.status(409).json({ error: "This IP is held by a confirmed child-safety case and cannot be unbanned here" });
+        return;
+      }
       await repo.unbanIp(ip);
       logger.warn("admin_unban_ip", { ip });
       res.json({ ok: true, ip, banned: false });

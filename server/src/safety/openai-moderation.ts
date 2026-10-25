@@ -1,5 +1,6 @@
 import { logger } from "../logger.js";
 import { getLangfuseClient } from "../observability/langfuse.js";
+import { CHILD_SAFETY_HOLD_TAG } from "../observability/child-safety-exclusion.js";
 
 const OPENAI_MODERATION_URL = "https://api.openai.com/v1/moderations";
 
@@ -32,6 +33,10 @@ export const CHILD_SAFETY_CATEGORIES = ["sexual/minors", "sexual"] as const;
 export interface OpenAiModerationResult {
   flagged: boolean;
   categories: string[];
+  /** Every category score OpenAI returned (kept as evidence on a flag). */
+  scores?: Record<string, number>;
+  /** The exact model version that answered, e.g. "omni-moderation-2024-09-26". */
+  model?: string;
 }
 
 /**
@@ -43,6 +48,10 @@ export interface OpenAiModerationResult {
  * set or the call errors — this is one of two layers, not the only one, so
  * an outage here shouldn't silently disable moderation, but it's logged
  * loudly since it's the primary layer.
+ *
+ * Langfuse: the trace is written AFTER the verdict, and a flagged input is
+ * withheld from it (the content goes to the child-safety evidence vault
+ * instead, see safety/child-safety/). Clean inputs are traced as before.
  */
 export async function checkOpenAiModeration(
   content: string,
@@ -54,24 +63,18 @@ export async function checkOpenAiModeration(
     return { flagged: false, categories: [] };
   }
 
-  // Traced the same way TracedLLMClient traces every other LLM call — this
-  // check bypasses that wrapper (it's a raw fetch, not an LLMClient call),
-  // so it needs its own trace to show up in Langfuse alongside the
-  // contextual classifier's "safety_check" generations. Optional/pass-through
-  // when Langfuse isn't configured, matching the rest of the app.
-  const langfuse = getLangfuseClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let generation: { end: (args: any) => void } | undefined;
-  try {
-    const trace = langfuse?.trace({ name: "complete_json_openai_moderation", tags: ["llm_role:openai_moderation"] });
-    generation = trace?.generation({
-      name: "openai_moderation",
-      input: { content },
-      model: "omni-moderation-latest",
-    });
-  } catch {
-    // Langfuse SDK error — continue without tracing.
-  }
+  const trace = (input: unknown, output: unknown, level?: "ERROR", model = "omni-moderation-latest", held = false) => {
+    try {
+      const langfuse = getLangfuseClient();
+      const t = langfuse?.trace({
+        name: "complete_json_openai_moderation",
+        tags: ["llm_role:openai_moderation", ...(held ? [CHILD_SAFETY_HOLD_TAG] : [])],
+      });
+      t?.generation({ name: "openai_moderation", input, model }).end({ output, ...(level ? { level } : {}) });
+    } catch {
+      // Langfuse SDK error — continue without tracing.
+    }
+  };
 
   try {
     const res = await fetch(OPENAI_MODERATION_URL, {
@@ -85,22 +88,36 @@ export async function checkOpenAiModeration(
 
     if (!res.ok) {
       logger.error("openai_moderation_http_error", { status: res.status });
-      generation?.end({ output: { error: `http_${res.status}` }, level: "ERROR" });
+      trace({ content }, { error: `http_${res.status}` }, "ERROR");
       return { flagged: false, categories: [] };
     }
 
     const data = (await res.json()) as {
-      results?: Array<{ flagged?: boolean; categories?: Record<string, boolean> }>;
+      model?: string;
+      results?: Array<{
+        flagged?: boolean;
+        categories?: Record<string, boolean>;
+        category_scores?: Record<string, number>;
+      }>;
     };
     const flags = data.results?.[0]?.categories ?? {};
     const matched = categories.filter((c) => flags[c] === true);
-    const result = { flagged: matched.length > 0, categories: matched };
+    const result: OpenAiModerationResult = {
+      flagged: matched.length > 0,
+      categories: matched,
+      scores: data.results?.[0]?.category_scores ?? {},
+      model: data.model ?? "omni-moderation-latest",
+    };
 
-    generation?.end({ output: result });
+    if (result.flagged) {
+      trace({ content: "[withheld: child-safety evidence vault]" }, { flagged: true, categories: matched }, undefined, result.model, true);
+    } else {
+      trace({ content }, { flagged: false, categories: [] }, undefined, result.model);
+    }
     return result;
   } catch (err) {
     logger.error("openai_moderation_failed", { error: err instanceof Error ? err.message : String(err) });
-    generation?.end({ output: { error: err instanceof Error ? err.message : String(err) }, level: "ERROR" });
+    trace({ content }, { error: err instanceof Error ? err.message : String(err) }, "ERROR");
     return { flagged: false, categories: [] };
   }
 }

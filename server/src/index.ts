@@ -75,12 +75,27 @@ async function main() {
     repo = new PgGameRepository();
     adminQueries = new PgAdminQueries();
     logger.info("persistence_mode", { mode: "postgres" });
+    // Child-safety vault: copy any pre-vault flags in, then keep retention.
+    const { pool } = await import("./db/pool.js");
+    const { backfillLegacyFlags } = await import("./safety/child-safety/maintenance.js");
+    await backfillLegacyFlags(repo, pool).catch((err) => {
+      logger.error("child_safety_backfill_error", { error: err instanceof Error ? err.message : String(err) });
+    });
   } else {
     repo = new InMemoryGameRepository();
     logger.info("persistence_mode", { mode: "in-memory", hint: "set DATABASE_URL to enable Postgres" });
   }
 
   logger.info("observability", { langfuse: isLangfuseEnabled(), sentry: isSentryEnabled() });
+
+  // Retention sweep for the child-safety vault: dismissed cases after 90
+  // days, IP-log rows after 90 days. Never open, confirmed or reported cases.
+  const { startPurgeSweep } = await import("./safety/child-safety/maintenance.js");
+  const { evidenceKeyConfigured } = await import("./safety/child-safety/crypto.js");
+  startPurgeSweep(repo.childSafety);
+  if (!evidenceKeyConfigured()) {
+    logger.error("child_safety_key_missing", { hint: "set CHILD_SAFETY_EVIDENCE_KEY; evidence is stored unencrypted until then" });
+  }
 
   // In production the app is deployed under the /raising-intelligences subpath.
   // Traefik has a dedicated router (ri-socket-io) that forwards

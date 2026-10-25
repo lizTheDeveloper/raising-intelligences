@@ -14,6 +14,7 @@ import { Langfuse } from "langfuse";
 import type { LLMClient } from "../llm/client.js";
 import { type LLMRole, type ModelTier, selectModel } from "../llm/model-config.js";
 import { ChildSeedClient } from "../llm/child-seed-client.js";
+import { CHILD_SAFETY_HOLD_TAG, isGameHeldInProcess } from "./child-safety-exclusion.js";
 
 /**
  * Metadata carried by a traced client. Used both for trace tags
@@ -89,6 +90,7 @@ function buildTags(metadata: TraceMetadata): string[] {
   if (metadata.gameId) tags.push(`game_id:${metadata.gameId}`);
   if (metadata.eventNumber !== undefined) tags.push(`event_number:${metadata.eventNumber}`);
   if (metadata.role) tags.push(`llm_role:${metadata.role}`);
+  if (isGameHeldInProcess(metadata.gameId)) tags.push(CHILD_SAFETY_HOLD_TAG);
   return tags;
 }
 
