@@ -148,7 +148,8 @@ export class InMemoryChildSafetyStore implements ChildSafetyStore {
 
   async insertCase(row: CaseRow, access: AccessEntry): Promise<void> {
     if (row.externalRef && [...this.cases.values()].some((c) => c.externalRef === row.externalRef)) {
-      throw new Error("evidence_cases: duplicate external_ref");
+      // Same shape as Postgres's unique violation, so callers handle both alike.
+      throw Object.assign(new Error("evidence_cases: duplicate external_ref"), { code: "23505" });
     }
     this.cases.set(row.id, { ...row });
     this.access.push({ ...access });

@@ -244,9 +244,20 @@ export async function preserveEvidence(
     reportedBy: null,
     cybertipReportId: null,
   };
-  await store.insertCase(row, {
-    caseId, actor: "system", action: "create", actorIp: null, detail: input.source, at: now,
-  });
+  try {
+    await store.insertCase(row, {
+      caseId, actor: "system", action: "create", actorIp: null, detail: input.source, at: now,
+    });
+  } catch (err) {
+    // Two deliveries of the same record at once (a sender's retry racing its
+    // first attempt): the loser hits the external_ref unique index. That is
+    // the same case, not an error.
+    if (input.externalRef && (err as { code?: string })?.code === "23505") {
+      const existing = await store.findByExternalRef(input.externalRef);
+      if (existing) return { caseId: existing, created: false };
+    }
+    throw err;
+  }
 
   // Content never goes to logs; the case id is the handle.
   logger.error("child_safety_case_opened", {
