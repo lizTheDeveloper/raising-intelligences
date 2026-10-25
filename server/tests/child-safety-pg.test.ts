@@ -168,13 +168,16 @@ describe.skipIf(!process.env.DATABASE_URL)("child-safety vault on Postgres", () 
       expect(row).toMatchObject({ accountId: "@old:matrix.example", accountVerified: false });
     });
 
-    it("campus game → flag → verified matrix id → confirm bans it → a new REST game with it is refused; a claimed userId stays unverified", async () => {
+    it("campus game → flag → verified campus id → confirm bans it → a new REST game with it is refused; a claimed userId stays unverified", async () => {
       const sub = uniqueSub();
+      // Fresh IPs per run: confirm bans the flagged IP, and the database persists between runs.
+      const rndIp = () => `10.${[...randomBytes(3)].join(".")}`;
+      const [ip1, ip2] = [rndIp(), rndIp()];
       const srv = await restServer();
       try {
         const identity = await issueCampusIdentity(repo, { sub, name: "PG Synthetic" });
         const created = await fetch(`${srv.base}/api/game`, {
-          method: "POST", headers: { "Content-Type": "application/json", "X-Forwarded-For": "198.51.100.61" },
+          method: "POST", headers: { "Content-Type": "application/json", "X-Forwarded-For": ip1 },
           body: JSON.stringify({ childName: "PgCampus", campusIdentity: identity }),
         });
         expect(created.status).toBe(200);
@@ -195,7 +198,7 @@ describe.skipIf(!process.env.DATABASE_URL)("child-safety vault on Postgres", () 
           model: "omni-moderation-test",
           results: [{ flagged: true, categories: { "sexual/minors": true }, category_scores: { "sexual/minors": 0.95 } }],
         }), { status: 200 }));
-        const r = await moderateParentMessage({ repo, games: new Map([[gameId, state]]), state, sender: "parent1", content: "PG CAMPUS TEST FIXTURE", ipAddress: "198.51.100.61" });
+        const r = await moderateParentMessage({ repo, games: new Map([[gameId, state]]), state, sender: "parent1", content: "PG CAMPUS TEST FIXTURE", ipAddress: ip1 });
         vi.restoreAllMocks();
         expect(r.blocked).toBe(true);
 
@@ -214,7 +217,7 @@ describe.skipIf(!process.env.DATABASE_URL)("child-safety vault on Postgres", () 
 
         const again = await issueCampusIdentity(repo, { sub, name: "PG Synthetic" });
         const refused = await fetch(`${srv.base}/api/game`, {
-          method: "POST", headers: { "Content-Type": "application/json", "X-Forwarded-For": "198.51.100.62" },
+          method: "POST", headers: { "Content-Type": "application/json", "X-Forwarded-For": ip2 },
           body: JSON.stringify({ childName: "PgCampus", campusIdentity: again }),
         });
         expect(refused.status).toBe(403);
