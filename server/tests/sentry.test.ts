@@ -182,3 +182,30 @@ describe("scrubResearchEvent", () => {
     __resetSentryForTests();
   });
 });
+
+describe("initSentry beforeSend scrubs every route, not just research routes", () => {
+  it("drops Authorization / x-game-secret / cookies / body / query on a non-research URL", () => {
+    const orig = process.env.SENTRY_DSN;
+    process.env.SENTRY_DSN = "https://k@example.test/1";
+    __resetSentryForTests();
+    initSentry();
+    const opts = vi.mocked(Sentry.init).mock.calls.at(-1)![0] as { beforeSend: (e: unknown, h: unknown) => unknown };
+    const event = {
+      request: {
+        url: "https://x.test/api/child-safety/cases?token=SECRET-Q",
+        query_string: "token=SECRET-Q",
+        data: '{"note":"SECRET-BODY"}',
+        cookies: { s: "SECRET-COOKIE" },
+        headers: { authorization: "Bearer SECRET-ADMIN", "x-game-secret": "SECRET-GAME", "user-agent": "ua" },
+      },
+      exception: { values: [{ type: "TypeError", value: "x is undefined" }] },
+    };
+    const out = opts.beforeSend(event, {}) as typeof event;
+    expect(JSON.stringify(out)).not.toContain("SECRET");
+    expect(out.request.headers).toEqual({ "user-agent": "ua" });
+    // A non-research error keeps its message (still debuggable).
+    expect(out.exception.values[0].value).toBe("x is undefined");
+    if (orig === undefined) delete process.env.SENTRY_DSN; else process.env.SENTRY_DSN = orig;
+    __resetSentryForTests();
+  });
+});

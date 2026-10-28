@@ -6,6 +6,7 @@ import { startSessionTracking } from "./analytics";
 import { CampusCabinet, setActiveCabinet } from "./campusCabinet";
 import { normalizeNullPayload, toReportableRejection, toReportableWindowError } from "./errorReporting";
 import { eventHasOnlyThirdPartyFrames } from "./errorNoise";
+import { stripRequestBody } from "./sentryScrub";
 import "./global.css";
 
 /**
@@ -31,6 +32,8 @@ if (import.meta.env.VITE_SENTRY_DSN) {
       // Kept: ≥1 same-origin/studio frame, frame-less events, mixed stacks.
       if (eventHasOnlyThirdPartyFrames(event, location.origin)) return null;
       delete event.user;
+      // No query/fragment (a #handoff= code), cookies, body or non-allowlisted headers.
+      stripRequestBody(event);
       // Drop benign network/abort noise — a dropped connection or a fetch/SSE
       // aborted on unmount is a browser network-layer failure ("Load failed",
       // "Failed to fetch", AbortError), NOT a code bug, and there's nothing the
