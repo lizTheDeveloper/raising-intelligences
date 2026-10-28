@@ -6,7 +6,7 @@ import { startSessionTracking } from "./analytics";
 import { CampusCabinet, setActiveCabinet } from "./campusCabinet";
 import { normalizeNullPayload, toReportableRejection, toReportableWindowError } from "./errorReporting";
 import { eventHasOnlyThirdPartyFrames } from "./errorNoise";
-import { stripRequestBody } from "./sentryScrub";
+import { scrubBreadcrumb, scrubEvent } from "./sentryScrub";
 import "./global.css";
 
 /**
@@ -24,6 +24,9 @@ if (import.meta.env.VITE_SENTRY_DSN) {
     release: import.meta.env.VITE_SENTRY_RELEASE,
     sendDefaultPii: false,
     sampleRate: 1.0,
+    // Navigation crumbs carry the pre-replaceState URL (`#handoff=`), and
+    // fetch/xhr crumbs carry full URLs. Trim them before they are stored.
+    beforeBreadcrumb: (crumb) => scrubBreadcrumb(crumb),
     // This game's transcripts are intimate parent/child roleplay. Never let a
     // crash report carry user identity or the conversation itself.
     beforeSend(event) {
@@ -32,8 +35,9 @@ if (import.meta.env.VITE_SENTRY_DSN) {
       // Kept: ≥1 same-origin/studio frame, frame-less events, mixed stacks.
       if (eventHasOnlyThirdPartyFrames(event, location.origin)) return null;
       delete event.user;
-      // No query/fragment (a #handoff= code), cookies, body or non-allowlisted headers.
-      stripRequestBody(event);
+      // No query/fragment (a #handoff= code), cookies, body or non-allowlisted
+      // headers, on the request or on any breadcrumb URL.
+      scrubEvent(event);
       // Drop benign network/abort noise — a dropped connection or a fetch/SSE
       // aborted on unmount is a browser network-layer failure ("Load failed",
       // "Failed to fetch", AbortError), NOT a code bug, and there's nothing the
