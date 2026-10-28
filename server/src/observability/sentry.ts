@@ -21,7 +21,7 @@
  */
 import * as Sentry from "@sentry/node";
 import type { ErrorRequestHandler } from "express";
-import { stripRequestBody } from "./sentry-scrub.js";
+import { scrubBreadcrumb, scrubEvent } from "./sentry-scrub.js";
 
 let enabled = false;
 let initialized = false;
@@ -96,12 +96,16 @@ export function initSentry(): boolean {
     integrations: [Sentry.httpIntegration({ maxIncomingRequestBodySize: "none" })],
     // Drop benign client-disconnect noise (aborted SSE/fetch) so it doesn't
     // bury real server errors. See isBenignDisconnect.
+    // Outgoing-http breadcrumbs keep the query in `http.query`; strip it
+    // before the crumb is stored.
+    beforeBreadcrumb: (crumb) => scrubBreadcrumb(crumb),
     beforeSend(event, hint) {
       // Research scrub first: it matches on the full URL, which the
       // allowlist scrub below trims.
       scrubResearchEvent(event);
-      // Every route: header allowlist, no body/cookies/query. See sentry-scrub.ts.
-      stripRequestBody(event);
+      // Every route: header allowlist, no body/cookies/query, breadcrumb
+      // URLs trimmed. See sentry-scrub.ts.
+      scrubEvent(event);
       const err = hint?.originalException as
         | { name?: string; message?: string; code?: string }
         | undefined;

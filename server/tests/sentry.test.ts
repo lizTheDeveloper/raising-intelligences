@@ -209,3 +209,22 @@ describe("initSentry beforeSend scrubs every route, not just research routes", (
     __resetSentryForTests();
   });
 });
+
+describe("initSentry wires beforeBreadcrumb through the breadcrumb scrub", () => {
+  it("strips http.query from an outgoing-http crumb and the query from beforeSend breadcrumbs", () => {
+    const orig = process.env.SENTRY_DSN;
+    process.env.SENTRY_DSN = "https://k@example.test/1";
+    __resetSentryForTests();
+    initSentry();
+    const opts = vi.mocked(Sentry.init).mock.calls.at(-1)![0] as {
+      beforeBreadcrumb: (b: unknown) => unknown;
+      beforeSend: (e: unknown, h: unknown) => unknown;
+    };
+    const crumb = opts.beforeBreadcrumb({ category: "http", data: { url: "https://api.test/x", "http.query": "?token=SECRET-Q" } });
+    expect(JSON.stringify(crumb)).not.toContain("SECRET");
+    const out = opts.beforeSend({ breadcrumbs: [{ category: "navigation", data: { from: "/x#handoff=SECRET-H", to: "/x" } }] }, {});
+    expect(JSON.stringify(out)).not.toContain("SECRET");
+    if (orig === undefined) delete process.env.SENTRY_DSN; else process.env.SENTRY_DSN = orig;
+    __resetSentryForTests();
+  });
+});

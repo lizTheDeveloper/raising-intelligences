@@ -60,3 +60,32 @@ export function stripRequestBody<T extends { request?: ScrubbableRequest }>(even
   }
   return event;
 }
+
+type ScrubbableBreadcrumb = { data?: Record<string, unknown> };
+
+/**
+ * Breadcrumbs ride along on every later event. Navigation crumbs carry
+ * `data.from` / `data.to` (the pre-replaceState URL, `#handoff=` code and all),
+ * browser fetch/xhr crumbs carry the full `data.url`, and Node outgoing-http
+ * crumbs keep the query and fragment apart in `http.query` / `http.fragment`.
+ * Used as `beforeBreadcrumb`, so nothing is stored unscrubbed. Mutates and
+ * returns the breadcrumb.
+ */
+export function scrubBreadcrumb<B extends ScrubbableBreadcrumb>(crumb: B): B {
+  const data = crumb.data;
+  if (data) {
+    for (const key of ["url", "from", "to"]) {
+      if (typeof data[key] === "string") data[key] = stripQuery(data[key] as string);
+    }
+    delete data["http.query"];
+    delete data["http.fragment"];
+  }
+  return crumb;
+}
+
+/** stripRequestBody plus scrubBreadcrumb over any breadcrumbs already on the event. */
+export function scrubEvent<T extends { request?: ScrubbableRequest; breadcrumbs?: ScrubbableBreadcrumb[] }>(event: T): T {
+  stripRequestBody(event);
+  for (const b of event.breadcrumbs ?? []) scrubBreadcrumb(b);
+  return event;
+}
