@@ -18,6 +18,27 @@ const testEvent: GameEvent = {
 };
 
 describe("buildKidContext", () => {
+  it("keeps the per-turn message count last, so turns of one scene share the rest as a cacheable prefix", () => {
+    let state = createGame("Luna");
+    state.identityDocument = "Core beliefs: the world is safe.";
+    state = transition(state, { type: "START_EVENT", event: testEvent });
+    const first = buildKidContext(state).system;
+    state = transition(state, { type: "PARENT_MESSAGE", sender: "parent1", content: "It's okay." });
+    const second = buildKidContext(state).system;
+
+    expect(first).not.toBe(second);
+    let common = 0;
+    while (common < first.length && first[common] === second[common]) common++;
+    const countAt = first.indexOf("The parents have sent");
+    expect(countAt).toBeGreaterThan(0);
+    // Everything before the count is shared, including identity and the situation.
+    expect(common).toBeGreaterThanOrEqual(countAt);
+    expect(first.indexOf("Core beliefs")).toBeLessThan(countAt);
+    expect(first.indexOf("broke a vase")).toBeLessThan(countAt);
+    // And nothing comes after the count line.
+    expect(first.slice(countAt)).not.toContain("\n\n");
+  });
+
   it("includes child name, age, and event in system prompt", () => {
     let state = createGame("Luna");
     state = transition(state, { type: "START_EVENT", event: testEvent });

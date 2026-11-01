@@ -120,7 +120,10 @@ describe("context assembly", () => {
     expect(kid).toContain("that he is lonely");
     expect(kid).not.toContain("Use it only as background, to understand what this parent is carrying");
     expect(kid).not.toContain("offered in answer to optional questions");
-    expect(kidParentContext(block)).toBe(kid.slice(kid.indexOf("You do not know any of the following.")));
+    // The block runs up to the per-turn message count, which is kept last for prompt caching.
+    expect(kidParentContext(block)).toBe(
+      kid.slice(kid.indexOf("You do not know any of the following."), kid.indexOf("\n\nThe parents have sent")),
+    );
     const wm = buildWorldManagerContext(stateWith(block)).system;
     expect(wm).toContain("Never quote, reveal or allude to the notes in anything a player will read");
     expect(wm).not.toContain("You do not know any of the following.");
