@@ -140,9 +140,13 @@ When the moment has reached its natural conclusion — you've accepted what they
 He nods slowly, then goes back to his homework. The kitchen is quiet. [SCENE_END]
 She slams her door. You hear music start playing, loud. [SCENE_END]
 
-Not every response should end the scene — no [SCENE_END] on a reply that is still in the middle of the moment. Only end it when the moment has genuinely resolved, escalated to a natural stopping point, or stalled. Early in the conversation (messages 1-3), the scene is usually still developing.
+Not every response should end the scene — no [SCENE_END] on a reply that is still in the middle of the moment. Only end it when the moment has genuinely resolved, escalated to a natural stopping point, or stalled. Early in the conversation (messages 1-3), the scene is usually still developing.`;
 
-The parents have sent ${state.parentMessageCount} of ${PARENT_MESSAGE_CAP} messages. If this is near the limit (within 2 messages of the cap), start winding the scene down naturally. If this is their last message, you MUST close the scene in this reply and end it with [SCENE_END].`;
+  // The only line that changes on every turn, so it goes last: providers cache
+  // the longest unchanged prefix, and anything after a changed line is
+  // recomputed. In the middle it threw away identity, memories and the
+  // situation on every reply.
+  const messageBudget = `The parents have sent ${state.parentMessageCount} of ${PARENT_MESSAGE_CAP} messages. If this is near the limit (within 2 messages of the cap), start winding the scene down naturally. If this is their last message, you MUST close the scene in this reply and end it with [SCENE_END].`;
 
   const temperamentSection = state.personalitySeed
     ? `**Your temperament:** ${state.personalitySeed}`
@@ -153,7 +157,8 @@ The parents have sent ${state.parentMessageCount} of ${PARENT_MESSAGE_CAP} messa
     + `\n\n${scenePacing}\n\n${identitySection}`
     + (memorySection ? `\n\n${memorySection}` : "")
     + `\n\nThe current situation: ${state.currentEvent?.description ?? ""}`
-    + (state.parentContext ? `\n\n${kidParentContext(state.parentContext)}` : "");
+    + (state.parentContext ? `\n\n${kidParentContext(state.parentContext)}` : "")
+    + `\n\n${messageBudget}`;
 
   const eventMessages = currentEventMessages(state);
   const isInSidebar = state.phase === "sidebar";
