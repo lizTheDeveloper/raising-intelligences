@@ -152,6 +152,8 @@ All endpoints require `Authorization: Bearer <ADMIN_TOKEN>`.
 
 The one write endpoint is `DELETE /api/admin/games/:id` (204, or 404 for an unknown game): it erases a game and everything keyed to it, through the same code as the player's own `DELETE /api/game/:id`. It is used when a player asks staff to delete their game.
 
+`DELETE /api/admin/users/:userId` (200 with `{ deletedGameIds }`, 400 for a malformed id) erases everything attached to one user id when that person asks staff: every game linked to it (user_games), every game where it holds a seat (players.user_id or a verified players.campus_sub), solo games created under it as a verified campus id (games.campus_sub), then the user's user_games links and album partners. Each game goes through the same deletion as above, so child-safety flag evidence not yet in the vault is moved into the vault first, and a game is not deleted while the vault is unavailable (the request fails with 500 and can be retried). Vault cases are never erased by this route. A game shared with a co-parent is deleted for both. There is deliberately no self-service version: user ids are client-claimed, so the server cannot verify that a caller owns one.
+
 | Method | Path | Response |
 |--------|------|----------|
 | GET | `/api/admin/overview` | `{ totalGames, activeGames, completedGames, abandonedGames }` |
