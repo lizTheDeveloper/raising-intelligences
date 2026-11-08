@@ -15,6 +15,13 @@ import type { StoredAnswer } from "../research/questions.js";
 import type { MomentLabel } from "../research/moment-label.js";
 import { ESCALATION_DARK_CONCERN } from "../safety/escalation.js";
 import { InMemoryChildSafetyStore, PgChildSafetyStore, type ChildSafetyStore } from "../safety/child-safety/store.js";
+import {
+  isWithheld,
+  preserveModerationFlag,
+  withheldPointer,
+  WITHHELD_POINTER_SQL,
+  type StoredModerationFlag,
+} from "../safety/child-safety/maintenance.js";
 
 export interface FollowupContact {
   email: string | null;
@@ -907,6 +914,30 @@ export class PgGameRepository implements GameRepository {
     const client = await this.db.connect();
     try {
       await client.query("BEGIN");
+      // Lock the game row first. A concurrent moderation_flags insert needs a
+      // key-share lock on it (the foreign key), so no new flag can slip in
+      // between the vault step below and the cascade.
+      await client.query(`SELECT 1 FROM games WHERE id = $1 FOR UPDATE`, [gameId]);
+      // Child-safety evidence is never erased with the game. moderation_flags
+      // cascades with games, and a flag whose vault write failed at flag time
+      // (or a pre-vault flag) still holds the only copy of its content: move
+      // it into the vault now. If the vault write fails, this throws and the
+      // whole deletion rolls back, so nothing is lost. A flag already in the
+      // vault holds only a pointer and simply cascades.
+      const { rows: unvaulted } = await client.query<{
+        id: string; sender: string; content: string; reason: string; ip_address: string | null; created_at: Date;
+      }>(
+        `SELECT id, sender, content, reason, ip_address, created_at FROM moderation_flags
+          WHERE game_id = $1 AND content !~ $2 ORDER BY created_at`,
+        [gameId, WITHHELD_POINTER_SQL],
+      );
+      for (const f of unvaulted) {
+        const caseId = await preserveModerationFlag(this, {
+          id: f.id, gameId, sender: f.sender, content: f.content, reason: f.reason,
+          ipAddress: f.ip_address, createdAt: new Date(f.created_at).getTime(),
+        }, "ri_flag_on_delete");
+        await client.query(`UPDATE moderation_flags SET content = $1 WHERE id = $2`, [withheldPointer(caseId), f.id]);
+      }
       // Tables with ON DELETE CASCADE to games(id) go with the games row.
       // These two have no foreign key, so they are deleted explicitly.
       await client.query(`DELETE FROM concern_events WHERE game_id = $1`, [gameId]);
@@ -1183,7 +1214,7 @@ export class InMemoryGameRepository implements GameRepository {
   private albumMoments = new Map<string, Array<AlbumMoment>>();
   private userGames = new Map<string, { userId: string; gameId: string; childName: string; partnerId: string | null; createdAt: number }>();
   private partnerLinks = new Map<string, string>();
-  private moderationFlags: Array<{ gameId: string; sender: Sender; content: string; reason: string; ipAddress: string | null }> = [];
+  private moderationFlags: StoredModerationFlag[] = [];
   private bannedIps = new Set<string>();
   private concernEvents: Array<{ gameId: string; sender: Sender; reason: string; ipAddress: string | null; createdAt: number }> = [];
   // Dark Play Plan 4 — kept as a side map (not merged into the `games` row)
@@ -1506,7 +1537,7 @@ export class InMemoryGameRepository implements GameRepository {
     reason: string;
     ipAddress: string | null;
   }): Promise<void> {
-    this.moderationFlags.push({ ...record });
+    this.moderationFlags.push({ ...record, id: crypto.randomUUID(), createdAt: Date.now() });
   }
 
   async banIp(ipAddress: string, _reason: string): Promise<void> {
@@ -1529,7 +1560,7 @@ export class InMemoryGameRepository implements GameRepository {
   }
 
   /** Test-only accessor — inspect persisted flags without a DB. */
-  getModerationFlags(): Array<{ gameId: string; sender: Sender; content: string; reason: string; ipAddress: string | null }> {
+  getModerationFlags(): StoredModerationFlag[] {
     return [...this.moderationFlags];
   }
 
@@ -1556,6 +1587,12 @@ export class InMemoryGameRepository implements GameRepository {
   }
 
   async deleteGameData(gameId: string): Promise<void> {
+    // Same rule as the Postgres repository: a flag whose content is not yet
+    // in the vault is moved there first; if that fails, nothing is deleted.
+    for (const f of this.moderationFlags.filter((x) => x.gameId === gameId && !isWithheld(x.content))) {
+      const caseId = await preserveModerationFlag(this, f, "ri_flag_on_delete");
+      f.content = withheldPointer(caseId);
+    }
     this.games.delete(gameId);
     this.messages.delete(gameId);
     this.events.delete(gameId);
