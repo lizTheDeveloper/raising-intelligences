@@ -9,6 +9,11 @@
  * variables are not set, the client is never constructed and the decorator
  * becomes a transparent pass-through — identical behavior, no network calls.
  * This keeps local development frictionless when no Langfuse keys are present.
+ *
+ * Privacy: a `baseUrl` (self-hosted Langfuse) is REQUIRED to activate tracing
+ * — see `getLangfuseClient`. Traces also carry parent confessional text
+ * (embedded in the `personality_seed` prompt); that text is redacted before
+ * being sent, see `redactConfessionalText`/`CONFESSIONAL_ROLES` below.
  */
 import { Langfuse } from "langfuse";
 import type { LLMClient } from "../llm/client.js";
@@ -39,8 +44,14 @@ let initialized = false;
  * are absent. Initialization happens lazily on first call so that importing
  * this module has no side effects.
  *
- * Required env: LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY.
- * Optional env: LANGFUSE_BASEURL (defaults to Langfuse cloud).
+ * Required env: LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and one of
+ * LANGFUSE_BASEURL / LANGFUSE_HOST.
+ *
+ * `baseUrl` is deliberately REQUIRED, not optional: the Langfuse SDK defaults
+ * to `https://cloud.langfuse.com` when no baseUrl is given, which would send
+ * traces — including confessional-derived prompts — to a third-party cloud
+ * with no retention/DPA guarantees (issue #140). Point it at the self-hosted
+ * instance (see `langfuse/docker-compose.yml`) to enable tracing.
  */
 export function getLangfuseClient(): Langfuse | null {
   if (initialized) return cachedClient;
@@ -50,16 +61,12 @@ export function getLangfuseClient(): Langfuse | null {
   const secretKey = process.env.LANGFUSE_SECRET_KEY;
   const baseUrl = process.env.LANGFUSE_BASEURL ?? process.env.LANGFUSE_HOST;
 
-  if (!publicKey || !secretKey) {
+  if (!publicKey || !secretKey || !baseUrl) {
     cachedClient = null;
     return cachedClient;
   }
 
-  cachedClient = new Langfuse({
-    publicKey,
-    secretKey,
-    ...(baseUrl ? { baseUrl } : {}),
-  });
+  cachedClient = new Langfuse({ publicKey, secretKey, baseUrl });
   return cachedClient;
 }
 
@@ -83,6 +90,59 @@ export async function flushLangfuse(): Promise<void> {
 export function __resetLangfuseClientForTests(): void {
   cachedClient = null;
   initialized = false;
+}
+
+/**
+ * Roles whose prompt embeds raw parent confessional text (see
+ * `game/personality.ts:generatePersonalitySeed`). Their traced `input` is
+ * redacted before being sent to Langfuse — see `redactConfessionalText`.
+ */
+const CONFESSIONAL_ROLES = new Set<LLMRole>(["personality_seed"]);
+
+const CONFESSIONAL_HEADER = "Emotional themes from parent confessionals:\n";
+const CONFESSIONAL_TRAILER = "\n\nGenerate the personality seed";
+
+/**
+ * Replaces every `Parent N: "<confessional text>"` span with a length-only
+ * placeholder, so the shape of the prompt is still visible in a trace
+ * without shipping the confessional's actual content to Langfuse.
+ *
+ * Fails closed: confessionals are free text and may contain quotes and
+ * newlines, so a span is NOT delimited by the next `"`. The whole section,
+ * from the header (or the first `Parent N: "` label) to the prompt's trailer
+ * (or the end of the text), is redacted; it is only split back into
+ * per-parent spans at line starts that begin a new label.
+ */
+function redactConfessionalText(text: string): string {
+  const headerAt = text.indexOf(CONFESSIONAL_HEADER);
+  const firstLabel = text.search(/Parent \d: "/);
+  if (headerAt === -1 && firstLabel === -1) return text;
+  const start = headerAt !== -1 ? headerAt + CONFESSIONAL_HEADER.length : firstLabel;
+  const trailerAt = text.lastIndexOf(CONFESSIONAL_TRAILER);
+  const end = trailerAt >= start ? trailerAt : text.length;
+  const redacted = text
+    .slice(start, end)
+    .split(/\n(?=Parent \d: ")/)
+    .map((span) => {
+      const m = /^(Parent \d: )"([\s\S]*?)"?$/.exec(span);
+      return m ? `${m[1]}"[redacted, ${m[2].length} chars]"` : `[redacted, ${span.length} chars]`;
+    })
+    .join("\n");
+  return text.slice(0, start) + redacted + text.slice(end);
+}
+
+/** Redacts `text` when `role` is known to carry confessional content. */
+function redactIfConfessional(role: LLMRole | undefined, text: string): string {
+  return role && CONFESSIONAL_ROLES.has(role) ? redactConfessionalText(text) : text;
+}
+
+/**
+ * Exported for tests only — exercises the redaction regex directly without
+ * needing a configured Langfuse client.
+ * @internal
+ */
+export function __redactConfessionalTextForTests(text: string): string {
+  return redactConfessionalText(text);
 }
 
 function buildTags(metadata: TraceMetadata): string[] {
@@ -184,7 +244,10 @@ export class TracedLLMClient implements LLMClient {
       });
       generation = trace.generation({
         name: metadata.role ?? "llm",
-        input: { system, messages },
+        input: {
+          system,
+          messages: messages.map((m) => ({ ...m, content: redactIfConfessional(role, m.content) })),
+        },
         ...(model ? { model } : {}),
         metadata: { ...metadata },
       });
@@ -226,7 +289,7 @@ export class TracedLLMClient implements LLMClient {
       });
       generation = trace.generation({
         name: metadata.role ?? "llm",
-        input: { system, userMessage },
+        input: { system, userMessage: redactIfConfessional(role, userMessage) },
         ...(model ? { model } : {}),
         metadata: { ...metadata, maxTokens },
       });
@@ -262,7 +325,7 @@ export class TracedLLMClient implements LLMClient {
       });
       generation = trace.generation({
         name: metadata.role ?? "llm",
-        input: { system, userMessage },
+        input: { system, userMessage: redactIfConfessional(role, userMessage) },
         ...(model ? { model } : {}),
         metadata: { ...metadata },
       });

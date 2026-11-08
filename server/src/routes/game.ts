@@ -37,7 +37,7 @@ import {
   shouldAutoEndScene,
   stripSceneEnd,
 } from "../game/scene-end.js";
-import { UUID_RE } from "../lib/validation.js";
+import { UUID_RE, isValidUserId } from "../lib/validation.js";
 import { classifyBirthYear } from "../research/age.js";
 import { isResearchEnabled } from "../research/config.js";
 import {
@@ -231,6 +231,34 @@ export function createGameRoutes(
     await deleteGameCompletely(gameId);
     logger.info("admin_game_deleted", { gameId });
     res.status(204).end();
+  });
+
+  // Staff erasure of everything attached to one user id, on that user's
+  // request (#141). Admin-only on purpose: user ids (Matrix ids, localStorage
+  // UUIDs) are client-claimed and the server has no way to verify that a
+  // caller owns one, so a self-service version would let anyone erase anyone
+  // (#144 review). Players erase a single game themselves with
+  // DELETE /api/game/:id and its secret.
+  //
+  // Each game goes through deleteGameCompletely, i.e. deleteGameData, which
+  // moves any child-safety flag evidence not yet in the vault into the vault
+  // before deleting and throws (deleting nothing for that game) if the vault
+  // is unavailable. Vault cases are never erased here. A game shared with a
+  // co-parent is deleted for both, as with DELETE /api/admin/games/:id.
+  router.delete("/admin/users/:userId", requireAdmin, async (req: Request, res: Response) => {
+    const userId = String(req.params.userId);
+    if (!isValidUserId(userId)) {
+      res.status(400).json({ error: "Invalid userId format" });
+      return;
+    }
+    const gameIds = await repo.listGameIdsForUser(userId);
+    for (const gameId of gameIds) {
+      await deleteGameCompletely(gameId);
+    }
+    await repo.deleteUserRecords(userId);
+    // The user id itself is personal data; log only the count.
+    logger.info("admin_user_erased", { gameCount: gameIds.length });
+    res.json({ deletedGameIds: gameIds });
   });
 
   router.get("/game/:id/state", async (req: Request, res: Response) => {

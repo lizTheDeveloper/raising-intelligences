@@ -62,7 +62,7 @@ LANGFUSE_SECRET_KEY=sk-lf-...
 LANGFUSE_HOST=https://langfuse.multiversegames.ai   # self-hosted instance
 ```
 
-If either key is missing, `TracedLLMClient` becomes a transparent pass-through — no network calls, no errors. Local dev works without any Langfuse config.
+If either key **or** `LANGFUSE_HOST`/`LANGFUSE_BASEURL` is missing, `TracedLLMClient` becomes a transparent pass-through — no network calls, no errors. Local dev works without any Langfuse config. The host is deliberately required (not optional): the Langfuse SDK defaults to Langfuse Cloud when no host is given, and this project only ever wants traces going to the self-hosted instance above (see issue #140).
 
 ### What gets traced
 
@@ -71,6 +71,8 @@ Each LLM call produces one **trace** (tagged with `game_id`, `event_number`, `ll
 - the raw text response
 - token usage and cost (from OpenRouter's response)
 - error level if the call threw
+
+**Exception:** the `personality_seed` role's prompt embeds both parents' raw confessional text (see `game/personality.ts`). That role's traced input has the confessional quotes redacted to a length-only placeholder before being sent to Langfuse — see `redactConfessionalText` in `observability/langfuse.ts`.
 
 The `llm_role` tag maps to the roles in `model-config.ts`: `kid_family_chat`, `kid_sidebar`, `kid_adult_chat`, `world_manager`, `psychologist`, `epilogue`, `report_card`. Filter by role in the Langfuse UI to compare quality across roles or spot regressions after a model swap.
 
@@ -149,6 +151,8 @@ server/src/
 All endpoints require `Authorization: Bearer <ADMIN_TOKEN>`.
 
 The one write endpoint is `DELETE /api/admin/games/:id` (204, or 404 for an unknown game): it erases a game and everything keyed to it, through the same code as the player's own `DELETE /api/game/:id`. It is used when a player asks staff to delete their game.
+
+`DELETE /api/admin/users/:userId` (200 with `{ deletedGameIds }`, 400 for a malformed id) erases everything attached to one user id when that person asks staff: every game linked to it (user_games), every game where it holds a seat (players.user_id or a verified players.campus_sub), solo games created under it as a verified campus id (games.campus_sub), then the user's user_games links and album partners. Each game goes through the same deletion as above, so child-safety flag evidence not yet in the vault is moved into the vault first, and a game is not deleted while the vault is unavailable (the request fails with 500 and can be retried). Vault cases are never erased by this route. A game shared with a co-parent is deleted for both. There is deliberately no self-service version: user ids are client-claimed, so the server cannot verify that a caller owns one.
 
 | Method | Path | Response |
 |--------|------|----------|
