@@ -1,5 +1,6 @@
 # ── Stage 1: run tests ────────────────────────────────────────────────────────
-FROM node:20-alpine AS test
+# vitest 5 supports Node ^22.12 only; the test stage runs on 22 (runtime image unchanged).
+FROM node:22-alpine AS test
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY client/package.json ./client/
