@@ -180,6 +180,18 @@ export interface GameRepository {
    * be covered here; the Postgres test in research-privacy.test.ts enforces it.
    */
   deleteGameData(gameId: string): Promise<void>;
+  /**
+   * Every game a user id is attached to, for staff erasure on request:
+   * user_games links, seats (players.user_id or players.campus_sub) and solo
+   * games created under a verified campus id (games.campus_sub).
+   */
+  listGameIdsForUser(userId: string): Promise<string[]>;
+  /**
+   * Removes the rows keyed to a user id rather than to a game: the user's
+   * user_games links and album partners. Games themselves are deleted one by
+   * one through deleteGameData first, so child-safety evidence is vaulted.
+   */
+  deleteUserRecords(userId: string): Promise<void>;
   /** Upsert on (gameId, sceneIndex, questionId). A skip never overwrites an
    * answered row; an answer always overwrites. */
   saveAnswer(a: StoredAnswer): Promise<void>;
@@ -964,6 +976,38 @@ export class PgGameRepository implements GameRepository {
     }
   }
 
+  async listGameIdsForUser(userId: string): Promise<string[]> {
+    const { rows } = await this.db.query<{ game_id: string }>(
+      `SELECT game_id FROM user_games WHERE user_id = $1
+       UNION SELECT game_id FROM players WHERE user_id = $1 OR campus_sub = $1
+       UNION SELECT id AS game_id FROM games WHERE campus_sub = $1`,
+      [userId],
+    );
+    return rows.map((r) => r.game_id);
+  }
+
+  async deleteUserRecords(userId: string): Promise<void> {
+    if (!this.db.connect) throw new Error("deleteUserRecords needs a pool with connect()");
+    const client = await this.db.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`DELETE FROM user_games WHERE user_id = $1`, [userId]);
+      // user_games.partner_id references album_partners with no cascade.
+      await client.query(
+        `UPDATE user_games SET partner_id = NULL
+          WHERE partner_id IN (SELECT id FROM album_partners WHERE user_id = $1)`,
+        [userId],
+      );
+      await client.query(`DELETE FROM album_partners WHERE user_id = $1`, [userId]);
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   async saveAnswer(a: StoredAnswer): Promise<void> {
     await this.db.query(
       `INSERT INTO question_answers
@@ -1622,6 +1666,34 @@ export class InMemoryGameRepository implements GameRepository {
     const pseudonym = this.followupLinks.get(gameId);
     if (pseudonym) this.followupContacts.delete(pseudonym);
     this.followupLinks.delete(gameId);
+  }
+
+  async listGameIdsForUser(userId: string): Promise<string[]> {
+    const ids = new Set<string>();
+    for (const ug of this.userGames.values()) if (ug.userId === userId) ids.add(ug.gameId);
+    for (const [gameId, seats] of this.playerRecords) {
+      for (const p of seats.values()) if (p.userId === userId || p.campusSub === userId) ids.add(gameId);
+    }
+    for (const [gameId, sub] of this.gameCampusSubs) if (sub === userId) ids.add(gameId);
+    return [...ids];
+  }
+
+  async deleteUserRecords(userId: string): Promise<void> {
+    for (const [key, ug] of [...this.userGames]) {
+      if (ug.userId === userId) {
+        this.userGames.delete(key);
+        this.partnerLinks.delete(key);
+      }
+    }
+    const partnerIds = new Set<string>();
+    for (const [id, p] of [...this.albumPartners]) {
+      if (p.userId === userId) {
+        partnerIds.add(id);
+        this.albumPartners.delete(id);
+      }
+    }
+    for (const ug of this.userGames.values()) if (ug.partnerId && partnerIds.has(ug.partnerId)) ug.partnerId = null;
+    for (const [key, pid] of [...this.partnerLinks]) if (partnerIds.has(pid)) this.partnerLinks.delete(key);
   }
 
   async saveAnswer(a: StoredAnswer): Promise<void> {
