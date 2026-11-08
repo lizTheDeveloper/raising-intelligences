@@ -106,6 +106,44 @@ describe.skipIf(!process.env.DATABASE_URL)("child-safety vault on Postgres", () 
     expect(rows[0].content).toBe(`[withheld: child-safety case ${caseId}]`);
     expect(await backfillLegacyFlags(repo, pool)).toBe(0);
   });
+
+  // moderation_flags cascades with games. A flag whose content never reached
+  // the vault (the vault write failed at flag time, or a pre-vault scene
+  // block the backfill skipped) must be vaulted before the cascade runs.
+  it("deleteGameData vaults plaintext flags before the cascade, and deletes everything else", async () => {
+    const state = createGame("Unvaulted");
+    await repo.saveGame(state);
+    await repo.savePlayer(state.id, "parent2", "P2", "tok", "@unvaulted:matrix.example");
+    const sexualId = randomUUID();
+    const sceneId = randomUUID();
+    await pool.query(
+      `INSERT INTO moderation_flags (id, game_id, sender, content, reason, ip_address, created_at)
+       VALUES ($1, $3, 'parent2', 'UNVAULTED FIXTURE', 'openai_moderation:sexual/minors', '198.51.100.40', '2026-10-01T00:00:00Z'),
+              ($2, $3, 'parent2', 'SCENE FIXTURE', 'This scene shows an escalating grooming pattern (fixture)', NULL, '2026-07-14T00:00:00Z')`,
+      [sexualId, sceneId, state.id],
+    );
+
+    await repo.deleteGameData(state.id);
+
+    expect((await pool.query(`SELECT 1 FROM games WHERE id = $1`, [state.id])).rows).toHaveLength(0);
+    expect((await pool.query(`SELECT 1 FROM moderation_flags WHERE game_id = $1`, [state.id])).rows).toHaveLength(0);
+    for (const [flagId, content] of [[sexualId, "UNVAULTED FIXTURE"], [sceneId, "SCENE FIXTURE"]]) {
+      const caseId = await repo.childSafety.findByExternalRef(`moderation_flag:${flagId}`);
+      expect(caseId, `no vault case for flag ${flagId}`).toBeTruthy();
+      const { evidence } = await viewEvidence(repo.childSafety, caseId!, "r", null);
+      expect(evidence.content).toBe(content);
+      expect(evidence.gameRef).toBe(state.id);
+      expect(evidence.sender).toBe("parent2");
+      expect(evidence.identifiers).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: "matrix", value: "@unvaulted:matrix.example", role: "flagged" }),
+      ]));
+      const { rows: raw } = await pool.query(`SELECT ciphertext, incident_at FROM child_safety.evidence_cases WHERE id = $1`, [caseId]);
+      expect(Buffer.from(raw[0].ciphertext, "base64").toString("utf8")).not.toContain(content);
+    }
+    const sexualCase = await repo.childSafety.getCase((await repo.childSafety.findByExternalRef(`moderation_flag:${sexualId}`))!);
+    expect(sexualCase?.incidentAt).toBe(Date.parse("2026-10-01T00:00:00Z"));
+    expect(sexualCase?.ipAddress).toBe("198.51.100.40");
+  });
   // ── Web cabinets: a verified campus identity feeds the vault ────────────────
   describe("campus identity", () => {
     const originalOpenAi = process.env.OPENAI_API_KEY;

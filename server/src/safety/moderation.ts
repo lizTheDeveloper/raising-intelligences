@@ -226,7 +226,8 @@ export async function applyModerationBlock(params: {
   // Evidence first, in its own store: it must survive whatever happens to the
   // game. The moderation_flags row then points at the case instead of
   // repeating the content (it cascades with the game). If the vault write
-  // failed, the flag keeps the content so nothing is lost.
+  // failed, the flag keeps the content, and deleteGameData moves it into the
+  // vault before the game can be deleted (or refuses to delete).
   const caseId = await preserveFlagEvidence({
     repo, state, sender, content, reason, ipAddress, userAgent: params.userAgent ?? null, classifier: params.classifier,
     isTest: params.syntheticTest ?? false, senderOccupant: params.senderOccupant,
