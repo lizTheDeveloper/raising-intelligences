@@ -194,4 +194,47 @@ describe("redactConfessionalText (issue #140)", () => {
     const input = "Child: Luna\nOCEAN scores: Openness: 3/4, Conscientiousness: 2/4";
     expect(__redactConfessionalTextForTests(input)).toBe(input);
   });
+
+  it("redacts confessionals containing quotes and newlines (no leak past an inner quote)", () => {
+    const input = [
+      "Child: Robin",
+      "OCEAN scores: O=50",
+      "",
+      "Emotional themes from parent confessionals:",
+      'Parent 1: "My dad said "you are nothing" and I believed him',
+      'for years. I never told my wife."',
+      'Parent 2: "I hid the "real" reason I left"',
+      "",
+      "Generate the personality seed document for Robin.",
+    ].join("\n");
+    const redacted = __redactConfessionalTextForTests(input);
+
+    for (const leak of ["nothing", "believed", "wife", "real", "reason"]) {
+      expect(redacted).not.toContain(leak);
+    }
+    expect(redacted).toContain("Child: Robin");
+    expect(redacted).toContain("Generate the personality seed document for Robin.");
+    expect(redacted.match(/Parent \d: "\[redacted, \d+ chars\]"/g)).toHaveLength(2);
+  });
+
+  it("redacts the real personality_seed prompt built by generatePersonalitySeed", async () => {
+    const { generatePersonalitySeed } = await import("../src/game/personality.js");
+    let captured = "";
+    const llm = {
+      completeResponse: async (_s: string, user: string) => { captured = user; return "seed"; },
+    } as unknown as import("../src/llm/client.js").LLMClient;
+    const ocean = [2, 2, 2, 2, 2];
+    await generatePersonalitySeed(
+      llm,
+      "Robin",
+      { ocean, confessional1: 'I said "never" once', confessional2: "line one\nline two" } as never,
+      { ocean, confessional1: "third secret" } as never,
+    );
+    expect(captured).toContain("never");
+    const redacted = __redactConfessionalTextForTests(captured);
+    for (const leak of ["never", "line one", "line two", "third secret"]) {
+      expect(redacted).not.toContain(leak);
+    }
+    expect(redacted).toContain("Generate the personality seed document for Robin.");
+  });
 });

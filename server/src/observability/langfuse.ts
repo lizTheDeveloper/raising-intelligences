@@ -99,15 +99,36 @@ export function __resetLangfuseClientForTests(): void {
  */
 const CONFESSIONAL_ROLES = new Set<LLMRole>(["personality_seed"]);
 
+const CONFESSIONAL_HEADER = "Emotional themes from parent confessionals:\n";
+const CONFESSIONAL_TRAILER = "\n\nGenerate the personality seed";
+
 /**
- * Replaces `Parent N: "<confessional text>"` spans with a length-only
+ * Replaces every `Parent N: "<confessional text>"` span with a length-only
  * placeholder, so the shape of the prompt is still visible in a trace
  * without shipping the confessional's actual content to Langfuse.
+ *
+ * Fails closed: confessionals are free text and may contain quotes and
+ * newlines, so a span is NOT delimited by the next `"`. The whole section,
+ * from the header (or the first `Parent N: "` label) to the prompt's trailer
+ * (or the end of the text), is redacted; it is only split back into
+ * per-parent spans at line starts that begin a new label.
  */
 function redactConfessionalText(text: string): string {
-  return text.replace(/(Parent \d: )"([^"]*)"/g, (_match, prefix: string, content: string) => {
-    return `${prefix}"[redacted, ${content.length} chars]"`;
-  });
+  const headerAt = text.indexOf(CONFESSIONAL_HEADER);
+  const firstLabel = text.search(/Parent \d: "/);
+  if (headerAt === -1 && firstLabel === -1) return text;
+  const start = headerAt !== -1 ? headerAt + CONFESSIONAL_HEADER.length : firstLabel;
+  const trailerAt = text.lastIndexOf(CONFESSIONAL_TRAILER);
+  const end = trailerAt >= start ? trailerAt : text.length;
+  const redacted = text
+    .slice(start, end)
+    .split(/\n(?=Parent \d: ")/)
+    .map((span) => {
+      const m = /^(Parent \d: )"([\s\S]*?)"?$/.exec(span);
+      return m ? `${m[1]}"[redacted, ${m[2].length} chars]"` : `[redacted, ${span.length} chars]`;
+    })
+    .join("\n");
+  return text.slice(0, start) + redacted + text.slice(end);
 }
 
 /** Redacts `text` when `role` is known to carry confessional content. */
