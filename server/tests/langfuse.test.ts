@@ -4,6 +4,7 @@ import {
   isLangfuseEnabled,
   getLangfuseClient,
   __resetLangfuseClientForTests,
+  __redactConfessionalTextForTests,
 } from "../src/observability/langfuse.js";
 import { MockLLMClient } from "../src/llm/mock.js";
 import type { GameEvent } from "../src/types.js";
@@ -22,7 +23,7 @@ describe("TracedLLMClient (Langfuse unconfigured)", () => {
   const savedEnv: Record<string, string | undefined> = {};
 
   beforeEach(() => {
-    for (const key of ["LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_BASEURL"]) {
+    for (const key of ["LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_BASEURL", "LANGFUSE_HOST"]) {
       savedEnv[key] = process.env[key];
       delete process.env[key];
     }
@@ -40,6 +41,28 @@ describe("TracedLLMClient (Langfuse unconfigured)", () => {
   it("reports Langfuse as disabled and never constructs a client", () => {
     expect(isLangfuseEnabled()).toBe(false);
     expect(getLangfuseClient()).toBeNull();
+  });
+
+  it("stays disabled when keys are set but no baseUrl/host is configured (issue #140)", () => {
+    // Regression guard: the Langfuse SDK defaults to Langfuse Cloud when no
+    // baseUrl is given. Keys-without-host must NOT activate tracing, or
+    // confessional-derived prompts would leave our infrastructure by default.
+    process.env.LANGFUSE_PUBLIC_KEY = "pk-lf-test";
+    process.env.LANGFUSE_SECRET_KEY = "sk-lf-test";
+    __resetLangfuseClientForTests();
+
+    expect(isLangfuseEnabled()).toBe(false);
+    expect(getLangfuseClient()).toBeNull();
+  });
+
+  it("activates only once a host is also configured", () => {
+    process.env.LANGFUSE_PUBLIC_KEY = "pk-lf-test";
+    process.env.LANGFUSE_SECRET_KEY = "sk-lf-test";
+    process.env.LANGFUSE_HOST = "https://langfuse.example.internal";
+    __resetLangfuseClientForTests();
+
+    expect(isLangfuseEnabled()).toBe(true);
+    expect(getLangfuseClient()).not.toBeNull();
   });
 
   it("streamResponse passes through results and forwards chunks identically", async () => {
@@ -138,5 +161,80 @@ describe("TracedLLMClient (Langfuse unconfigured)", () => {
     expect(await derived2.completeResponse("s", "u")).toBe("doc2");
 
     expect(derived).not.toBe(base);
+  });
+});
+
+describe("redactConfessionalText (issue #140)", () => {
+  it("replaces a confessional quote with a length-only placeholder", () => {
+    const confession = "I once stole from my sister and never told anyone.";
+    const input = `Parent 1: "${confession}"`;
+    const redacted = __redactConfessionalTextForTests(input);
+
+    expect(redacted).toBe(`Parent 1: "[redacted, ${confession.length} chars]"`);
+    expect(redacted).not.toContain("stole");
+  });
+
+  it("redacts every confessional span in a multi-parent prompt", () => {
+    const input = [
+      'Parent 1: "secret one"',
+      'Parent 1: "secret two"',
+      'Parent 2: "secret three"',
+    ].join("\n");
+
+    const redacted = __redactConfessionalTextForTests(input);
+
+    expect(redacted).not.toContain("secret");
+    expect(redacted.match(/\[redacted, \d+ chars\]/g)).toHaveLength(3);
+    // Parent labels are preserved so the trace still shows prompt shape.
+    expect(redacted).toContain('Parent 1: "[redacted,');
+    expect(redacted).toContain('Parent 2: "[redacted,');
+  });
+
+  it("leaves text with no confessional spans untouched", () => {
+    const input = "Child: Luna\nOCEAN scores: Openness: 3/4, Conscientiousness: 2/4";
+    expect(__redactConfessionalTextForTests(input)).toBe(input);
+  });
+
+  it("redacts confessionals containing quotes and newlines (no leak past an inner quote)", () => {
+    const input = [
+      "Child: Robin",
+      "OCEAN scores: O=50",
+      "",
+      "Emotional themes from parent confessionals:",
+      'Parent 1: "My dad said "you are nothing" and I believed him',
+      'for years. I never told my wife."',
+      'Parent 2: "I hid the "real" reason I left"',
+      "",
+      "Generate the personality seed document for Robin.",
+    ].join("\n");
+    const redacted = __redactConfessionalTextForTests(input);
+
+    for (const leak of ["nothing", "believed", "wife", "real", "reason"]) {
+      expect(redacted).not.toContain(leak);
+    }
+    expect(redacted).toContain("Child: Robin");
+    expect(redacted).toContain("Generate the personality seed document for Robin.");
+    expect(redacted.match(/Parent \d: "\[redacted, \d+ chars\]"/g)).toHaveLength(2);
+  });
+
+  it("redacts the real personality_seed prompt built by generatePersonalitySeed", async () => {
+    const { generatePersonalitySeed } = await import("../src/game/personality.js");
+    let captured = "";
+    const llm = {
+      completeResponse: async (_s: string, user: string) => { captured = user; return "seed"; },
+    } as unknown as import("../src/llm/client.js").LLMClient;
+    const ocean = [2, 2, 2, 2, 2];
+    await generatePersonalitySeed(
+      llm,
+      "Robin",
+      { ocean, confessional1: 'I said "never" once', confessional2: "line one\nline two" } as never,
+      { ocean, confessional1: "third secret" } as never,
+    );
+    expect(captured).toContain("never");
+    const redacted = __redactConfessionalTextForTests(captured);
+    for (const leak of ["never", "line one", "line two", "third secret"]) {
+      expect(redacted).not.toContain(leak);
+    }
+    expect(redacted).toContain("Generate the personality seed document for Robin.");
   });
 });
