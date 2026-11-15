@@ -20,6 +20,22 @@ function isEmptyContentError(e: unknown): boolean {
   return e instanceof Error && /^Unexpected response from /.test(e.message);
 }
 
+/**
+ * HTTP 401/403 from a provider: the credential itself was rejected.
+ * OpenRouter answers "401 User not found." when OPENROUTER_API_KEY is invalid,
+ * revoked, or belongs to a deleted account (GitHub #200). Every retry fails the
+ * same way, so retrying only delays the error. completeJson wraps
+ * completeResponse in a second withRetry, so one call turned into nine
+ * identical 401s and about 15s of backoff while the player waited. Checked by
+ * status rather than instanceof so it does not depend on the SDK's class
+ * hierarchy.
+ */
+export function isAuthError(e: unknown): boolean {
+  if (typeof e !== "object" || e === null) return false;
+  const status = (e as { status?: unknown }).status;
+  return status === 401 || status === 403;
+}
+
 function isTimeoutError(e: unknown): boolean {
   return e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
 }
@@ -55,7 +71,9 @@ async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
       // again — retrying only makes the player wait through it and bills us for
       // another empty response. Same reasoning as timeouts: surface it
       // immediately so the caller can fail over to a different model family.
-      if (isTimeoutError(e) || isEmptyContentError(e) || i === maxAttempts - 1) throw e;
+      // A rejected credential is just as deterministic: fail fast so the
+      // operator sees the error, not a slow trickle of identical 401s.
+      if (isTimeoutError(e) || isEmptyContentError(e) || isAuthError(e) || i === maxAttempts - 1) throw e;
       // Rate limit errors need much longer backoff to escape the quota window
       const delayMs = isRateLimitError(e) ? 10_000 * (i + 1) : 1_000 * 2 ** i;
       await new Promise<void>((r) => setTimeout(r, delayMs));
@@ -195,6 +213,7 @@ export class RoutingLLMClient implements LLMClient {
         actualProviderKey = fbKey;
         actualModel = fbModel;
       } else {
+        this.reportAuthFailure(e, resolvedRole, providerKey, model, true);
         throw e;
       }
     }
@@ -319,6 +338,7 @@ export class RoutingLLMClient implements LLMClient {
               emittedAny ||
               isTimeoutError(e) ||
               isEmptyContentError(e) ||
+              isAuthError(e) ||
               attempt === MAX_STREAM_ATTEMPTS - 1
             ) {
               throw e;
@@ -332,6 +352,7 @@ export class RoutingLLMClient implements LLMClient {
       try {
         return await streamWithRetries(client, model, providerKey);
       } catch (e) {
+        this.reportAuthFailure(e, resolvedRole, providerKey, model, true);
         /**
          * `!emittedAny` is what makes re-running legal: no token has reached the
          * player, so there is no visible text to duplicate. Once the player has
@@ -425,6 +446,7 @@ export class RoutingLLMClient implements LLMClient {
     try {
       return await callProvider(client, model, providerKey);
     } catch (e) {
+      this.reportAuthFailure(e, resolvedRole, providerKey, model, false);
       // When the primary provider (e.g. Cerebras) is still rate-limited after
       // all retry attempts, fall back to the OpenRouter standard model for this
       // role so the game continues instead of crashing.
@@ -501,6 +523,32 @@ export class RoutingLLMClient implements LLMClient {
    * occurrence is diagnosable and REASONING_TOKEN_ALLOWANCE can be tuned against
    * evidence rather than guessed at again.
    */
+  /**
+   * Name the provider whose credential was rejected. The SDK error alone reaches
+   * GitHub as "401 User not found." from routing-client.js, which says nothing
+   * about which key failed. GlitchTip prunes the stack trace, but this log line
+   * survives.
+   */
+  private reportAuthFailure(
+    e: unknown,
+    role: LLMRole,
+    providerKey: string,
+    model: string,
+    streaming: boolean
+  ): void {
+    if (!isAuthError(e)) return;
+    logger.error("llm_provider_auth_failed", {
+      role,
+      provider: providerKey,
+      model,
+      status: (e as { status: number }).status,
+      streaming,
+      hint: providerKey === "openrouter"
+        ? "OPENROUTER_API_KEY is invalid, revoked, or its account was deleted — rotate it"
+        : `${providerKey.toUpperCase()}_API_KEY was rejected — rotate it`,
+    });
+  }
+
   private reportTruncation(
     role: LLMRole,
     model: string,
