@@ -15,7 +15,7 @@ import {
   CHILD_MEMORY_OPEN,
   CHILD_MEMORY_CLOSE,
 } from "../src/research/moment-label.js";
-import { STANDARD_MODELS, CEREBRAS_MODELS, PREMIUM_MODELS, MODELS_BY_TIER } from "../src/llm/model-config.js";
+import { STANDARD_MODELS, PREMIUM_MODELS, MODELS_BY_TIER } from "../src/llm/model-config.js";
 import type { GameEvent } from "../src/types.js";
 
 class LabelLLM extends MockLLMClient {
@@ -109,7 +109,7 @@ describe("moment_comparison role", () => {
       expect(cfg.moment_comparison).toBeTruthy();
       expect(cfg.moment_comparison).toBe(cfg.gender_inference);
     }
-    expect([STANDARD_MODELS, CEREBRAS_MODELS, PREMIUM_MODELS].every((c) => "moment_comparison" in c)).toBe(true);
+    expect([STANDARD_MODELS, PREMIUM_MODELS].every((c) => "moment_comparison" in c)).toBe(true);
   });
 });
 
@@ -343,7 +343,7 @@ describe.skipIf(process.env.LLM_CACHE_MODE !== "record")("moment label eval (rec
     expect([count("match"), count("partial"), count("mismatch"), count("unclear")]).toEqual([2, 1, 2, 1]);
   });
   // Each tier's moment_comparison model, via the same tier selection the app uses.
-  it.each(["standard", "cerebras", "premium"] as const)("%s tier agrees with the hand labels on most fixtures", async (tier) => {
+  it.each(["standard", "premium"] as const)("%s tier agrees with the hand labels on most fixtures", async (tier) => {
     const { RoutingLLMClient } = await import("../src/llm/routing-client.js");
     const llm = new RoutingLLMClient(tier, () => {}, "kid_family_chat", 424242);
     let agree = 0;

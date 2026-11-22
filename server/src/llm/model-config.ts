@@ -34,7 +34,7 @@ export type LLMRole =
   | "family_therapist"
   | "cps_caseworker";
 
-export type ModelTier = "standard" | "cerebras" | "premium";
+export type ModelTier = "standard" | "premium";
 
 export type ModelConfig = Record<LLMRole, string>;
 
@@ -66,33 +66,6 @@ export const STANDARD_MODELS: ModelConfig = {
   cps_caseworker: "qwen/qwen3.7-max",
 };
 
-/**
- * Cerebras tier: GPT OSS 120B on Cerebras for all narrative roles.
- * Cerebras runs GPT OSS at extremely high throughput (~1000 tok/s vs ~10 tok/s on OpenRouter).
- * Great at storytelling; kid chat stays on cheap DeepSeek via OpenRouter.
- * The "cerebras:" prefix routes these slugs to api.cerebras.ai in routing-client.ts.
- */
-export const CEREBRAS_MODELS: ModelConfig = {
-  kid_family_chat: "cerebras:gpt-oss-120b",
-  kid_sidebar:     "cerebras:gpt-oss-120b",
-  kid_adult_chat:  "cerebras:gpt-oss-120b",
-  world_manager:   "cerebras:gpt-oss-120b",
-  psychologist:    "cerebras:gpt-oss-120b",
-  memory_summarizer: "cerebras:gpt-oss-120b",
-  epilogue:        "cerebras:gpt-oss-120b",
-  report_card:     "cerebras:gpt-oss-120b",
-  album:           "cerebras:gpt-oss-120b",
-  personality_seed: "cerebras:gpt-oss-120b",
-  gender_inference: "cerebras:gpt-oss-120b",
-  moment_comparison: "cerebras:gpt-oss-120b",
-  // Not routed through Cerebras — safety classification stays on the same
-  // reliable model across every tier. See safety/pattern-detection.ts (grooming-pattern check, runs once per scene).
-  safety_check: "anthropic/claude-haiku-4-5",
-  psychologist_consult: "cerebras:gpt-oss-120b",
-  family_therapist: "cerebras:gpt-oss-120b",
-  cps_caseworker: "cerebras:gpt-oss-120b",
-};
-
 /** Premium tier: Qwen Max + Gemini 2.5 Flash + Claude Opus 4.8 for the keepsake artifacts. */
 export const PREMIUM_MODELS: ModelConfig = {
   kid_family_chat: "qwen/qwen3.7-plus",
@@ -115,7 +88,6 @@ export const PREMIUM_MODELS: ModelConfig = {
 
 export const MODELS_BY_TIER: Record<ModelTier, ModelConfig> = {
   standard:  STANDARD_MODELS,
-  cerebras:  CEREBRAS_MODELS,
   premium:   PREMIUM_MODELS,
 };
 

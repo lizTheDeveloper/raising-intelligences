@@ -1,8 +1,11 @@
 {
   "name": "raising-intelligences",
-  "version": "2.4.5",
+  "version": "2.4.6",
   "private": true,
-  "workspaces": ["client", "server"],
+  "workspaces": [
+    "client",
+    "server"
+  ],
   "scripts": {
     "dev": "concurrently \"npm run dev -w server\" \"npm run dev -w client\"",
     "test": "npm run test -w server"
