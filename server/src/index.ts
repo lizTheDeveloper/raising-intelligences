@@ -40,14 +40,12 @@ async function main() {
   // role and tier (see docs/monetization-strategy.md §3.1). Per-call token +
   // cost accounting is logged so per-game cost can be tracked (§3.2). The
   // Langfuse tracer wraps it transparently — a pass-through when no keys are set.
-  // Default to cerebras if CEREBRAS_API_KEY is set, else standard.
-  // Explicit MODEL_TIER always wins.
-  const defaultTier = process.env.CEREBRAS_API_KEY ? "cerebras" : "standard";
-  const rawTier = process.env.MODEL_TIER ?? defaultTier;
-  const tier: ModelTier =
-    rawTier === "premium" ? "premium" :
-    rawTier === "cerebras" ? "cerebras" :
-    "standard";
+  // MODEL_TIER picks the tier (default "standard"). The Cerebras tier was
+  // removed on 2026-11-21: OpenRouter is the only provider, so an old
+  // MODEL_TIER=cerebras falls back to standard, loudly.
+  const rawTier = process.env.MODEL_TIER ?? "standard";
+  if (rawTier === "cerebras") logger.warn("model_tier_removed", { requested: rawTier, using: "standard" });
+  const tier: ModelTier = rawTier === "premium" ? "premium" : "standard";
   const onUsage = (u: LLMUsage) => {
     logger.info("llm_usage", {
       role: u.role,

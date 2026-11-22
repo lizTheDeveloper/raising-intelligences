@@ -97,10 +97,9 @@ The system uses multiple LLM roles, each mapped to specific models per tier:
 | Tier | Kid chat | Psychologist / Epilogue | Cost per game |
 |------|---------|------------------------|--------------|
 | `standard` | Qwen 3.7 Plus | Qwen 3.7 Max | ~$0.02 |
-| `cerebras` | GPT OSS 120B (Cerebras) | GPT OSS 120B | ~$0.00 |
 | `premium` | Gemini 2.5 Flash | Claude Opus 4.6 | ~$0.50 |
 
-Set `MODEL_TIER=standard` (default), `cerebras`, or `premium` in your `.env`.
+Set `MODEL_TIER=standard` (default) or `premium` in your `.env`. Both run on OpenRouter.
 
 ### Game state machine
 

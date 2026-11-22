@@ -66,8 +66,8 @@ async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
 
 /**
  * Routes LLM calls to different OpenAI-compatible providers based on the
- * model slug prefix.  A slug like "cerebras:gpt-oss-120b" sends the call to
- * Cerebras; an unprefixed slug falls through to OpenRouter.
+ * model slug prefix ("provider:model"). Only OpenRouter is registered today;
+ * an unprefixed slug, or an unknown prefix, goes to OpenRouter.
  *
  * This lets model-config.ts express per-role provider routing without the
  * engine knowing anything about which backend handles each role.
@@ -97,19 +97,6 @@ export class RoutingLLMClient implements LLMClient {
         },
       }),
     });
-
-    if (process.env.CEREBRAS_API_KEY) {
-      this.providers.set("cerebras", {
-        client: new OpenAI({
-          baseURL: "https://api.cerebras.ai/v1",
-          apiKey: process.env.CEREBRAS_API_KEY,
-        }),
-        pricing: {
-          "gpt-oss-120b": { input: 0.50, output: 1.50 },
-          "zai-glm-4.7":  { input: 0.20, output: 0.60 },
-        },
-      });
-    }
   }
 
   /**
@@ -166,7 +153,7 @@ export class RoutingLLMClient implements LLMClient {
       ? messages
       : [{ role: "user" as const, content: "(The child looks at their parents, waiting.)" }];
 
-    // Cerebras can be slow under load; STREAM_TIMEOUT_MS stays overridable on its own.
+    // A slow provider can stall a stream; STREAM_TIMEOUT_MS stays overridable on its own.
     const STREAM_TIMEOUT_MS = Number(process.env.STREAM_TIMEOUT_MS ?? REQUEST_TIMEOUT_MS);
 
     const openStream = async (c: OpenAI, m: string) => {
@@ -425,7 +412,7 @@ export class RoutingLLMClient implements LLMClient {
     try {
       return await callProvider(client, model, providerKey);
     } catch (e) {
-      // When the primary provider (e.g. Cerebras) is still rate-limited after
+      // When a prefixed (non-OpenRouter) provider is still rate-limited after
       // all retry attempts, fall back to the OpenRouter standard model for this
       // role so the game continues instead of crashing.
       if (isRateLimitError(e) && providerKey !== this.fallback) {
