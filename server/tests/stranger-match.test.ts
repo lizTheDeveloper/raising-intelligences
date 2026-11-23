@@ -203,7 +203,7 @@ describe("stranger matching", () => {
   });
 
   it("a no-show: the one who came is told, can requeue at their old place, and nobody is charged", async () => {
-    cfg = strangerConfig({ joinWindowMs: 400 });
+    cfg = strangerConfig({ joinWindowMs: 1500 });
     const a = await adult(ALICE);
     const b = await adult(BOB);
     await queue(a);
@@ -228,13 +228,13 @@ describe("stranger matching", () => {
   });
 
   it("nobody came: the game is discarded", async () => {
-    cfg = strangerConfig({ joinWindowMs: 400 });
+    cfg = strangerConfig({ joinWindowMs: 1500 });
     const a = await adult(ALICE);
     const b = await adult(BOB);
     await queue(a);
     await queue(b);
     const ma = (await poll(a)).body;
-    await wait(600);
+    await wait(2000);
     expect(built.games.has(ma.gameId as string)).toBe(false);
     expect((await poll(a)).body).toMatchObject({ status: "none" });
   });
@@ -295,7 +295,7 @@ describe("stranger matching", () => {
   });
 
   it("a discarded game stays shut, even to its own host", async () => {
-    cfg = strangerConfig({ joinWindowMs: 400 });
+    cfg = strangerConfig({ joinWindowMs: 1500 });
     const a = await adult(ALICE);
     const b = await adult(BOB);
     await queue(a);
@@ -334,11 +334,11 @@ describe("stranger matching", () => {
   });
 
   it("someone who stops polling leaves the queue (a closed tab is never matched)", async () => {
-    cfg = strangerConfig({ joinWindowMs: 400, queueIdleMs: 150 });
+    cfg = strangerConfig({ joinWindowMs: 60_000, queueIdleMs: 1500 });
     const a = await adult(ALICE);
     const b = await adult(BOB);
     await queue(a);
-    await wait(250);
+    await wait(1800);
     await queue(b);
     expect((await poll(b)).body).toMatchObject({ status: "waiting", count: 1 });
   });

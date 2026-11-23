@@ -66,4 +66,17 @@ describe.skipIf(!process.env.DATABASE_URL)("stranger store on Postgres", () => {
     await store.lift(a);
     expect(await store.isSuspended(a)).toBe(false);
   });
+
+  it("reports: one per seat per game, resolved once, found by game and by subject", async () => {
+    const g = randomUUID();
+    const row = { id: randomUUID(), gameId: g, reporter: "r1", reported: "x1", reason: "why", createdAt: Date.now(), status: "open" as const };
+    expect(await store.addReport(row)).toBe(true);
+    expect(await store.addReport({ ...row, id: randomUUID() })).toBe(false);
+    expect(await store.gameReported(g)).toBe(true);
+    expect((await store.reportsForGame(g)).map((r) => r.id)).toEqual([row.id]);
+    expect((await store.reportsAgainst("x1")).some((r) => r.id === row.id)).toBe(true);
+    expect(await store.resolveReport(row.id, "lifted")).toBe(true);
+    expect(await store.resolveReport(row.id, "kept")).toBe(false);
+    expect((await store.getReport(row.id))?.status).toBe("lifted");
+  });
 });

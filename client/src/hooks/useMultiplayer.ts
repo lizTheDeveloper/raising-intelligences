@@ -1,3 +1,4 @@
+import type { HandleState } from "../components/StrangerExchange";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import { track, mark, secondsSince, bucketSeconds } from "../analytics";
@@ -23,6 +24,10 @@ const E = {
   RETRY_OPENING: "retry_opening",
   /** Stranger mode: your match didn't arrive in time. */
   STRANGER_NO_SHOW: "stranger_no_show",
+  HANDLE_EXCHANGE: "handle_exchange",
+  HANDLE_STATE: "handle_state",
+  STRANGER_REPORT: "stranger_report",
+  STRANGER_REPORTED: "stranger_reported",
   PERSONALITY_SUBMITTED: "personality_submitted",
   PERSONALITY_SEED_READY: "personality_seed_ready",
   /** "let me keep playing from my phone" — see HANDOFF_CODE. */
@@ -287,6 +292,8 @@ export function useMultiplayer() {
   const [reportCard, setReportCard] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [strangerNoShow, setStrangerNoShow] = useState(false);
+  const [handleState, setHandleState] = useState<HandleState | null>(null);
+  const [strangerReported, setStrangerReported] = useState(false);
   const [inLobby, setInLobby] = useState(false);
   const [seedReady, setSeedReady] = useState(false);
   const [sceneEnding, setSceneEnding] = useState(false);
@@ -705,6 +712,8 @@ export function useMultiplayer() {
       setHandoff({ url: buildHandoffUrl(gameIdRef.current ?? "", d.code), expiresAt: d.expiresAt });
     });
     socket.on(E.STRANGER_NO_SHOW, () => setStrangerNoShow(true));
+    socket.on(E.HANDLE_STATE, (st: HandleState) => setHandleState(st));
+    socket.on(E.STRANGER_REPORTED, () => setStrangerReported(true));
 
     socket.on(E.SUPERSEDED, () => {
       supersededRef.current = true;
@@ -757,6 +766,14 @@ export function useMultiplayer() {
     },
     [ensureSocket]
   );
+
+  /** Stranger mode, after the report card: share Matrix handles? */
+  const answerHandle = useCallback((answer: "yes" | "no", ack: boolean) => {
+    socketRef.current?.emit(E.HANDLE_EXCHANGE, { answer, ...(ack ? { ack: true } : {}) });
+  }, []);
+  const reportStranger = useCallback((reason: string) => {
+    socketRef.current?.emit(E.STRANGER_REPORT, { reason });
+  }, []);
 
   const ready = useCallback((value: boolean) => {
     socketRef.current?.emit(E.READY, { ready: value });
@@ -1011,6 +1028,10 @@ export function useMultiplayer() {
     retryOpening,
     playerToken,
     strangerNoShow,
+    handleState,
+    answerHandle,
+    strangerReported,
+    reportStranger,
     clearError,
     startSidebar,
     endSidebar,

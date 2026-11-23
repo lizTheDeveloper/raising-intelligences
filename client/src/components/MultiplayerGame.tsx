@@ -17,6 +17,7 @@ import { ChildPortrait } from "./ChildPortrait";
 import { FamilyAlbum } from "./FamilyAlbum";
 import { PartnerPaymentGate } from "./PartnerPaymentGate";
 import { StrangerNoShow } from "./StrangerQueue";
+import { HandleExchange, StrangerReport } from "./StrangerExchange";
 
 const API = import.meta.env.BASE_URL + "api";
 
@@ -213,6 +214,8 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   }, [mp.state, mp.gameId, retryOpening]);
 
   const state = mp.state;
+  // Stranger games: a report control on every screen of the game itself.
+  const strangerControls = state?.strangerRun ? <StrangerReport reported={mp.strangerReported} onReport={mp.reportStranger} /> : null;
   const mySlot = mp.slot;
   const sidebarActive = state?.sidebarActive ?? null;
   const inMySidebar = sidebarActive !== null && sidebarActive === mySlot;
@@ -514,6 +517,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     const hostName = mp.players.find((p) => p.slot === "parent1")?.displayName?.trim() || "your partner";
     return (
       <div className="app fade-in">
+        {strangerControls}
         <PartnerPaymentGate
           gameId={mp.gameId!}
           childName={state.childName}
@@ -532,6 +536,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   if (inLobbyView) {
     return (
       <div className="app fade-in">
+        {strangerControls}
         <Lobby
           gameId={mp.gameId}
           slot={mySlot}
@@ -554,6 +559,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   if (showGuardian) {
     return (
       <div className="app fade-in">
+        {strangerControls}
         <GuardianScreen
           childName={state.childName}
           gameId={mp.gameId}
@@ -610,6 +616,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   if (state.phase === "ended") {
     return (
       <div className="app fade-in">
+        {strangerControls}
         <div className="ended-screen" role="status" aria-live="polite">
           <p className="ended-title">this session ended here</p>
           <p className="dim ended-body">
@@ -642,6 +649,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   if (state.phase === "event_intro") {
     return (
       <div className="app fade-in">
+        {strangerControls}
         {/* One chain, not two independent ternaries. The scene description
             and the progress line used to be rendered by separate conditions,
             so a non-null `currentEvent` put the PREVIOUS scene's setup
@@ -715,6 +723,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     );
     return (
       <div className="app fade-in">
+        {strangerControls}
         <div className="chat-portrait-header">
           <ChildPortrait
             age={state.phase === "adult_chat" ? 22 : (state.currentEvent?.age ?? 3)}
@@ -796,6 +805,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   if (state.phase === "processing") {
     return (
       <div className="app">
+        {strangerControls}
         {/* No `streamingText`. The only thing streaming during `processing` is
             the psychologist's identity document, and `ProcessingScreen` renders
             `streamingText` INSTEAD of its fragments — so passing it would put
@@ -896,6 +906,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     );
     return (
       <div className="app fade-in">
+        {strangerControls}
         <div className="debrief-enhanced">
           <div className="debrief-text-block">
             <p className="debrief-line-1">later that night</p>
@@ -954,6 +965,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   if (state.phase === "epilogue") {
     return (
       <div className="app fade-in">
+        {strangerControls}
         <Endgame epilogue={mp.epilogue} onContinue={mp.generateReportCard} />
       </div>
     );
@@ -962,13 +974,16 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   if (state.phase === "report_card") {
     return (
       <div className="app fade-in">
+        {strangerControls}
         <ReportCard reportCard={mp.reportCard} childName={state.childName} />
+        {state.strangerRun && <HandleExchange state={mp.handleState} onAnswer={mp.answerHandle} />}
       </div>
     );
   }
 
   return (
     <div className="app">
+      {strangerControls}
       <p>{state.phase}</p>
     </div>
   );

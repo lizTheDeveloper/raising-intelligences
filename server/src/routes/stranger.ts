@@ -4,6 +4,7 @@ import { logger } from "../logger.js";
 import { verifyWebhookSignature } from "../payments/stripe.js";
 import { CONSENT_VERSION, type VerificationSession } from "../stranger/identity.js";
 import type { StrangerService } from "../stranger/service.js";
+import { requireAdmin } from "./admin.js";
 
 export const IDENTITY_WEBHOOK_PATH = "/api/stripe/identity-webhook";
 
@@ -155,5 +156,29 @@ export function createIdentityWebhookRoute(stranger: StrangerService): Router {
     }
   },
   );
+  return router;
+}
+
+
+/**
+ * Admin review of stranger-mode reports. Works whatever the mode is, so a
+ * report can be reviewed after a meetup ends. Accounts appear only as
+ * subject hashes; no Matrix ids are stored with a report.
+ */
+export function createStrangerAdminRoutes(stranger: StrangerService): Router {
+  const router = Router();
+  router.use("/admin/stranger", requireAdmin, (_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader("Cache-Control", "no-store");
+    next();
+  });
+  router.get("/admin/stranger/reports", async (_req: Request, res: Response) => {
+    const reports = await stranger.store.listReports(200);
+    res.json({ reports });
+  });
+  router.post("/admin/stranger/reports/:id/resolve", async (req: Request, res: Response) => {
+    // The pair block stays whatever the decision: these two are never matched again.
+    const out = await stranger.resolveReport(String(req.params.id), (req.body as { action?: unknown }).action);
+    res.status(out.status).json(out.body);
+  });
   return router;
 }

@@ -64,7 +64,35 @@ export interface StrangerStore {
   suspend(subject: string, reason: string): Promise<void>;
   isSuspended(subject: string): Promise<boolean>;
   lift(subject: string): Promise<void>;
+  /** False when this reporter already has a report on this game (one per seat per game). */
+  addReport(row: StrangerReport): Promise<boolean>;
+  listReports(limit: number): Promise<StrangerReport[]>;
+  getReport(id: string): Promise<StrangerReport | null>;
+  reportsForGame(gameId: string): Promise<StrangerReport[]>;
+  reportsAgainst(subject: string): Promise<StrangerReport[]>;
+  /** Only an open or counter report can be resolved; false if it already was. */
+  resolveReport(id: string, resolution: "lifted" | "kept" | "dismissed"): Promise<boolean>;
+  gameReported(gameId: string): Promise<boolean>;
 }
+
+export interface StrangerReport {
+  id: string;
+  gameId: string;
+  reporter: string;
+  reported: string;
+  reason: string;
+  createdAt: number;
+  /**
+   * open: the reported account was suspended pending review.
+   * counter: filed by a seat that had itself been reported (or whose own
+   *   standing failed a re-check): reviewed, never an automatic suspension.
+   * lifted / kept / dismissed: an admin's decision.
+   */
+  status: "open" | "counter" | "lifted" | "kept" | "dismissed";
+}
+
+/** Reports that hold a suspension in place. */
+export const HOLDING_STATUSES: ReadonlySet<StrangerReport["status"]> = new Set(["open", "kept"]);
 
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
@@ -135,6 +163,34 @@ export class InMemoryStrangerStore implements StrangerStore {
   }
   async lift(subject: string): Promise<void> {
     this.suspended.delete(subject);
+  }
+  reports = new Map<string, StrangerReport>();
+  async addReport(row: StrangerReport): Promise<boolean> {
+    if ([...this.reports.values()].some((r) => r.gameId === row.gameId && r.reporter === row.reporter)) return false;
+    this.reports.set(row.id, { ...row });
+    return true;
+  }
+  async reportsForGame(gameId: string): Promise<StrangerReport[]> {
+    return [...this.reports.values()].filter((r) => r.gameId === gameId).map((r) => ({ ...r }));
+  }
+  async reportsAgainst(subject: string): Promise<StrangerReport[]> {
+    return [...this.reports.values()].filter((r) => r.reported === subject).map((r) => ({ ...r }));
+  }
+  async listReports(limit: number): Promise<StrangerReport[]> {
+    return [...this.reports.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, limit).map((r) => ({ ...r }));
+  }
+  async getReport(id: string): Promise<StrangerReport | null> {
+    const r = this.reports.get(id);
+    return r ? { ...r } : null;
+  }
+  async resolveReport(id: string, resolution: "lifted" | "kept" | "dismissed"): Promise<boolean> {
+    const r = this.reports.get(id);
+    if (!r || (r.status !== "open" && r.status !== "counter")) return false;
+    r.status = resolution;
+    return true;
+  }
+  async gameReported(gameId: string): Promise<boolean> {
+    return [...this.reports.values()].some((r) => r.gameId === gameId);
   }
   slots = new Set<string>();
   documents = new Map<string, string>();
@@ -297,5 +353,62 @@ export class PgStrangerStore implements StrangerStore {
   }
   async lift(subject: string): Promise<void> {
     await this.db.query(`DELETE FROM stranger_suspensions WHERE subject = $1`, [subject]);
+  }
+
+  private toReport(r: Record<string, unknown>): StrangerReport {
+    return {
+      id: String(r.id), gameId: String(r.game_id), reporter: String(r.reporter_subject), reported: String(r.reported_subject),
+      reason: String(r.reason), createdAt: Number(r.at), status: r.status as StrangerReport["status"],
+    };
+  }
+  async addReport(row: StrangerReport): Promise<boolean> {
+    const r = await this.db.query(
+      `INSERT INTO stranger_reports (id, game_id, reporter_subject, reported_subject, reason, created_at, status)
+       VALUES ($1, $2, $3, $4, $5, to_timestamp($6 / 1000.0), $7)
+       ON CONFLICT (game_id, reporter_subject) DO NOTHING`,
+      [row.id, row.gameId, row.reporter, row.reported, row.reason, row.createdAt, row.status],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+  private async reportsWhere(col: "game_id" | "reported_subject", v: string): Promise<StrangerReport[]> {
+    const r = await this.db.query(
+      `SELECT id, game_id, reporter_subject, reported_subject, reason, status, (extract(epoch from created_at) * 1000)::bigint AS at
+       FROM stranger_reports WHERE ${col} = $1 ORDER BY created_at`,
+      [v],
+    );
+    return r.rows.map((x) => this.toReport(x));
+  }
+  reportsForGame(gameId: string): Promise<StrangerReport[]> {
+    return this.reportsWhere("game_id", gameId);
+  }
+  reportsAgainst(subject: string): Promise<StrangerReport[]> {
+    return this.reportsWhere("reported_subject", subject);
+  }
+  async listReports(limit: number): Promise<StrangerReport[]> {
+    const r = await this.db.query(
+      `SELECT id, game_id, reporter_subject, reported_subject, reason, status, (extract(epoch from created_at) * 1000)::bigint AS at
+       FROM stranger_reports ORDER BY created_at DESC LIMIT $1`,
+      [limit],
+    );
+    return r.rows.map((x) => this.toReport(x));
+  }
+  async getReport(id: string): Promise<StrangerReport | null> {
+    const r = await this.db.query(
+      `SELECT id, game_id, reporter_subject, reported_subject, reason, status, (extract(epoch from created_at) * 1000)::bigint AS at
+       FROM stranger_reports WHERE id = $1`,
+      [id],
+    );
+    return r.rows[0] ? this.toReport(r.rows[0]) : null;
+  }
+  async resolveReport(id: string, resolution: "lifted" | "kept" | "dismissed"): Promise<boolean> {
+    const r = await this.db.query(
+      `UPDATE stranger_reports SET status = $2 WHERE id = $1 AND status IN ('open', 'counter')`,
+      [id, resolution],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+  async gameReported(gameId: string): Promise<boolean> {
+    const r = await this.db.query(`SELECT 1 FROM stranger_reports WHERE game_id = $1 LIMIT 1`, [gameId]);
+    return r.rows.length > 0;
   }
 }
