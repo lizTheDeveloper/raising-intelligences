@@ -70,6 +70,11 @@ interface GameRouteOptions {
   llm?: LLMClient & { withChildSeed?: (gameId: string) => LLMClient };
   /** Whether the game has player seats (multiplayer). Repair is solo-only. */
   hasSeat?: (gameId: string) => boolean;
+  /** True when this is a two-human child whose host hasn't paid the $20 yet
+   * (app.ts). Such a child gets no scene, no kid turn and no seed over REST. */
+  partnerGate?: (gameId: string) => Promise<boolean>;
+  /** The seat this player token holds in a game, and whether the game has seats at all. */
+  seatOf?: (gameId: string, token: unknown) => Promise<{ seated: boolean; slot: string | null }>;
 }
 
 export function createGameRoutes(
@@ -79,7 +84,8 @@ export function createGameRoutes(
   repo: GameRepository,
   options: GameRouteOptions = {}
 ): Router {
-  const { llmRateLimit, gameCreateLimit, gameLocks = new Map<string, Promise<void>>(), llm, hasSeat = () => false } = options;
+  const { llmRateLimit, gameCreateLimit, gameLocks = new Map<string, Promise<void>>(), llm, hasSeat = () => false, partnerGate = async () => false, seatOf = async () => ({ seated: false, slot: null }) } = options;
+  const PARTNER_UNPAID = "This child's partner play isn't paid for yet.";
   const router = Router();
 
   // Prefetched event promises — kicked off at game creation (event 1) and after
@@ -317,6 +323,10 @@ export function createGameRoutes(
       res.status(404).json({ error: "Game not found" });
       return;
     }
+    if (await partnerGate(gameId)) {
+      res.status(402).json({ error: PARTNER_UNPAID });
+      return;
+    }
 
     // ARC BACKSTOP — the story is over; refuse to author another scene.
     //
@@ -395,6 +405,10 @@ export function createGameRoutes(
     const precheck = await resolveGame(req.params.id as string);
     if (!precheck) {
       res.status(404).json({ error: "Game not found" });
+      return;
+    }
+    if (await partnerGate(req.params.id as string)) {
+      res.status(402).json({ error: PARTNER_UNPAID });
       return;
     }
 
@@ -1008,12 +1022,25 @@ export function createGameRoutes(
       return;
     }
 
-    const { ocean, confessional1, confessional2, slot } = req.body as {
+    const { ocean, confessional1, confessional2, slot, playerToken } = req.body as {
       ocean: unknown;
       confessional1?: string;
       confessional2?: string;
       slot?: string;
+      playerToken?: unknown;
     };
+
+    // A seated (multiplayer) game: an answer comes from the seat that holds
+    // this player token, for that seat only. No answering for a seat nobody
+    // has taken, or for the other parent. Seatless solo games are unchanged.
+    const seat = await seatOf(gameId, playerToken);
+    if (seat.seated) {
+      const wanted = slot === "parent2" ? "parent2" : "parent1";
+      if (!seat.slot || seat.slot !== wanted) {
+        res.status(403).json({ error: "Answer from your own seat." });
+        return;
+      }
+    }
 
     // Validate ocean: must be an array of 5 integers each 1-4
     if (
@@ -1090,6 +1117,13 @@ export function createGameRoutes(
         const unchanged = JSON.stringify(previous) === JSON.stringify(personality);
         if (allReady && current.personalitySeed && unchanged) {
           res.json({ ready: true });
+          return;
+        }
+
+        if (allReady && parent1 && !current.personalitySeed && (await partnerGate(gameId))) {
+          // Two humans, host hasn't paid: keep the answers, build nothing.
+          await repo.saveGame(updatedState);
+          res.json({ ready: false, paymentDue: true });
           return;
         }
 

@@ -15,6 +15,8 @@ import { createResearchRoutes } from "./routes/research.js";
 import { createSupportRoutes } from "./routes/support.js";
 import { createCampusRoutes } from "./routes/campus.js";
 import { createChildSafetyAdminRoutes, createChildSafetyIngestRoutes, INGEST_PATH } from "./routes/child-safety.js";
+import { createPartnerPaymentRoutes, createStripeWebhookRoute, STRIPE_WEBHOOK_PATH, safeEqual } from "./routes/partner-payment.js";
+import { PartnerPayments } from "./payments/partner-payments.js";
 import type { AdminQueries } from "./db/admin-queries.js";
 import { ConversationEngine } from "./game/conversation-engine.js";
 import { EndgameEngine } from "./game/endgame-engine.js";
@@ -55,6 +57,9 @@ export interface BuildServerOptions {
   healthHandler?: RequestHandler;
   /** Read-only analytics queries for the admin dashboard. */
   adminQueries?: AdminQueries;
+  /** The $20 per-child partner payment. Tests inject one with a fake Stripe;
+   * production builds it from the environment over `repo.partnerPayments`. */
+  payments?: PartnerPayments;
 }
 
 /**
@@ -72,6 +77,7 @@ export interface BuiltServer {
   conversationEngine: ConversationEngine;
   endgameEngine: EndgameEngine;
   repo: GameRepository;
+  payments: PartnerPayments;
   close: () => Promise<void>;
 }
 
@@ -96,6 +102,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     healthHandler,
     adminQueries,
   } = options;
+  const payments = options.payments ?? new PartnerPayments({ store: repo.partnerPayments });
 
   const app = express();
   app.set("trust proxy", 1);
@@ -145,7 +152,9 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   // global parser never reads that path, so an unauthenticated caller can't
   // make the server read a large body.
   const jsonParser = express.json();
-  app.use((req, res, next) => (req.path === INGEST_PATH ? next() : jsonParser(req, res, next)));
+  // Stripe's webhook signature is over the raw bytes, so that route parses
+  // its own body too (routes/partner-payment.ts).
+  app.use((req, res, next) => (req.path === INGEST_PATH || req.path === STRIPE_WEBHOOK_PATH ? next() : jsonParser(req, res, next)));
 
   // Security headers — defense-in-depth against common browser-based attacks.
   // (No X-Frame-Options: framing is governed by CSP frame-ancestors above.)
@@ -205,7 +214,57 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   // endgame.ts, and socket handlers operating on the same game concurrently.
   const gameLocks = new Map<string, Promise<void>>();
 
-  app.use("/api", createGameRoutes(conversationEngine, endgameEngine, games, repo, { llmRateLimit, gameCreateLimit, gameLocks, llm, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0 }));
+  /**
+   * REST can't advance a two-human child its host hasn't paid for. The client
+   * never drives a seated game over REST, so this only closes a side door.
+   * Seat count falls back to the players table after a restart.
+   */
+  const partnerGate = async (gameId: string): Promise<boolean> => {
+    if (!payments.active()) return false;
+    try {
+      // The live session and the saved seats, whichever knows more: a seat
+      // filled before a restart still counts.
+      const live = sessions.get(gameId)?.players.length ?? 0;
+      const seats = live >= 2 ? live : Math.max(live, (await repo.loadPlayers(gameId)).length);
+      if (seats < 2) return false;
+      const row = await repo.partnerPayments.get(gameId);
+      return !row || row.status === "due";
+    } catch (err) {
+      // Fail open, like the IP-ban check: a DB hiccup must not stop solo play.
+      logger.error("partner_gate_check_failed", { gameId, error: err instanceof Error ? err.message : String(err) });
+      return false;
+    }
+  };
+  const paymentLimit = rateLimit({ windowMs: 60_000, max: 20, standardHeaders: true, legacyHeaders: false });
+
+  // Every REST route that generates for (or advances) a child refuses an
+  // unpaid two-human child, not just the two the client could reach first.
+  // Reports, reads and safety routes are not on this list and never are.
+  const PARTNER_GATED = /^\/game\/([^/]+)\/(next-event|message|end-chat|end-debrief|repair|end-consult|end-therapy|end-cps|therapy-message|portraits\/next|epilogue|adult-chat|report-card)\/?$/;
+  app.use("/api", async (req, res, next) => {
+    const m = req.method === "POST" ? PARTNER_GATED.exec(req.path) : null;
+    if (!m || !payments.active()) return next();
+    if (await partnerGate(decodeURIComponent(m[1]))) {
+      res.status(402).json({ error: "This child's partner play isn't paid for yet." });
+      return;
+    }
+    next();
+  });
+  /**
+   * The seat a REST caller holds, by its player token. A game with any seat
+   * is a multiplayer game: its answers come from a seat, never from an
+   * anonymous POST naming a slot.
+   */
+  const seatOf = async (gameId: string, token: unknown): Promise<{ seated: boolean; slot: string | null }> => {
+    const live = sessions.get(gameId)?.players ?? [];
+    const saved = live.length >= 2 ? [] : await repo.loadPlayers(gameId);
+    const all = [...live.map((p) => ({ slot: p.slot as string, token: p.token })), ...saved.map((p) => ({ slot: p.slot, token: p.token }))];
+    if (all.length === 0) return { seated: false, slot: null };
+    if (typeof token !== "string" || token.length === 0) return { seated: true, slot: null };
+    const mine = all.find((p) => safeEqual(p.token, token));
+    return { seated: true, slot: mine?.slot ?? null };
+  };
+  app.use("/api", createGameRoutes(conversationEngine, endgameEngine, games, repo, { llmRateLimit, gameCreateLimit, gameLocks, llm, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0, partnerGate, seatOf }));
   app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit, gameLocks }));
   app.use("/api", createResearchRoutes(games, repo, { gameLocks, llm, followupLimit, answerLimit, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0 }));
   app.use("/api", createCampusRoutes(repo, { limit: campusPassLimit }));
@@ -218,6 +277,10 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   // the router's own routes), capping the whole API at the checkout-specific
   // rate instead of just the one endpoint.
   app.use("/api", createSupportRoutes(supportCheckoutLimit));
+  // Partner payment + Stripe webhook: before the admin routers, whose
+  // router-level requireAdmin answers every /api path that reaches them.
+  app.use("/api", createStripeWebhookRoute(payments));
+  app.use("/api", createPartnerPaymentRoutes({ payments, repo, sessions, gameLocks, limit: paymentLimit }));
   // Child safety: evidence ingestion (own token) must be mounted before the
   // admin router, whose router-level requireAdmin answers every /api path
   // that reaches it. The review queue is admin-only on its own.
@@ -289,6 +352,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     repo,
     llm,
     gameLocks,
+    payments,
   });
 
   let evictionTimer: NodeJS.Timeout | undefined;
@@ -320,6 +384,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     conversationEngine,
     endgameEngine,
     repo,
+    payments,
     close,
   };
 }

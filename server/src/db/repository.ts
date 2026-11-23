@@ -15,6 +15,7 @@ import type { StoredAnswer } from "../research/questions.js";
 import type { MomentLabel } from "../research/moment-label.js";
 import { ESCALATION_DARK_CONCERN } from "../safety/escalation.js";
 import { InMemoryChildSafetyStore, PgChildSafetyStore, type ChildSafetyStore } from "../safety/child-safety/store.js";
+import { InMemoryPartnerPaymentStore, PgPartnerPaymentStore, type PartnerPaymentStore } from "../payments/store.js";
 import {
   isWithheld,
   preserveModerationFlag,
@@ -77,6 +78,12 @@ export interface GameRepository {
    * safety/child-safety/ and docs/child-safety.md.
    */
   readonly childSafety: ChildSafetyStore;
+  /**
+   * The $20 per-child partner payment (migration 028). Like the vault, not
+   * game data: deleteGameData never touches it (a payment is a financial
+   * record that outlives the game).
+   */
+  readonly partnerPayments: PartnerPaymentStore;
   /** Upsert the top-level game checkpoint (phase, counters, identity doc). */
   saveGame(state: GameState): Promise<void>;
   saveMessage(gameId: string, message: Message): Promise<void>;
@@ -369,8 +376,10 @@ function reconstructState(input: {
 
 export class PgGameRepository implements GameRepository {
   readonly childSafety: ChildSafetyStore;
+  readonly partnerPayments: PartnerPaymentStore;
   constructor(private db: Pick<pg.Pool, "query"> & Partial<Pick<pg.Pool, "connect">> = pool) {
     this.childSafety = new PgChildSafetyStore(db);
+    this.partnerPayments = new PgPartnerPaymentStore(db);
   }
 
   async saveGame(state: GameState): Promise<void> {
@@ -1225,6 +1234,7 @@ export class PgGameRepository implements GameRepository {
  */
 export class InMemoryGameRepository implements GameRepository {
   readonly childSafety = new InMemoryChildSafetyStore();
+  readonly partnerPayments: PartnerPaymentStore = new InMemoryPartnerPaymentStore();
   private games = new Map<
     string,
     {

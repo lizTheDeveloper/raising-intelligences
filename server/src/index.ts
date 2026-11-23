@@ -12,6 +12,7 @@ import { PgAdminQueries } from "./db/admin-queries.js";
 import { buildServer } from "./app.js";
 import { initSentry, isSentryEnabled, flushSentry } from "./observability/sentry.js";
 import { logger } from "./logger.js";
+import { logPaywallState, readPaymentConfig } from "./payments/config.js";
 
 const REQUIRED_ENV_VARS = ["OPENROUTER_API_KEY"];
 
@@ -85,6 +86,7 @@ async function main() {
   }
 
   logger.info("observability", { langfuse: isLangfuseEnabled(), sentry: isSentryEnabled() });
+  logPaywallState(readPaymentConfig());
 
   // Retention sweep for the child-safety vault: dismissed cases after 90
   // days, IP-log rows after 90 days. Never open, confirmed or reported cases.

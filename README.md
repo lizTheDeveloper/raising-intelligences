@@ -63,10 +63,21 @@ Copy `.env.example` to `.env`. The required keys:
 - `ADMIN_TOKEN` — optional, enables the admin dashboard at `/raising-intelligences/admin` (requires `DATABASE_URL`); also authenticates `DELETE /api/admin/games/:id`, which erases a game on a player's request
 - `CAMPUS_PASS_PUBLIC_KEY` — optional; overrides the pinned campus launch-pass public key (see "Campus cabinet")
 - `RI_RESEARCH_ENABLED` — optional, default off; only the exact value `true` enables the research features. Leave off until the copy and the consent and age handling are reviewed
+- `RI_PARTNER_PAYWALL` — optional, default off; `on` charges the host $20 once per child raised with a second human, at the moment the partner has joined (both parents' answers in), before anything is generated for the child. Needs `RI_STRIPE_SECRET_KEY` (test mode) and `RI_STRIPE_WEBHOOK_SECRET`; a live key is refused unless `RI_STRIPE_LIVE_PAYMENTS=true`. See "Partner play payment" below
 
 The server works without any of these, but LLM calls will fail without an API key.
 
 ---
+
+## Partner play payment
+
+Solo play is free. Raising a child with a second human costs the host **$20 per child, once** (`server/src/payments/`, spec: `docs/superpowers/specs/2026-07-31-coparent-matchmaking-design.md`, "Pricing and who pays").
+
+- **Host** = the `parent1` seat (the creator of an invite game; in stranger mode, whoever queued first).
+- **When**: the child becomes `due` once both seats are held by people and both parents' answers are in. No seed or scene is generated until it is `paid`. An invite nobody opens, or a partner who leaves before the quiz, is never charged.
+- **Once**: repeated clicks reuse the open Checkout Session, a second paid session for the same child is refunded automatically, webhook events are processed once, and the due → paid write is a single conditional UPDATE.
+- **Routes**: `POST /api/partner-payment/checkout` (host token), `POST /api/partner-payment/confirm` (after the Stripe redirect), `POST /api/stripe/webhook` (signed), `POST /api/admin/games/:id/refund` (admin token).
+- **Off by default.** With `RI_PARTNER_PAYWALL` unset, partner play is exactly the old free flow.
 
 ## Architecture
 
