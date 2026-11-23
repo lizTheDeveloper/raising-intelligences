@@ -976,7 +976,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
       <div className="app fade-in">
         {strangerControls}
         <ReportCard reportCard={mp.reportCard} childName={state.childName} />
-        {state.strangerRun && <HandleExchange state={mp.handleState} onAnswer={mp.answerHandle} />}
+        {state.strangerRun && <HandleExchange state={mp.handleState} onAnswer={mp.answerHandle} onStatus={mp.handleStatus} />}
       </div>
     );
   }

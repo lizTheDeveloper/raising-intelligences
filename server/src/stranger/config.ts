@@ -41,6 +41,11 @@ export interface StrangerConfig {
   joinWindowMs: number;
   /** A queued player who stops polling this long is dropped from the queue (a closed tab mustn't be matched). */
   queueIdleMs: number;
+  /** The handle exchange stays open this long after the first yes; then it quietly ends. */
+  handleWindowMs: number;
+  /** A failed exchange ends for a waiting seat after a random delay in [min, max], whatever the cause. */
+  handleEndingMinMs: number;
+  handleEndingMaxMs: number;
   /** How long a stranger-mode co-parent may be gone before the AI takes their seat. */
   takeoverGraceMs: number;
 }
@@ -83,6 +88,9 @@ export function readStrangerConfig(env: NodeJS.ProcessEnv = process.env): Strang
     publicBaseUrl: (env.RI_PUBLIC_BASE_URL?.trim() || defaultBase).replace(/\/+$/, ""),
     joinWindowMs: positiveInt(env.RI_STRANGER_JOIN_WINDOW_MS, 3 * 60 * 1000),
     queueIdleMs: positiveInt(env.RI_STRANGER_QUEUE_IDLE_MS, 90 * 1000),
+    handleWindowMs: positiveInt(env.RI_STRANGER_HANDLE_WINDOW_MS, 10 * 60 * 1000),
+    handleEndingMinMs: 30 * 1000,
+    handleEndingMaxMs: 120 * 1000,
     takeoverGraceMs: positiveInt(env.RI_STRANGER_TAKEOVER_GRACE_MS, 90 * 1000),
   };
 }

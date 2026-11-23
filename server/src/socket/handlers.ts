@@ -305,6 +305,9 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
   // ---- Stranger mode: matching creates games here, where games and seats live ----
   const STRANGER_PRIVATE = "This game is private.";
+  if (stranger) {
+    stranger.onHandleState = (gameId, slot, st) => io.to(slotRoom(gameId, slot)).emit(E.HANDLE_STATE, st);
+  }
   stranger?.attachMatching({
     createGame: async (host, partner) => {
       const state = createGame(host.childName, STRANGER_RELATIONSHIP);
@@ -838,6 +841,9 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     let strangerSeat: { gameId: string; mxid: string; subject: string } | null = null;
     socket.use((packet, next) => {
       const seat = strangerSeat;
+      // Not HANDLE_EXCHANGE: the reveal re-checks both seats itself, and
+      // putting a reported player out right there would tell them they were
+      // reported (and by whom). They just see the neutral ending.
       if (!seat || seat.gameId !== data.gameId || !stranger || !GENERATING_EVENTS.has(String(packet[0]))) return next();
       Promise.all([stranger.age.adultForPool(seat.mxid), stranger.store.isSuspended(seat.subject)]).then(
         ([pool, suspended]) => {
@@ -1934,7 +1940,8 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       const slot = data.slot;
       try {
         if (!gameId || (slot !== "parent1" && slot !== "parent2") || !stranger?.matching) return fail("Reports are for stranger games.");
-        const reason = typeof payload?.reason === "string" ? payload.reason.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 1000) : "";
+        // Free text, read by a person: control characters and angle brackets go.
+        const reason = typeof payload?.reason === "string" ? payload.reason.replace(/[\u0000-\u001f\u007f<>]/g, " ").trim().slice(0, 1000) : "";
         const reporter = strangerSeat && strangerSeat.gameId === gameId ? strangerSeat.mxid : null;
         if (!(await stranger.report(gameId, slot, reason || "(no reason given)", reporter)).ok) return fail("Reports are for stranger games.");
         socket.emit(E.STRANGER_REPORTED, { ok: true });

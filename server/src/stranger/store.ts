@@ -64,9 +64,19 @@ export interface StrangerStore {
   suspend(subject: string, reason: string): Promise<void>;
   isSuspended(subject: string): Promise<boolean>;
   lift(subject: string): Promise<void>;
+  /**
+   * Lift the suspension in ONE step, only if no open or upheld report against
+   * this subject exists at that moment. False if a report still holds it.
+   */
+  liftIfUnheld(subject: string): Promise<boolean>;
   /** False when this reporter already has a report on this game (one per seat per game). */
   addReport(row: StrangerReport): Promise<boolean>;
-  listReports(limit: number): Promise<StrangerReport[]>;
+  /** Oldest first. `statuses` filters; default every status. */
+  listReports(limit: number, opts?: { statuses?: readonly StrangerReport["status"][]; offset?: number }): Promise<StrangerReport[]>;
+  reportsBy(reporter: string): Promise<StrangerReport[]>;
+  /** The handle exchange's final outcome for a game, persisted so a "no" survives a restart. */
+  closeExchange(gameId: string, outcome: "closed" | "revealed"): Promise<void>;
+  exchangeOutcome(gameId: string): Promise<"closed" | "revealed" | null>;
   getReport(id: string): Promise<StrangerReport | null>;
   reportsForGame(gameId: string): Promise<StrangerReport[]>;
   reportsAgainst(subject: string): Promise<StrangerReport[]>;
@@ -86,10 +96,15 @@ export interface StrangerReport {
    * open: the reported account was suspended pending review.
    * counter: filed by a seat that had itself been reported (or whose own
    *   standing failed a re-check): reviewed, never an automatic suspension.
+   * review: filed by a reporter over their cap, or one with an unfounded
+   *   (lifted) report: reviewed, never an automatic suspension.
    * lifted / kept / dismissed: an admin's decision.
    */
-  status: "open" | "counter" | "lifted" | "kept" | "dismissed";
+  status: "open" | "counter" | "review" | "lifted" | "kept" | "dismissed";
 }
+
+/** Reports waiting on an admin. */
+export const UNRESOLVED_STATUSES: readonly StrangerReport["status"][] = ["open", "counter", "review"];
 
 /** Reports that hold a suspension in place. */
 export const HOLDING_STATUSES: ReadonlySet<StrangerReport["status"]> = new Set(["open", "kept"]);
@@ -164,6 +179,22 @@ export class InMemoryStrangerStore implements StrangerStore {
   async lift(subject: string): Promise<void> {
     this.suspended.delete(subject);
   }
+  async liftIfUnheld(subject: string): Promise<boolean> {
+    // Synchronous check-and-delete: atomic in a single-threaded process.
+    if ([...this.reports.values()].some((r) => r.reported === subject && HOLDING_STATUSES.has(r.status))) return false;
+    this.suspended.delete(subject);
+    return true;
+  }
+  exchanges = new Map<string, "closed" | "revealed">();
+  async closeExchange(gameId: string, outcome: "closed" | "revealed"): Promise<void> {
+    if (!this.exchanges.has(gameId)) this.exchanges.set(gameId, outcome);
+  }
+  async exchangeOutcome(gameId: string): Promise<"closed" | "revealed" | null> {
+    return this.exchanges.get(gameId) ?? null;
+  }
+  async reportsBy(reporter: string): Promise<StrangerReport[]> {
+    return [...this.reports.values()].filter((r) => r.reporter === reporter).map((r) => ({ ...r }));
+  }
   reports = new Map<string, StrangerReport>();
   async addReport(row: StrangerReport): Promise<boolean> {
     if ([...this.reports.values()].some((r) => r.gameId === row.gameId && r.reporter === row.reporter)) return false;
@@ -176,8 +207,13 @@ export class InMemoryStrangerStore implements StrangerStore {
   async reportsAgainst(subject: string): Promise<StrangerReport[]> {
     return [...this.reports.values()].filter((r) => r.reported === subject).map((r) => ({ ...r }));
   }
-  async listReports(limit: number): Promise<StrangerReport[]> {
-    return [...this.reports.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, limit).map((r) => ({ ...r }));
+  async listReports(limit: number, opts: { statuses?: readonly StrangerReport["status"][]; offset?: number } = {}): Promise<StrangerReport[]> {
+    const off = opts.offset ?? 0;
+    return [...this.reports.values()]
+      .filter((r) => !opts.statuses || opts.statuses.includes(r.status))
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .slice(off, off + limit)
+      .map((r) => ({ ...r }));
   }
   async getReport(id: string): Promise<StrangerReport | null> {
     const r = this.reports.get(id);
@@ -185,7 +221,7 @@ export class InMemoryStrangerStore implements StrangerStore {
   }
   async resolveReport(id: string, resolution: "lifted" | "kept" | "dismissed"): Promise<boolean> {
     const r = this.reports.get(id);
-    if (!r || (r.status !== "open" && r.status !== "counter")) return false;
+    if (!r || !UNRESOLVED_STATUSES.includes(r.status)) return false;
     r.status = resolution;
     return true;
   }
@@ -354,6 +390,32 @@ export class PgStrangerStore implements StrangerStore {
   async lift(subject: string): Promise<void> {
     await this.db.query(`DELETE FROM stranger_suspensions WHERE subject = $1`, [subject]);
   }
+  async liftIfUnheld(subject: string): Promise<boolean> {
+    // One statement. A report committed before it holds the suspension; one
+    // committed after re-suspends (reportOne suspends after inserting).
+    const r = await this.db.query(
+      `DELETE FROM stranger_suspensions WHERE subject = $1
+         AND NOT EXISTS (SELECT 1 FROM stranger_reports WHERE reported_subject = $1 AND status IN ('open', 'kept'))
+       RETURNING subject`,
+      [subject],
+    );
+    if ((r.rowCount ?? 0) > 0) return true;
+    const held = await this.db.query(`SELECT 1 FROM stranger_reports WHERE reported_subject = $1 AND status IN ('open', 'kept') LIMIT 1`, [subject]);
+    return held.rows.length === 0;
+  }
+  async closeExchange(gameId: string, outcome: "closed" | "revealed"): Promise<void> {
+    await this.db.query(
+      `INSERT INTO stranger_exchanges (game_id, outcome, at) VALUES ($1, $2, now()) ON CONFLICT (game_id) DO NOTHING`,
+      [gameId, outcome],
+    );
+  }
+  async exchangeOutcome(gameId: string): Promise<"closed" | "revealed" | null> {
+    const r = await this.db.query(`SELECT outcome FROM stranger_exchanges WHERE game_id = $1`, [gameId]);
+    return (r.rows[0]?.outcome as "closed" | "revealed" | undefined) ?? null;
+  }
+  reportsBy(reporter: string): Promise<StrangerReport[]> {
+    return this.reportsWhere("reporter_subject", reporter);
+  }
 
   private toReport(r: Record<string, unknown>): StrangerReport {
     return {
@@ -370,7 +432,7 @@ export class PgStrangerStore implements StrangerStore {
     );
     return (r.rowCount ?? 0) > 0;
   }
-  private async reportsWhere(col: "game_id" | "reported_subject", v: string): Promise<StrangerReport[]> {
+  private async reportsWhere(col: "game_id" | "reported_subject" | "reporter_subject", v: string): Promise<StrangerReport[]> {
     const r = await this.db.query(
       `SELECT id, game_id, reporter_subject, reported_subject, reason, status, (extract(epoch from created_at) * 1000)::bigint AS at
        FROM stranger_reports WHERE ${col} = $1 ORDER BY created_at`,
@@ -384,11 +446,11 @@ export class PgStrangerStore implements StrangerStore {
   reportsAgainst(subject: string): Promise<StrangerReport[]> {
     return this.reportsWhere("reported_subject", subject);
   }
-  async listReports(limit: number): Promise<StrangerReport[]> {
+  async listReports(limit: number, opts: { statuses?: readonly StrangerReport["status"][]; offset?: number } = {}): Promise<StrangerReport[]> {
     const r = await this.db.query(
       `SELECT id, game_id, reporter_subject, reported_subject, reason, status, (extract(epoch from created_at) * 1000)::bigint AS at
-       FROM stranger_reports ORDER BY created_at DESC LIMIT $1`,
-      [limit],
+       FROM stranger_reports WHERE ($2::text[] IS NULL OR status = ANY($2)) ORDER BY created_at, id LIMIT $1 OFFSET $3`,
+      [limit, opts.statuses ? [...opts.statuses] : null, opts.offset ?? 0],
     );
     return r.rows.map((x) => this.toReport(x));
   }
@@ -402,7 +464,7 @@ export class PgStrangerStore implements StrangerStore {
   }
   async resolveReport(id: string, resolution: "lifted" | "kept" | "dismissed"): Promise<boolean> {
     const r = await this.db.query(
-      `UPDATE stranger_reports SET status = $2 WHERE id = $1 AND status IN ('open', 'counter')`,
+      `UPDATE stranger_reports SET status = $2 WHERE id = $1 AND status IN ('open', 'counter', 'review')`,
       [id, resolution],
     );
     return (r.rowCount ?? 0) > 0;

@@ -30,11 +30,16 @@ describe("stranger handle exchange and reports", () => {
   const clients: TestClient[] = [];
   const savedAdmin = process.env.ADMIN_TOKEN;
 
+  let cfg: ReturnType<typeof strangerConfig>;
   beforeEach(async () => {
     process.env.DISABLE_PORTRAITS = "1";
     process.env.ADMIN_TOKEN = "admin-test-token";
-    const cfg = strangerConfig({ joinWindowMs: 60_000 });
+    cfg = strangerConfig({ joinWindowMs: 60_000 });
     repo = new InMemoryGameRepository();
+    await bootAgain();
+  });
+
+  async function bootAgain() {
     stranger = new StrangerService({
       config: () => cfg,
       passes: new StrangerPasses(),
@@ -53,7 +58,7 @@ describe("stranger handle exchange and reports", () => {
     });
     await new Promise<void>((r) => built.httpServer.listen(0, "127.0.0.1", () => r()));
     origin = `http://127.0.0.1:${(built.httpServer.address() as AddressInfo).port}`;
-  });
+  }
 
   afterEach(async () => {
     for (const c of clients.splice(0)) c.close();
@@ -99,7 +104,7 @@ describe("stranger handle exchange and reports", () => {
     };
     const A = await sit(a, ma);
     const B = await sit(b, mb);
-    return { A, B, a, b, gameId: ma.gameId as string };
+    return { A, B, a, b, ma, mb, gameId: ma.gameId as string };
   }
 
   function toReportCard(gameId: string) {
@@ -148,9 +153,11 @@ describe("stranger handle exchange and reports", () => {
     expect((await answer(A, { answer: "yes" })).error).toBeTruthy();
     expect(await answer(A, { answer: "no" })).toMatchObject({ mine: "no", closed: true });
     expect(await answer(A, { answer: "yes", ack: true })).toMatchObject({ mine: "no", closed: true });
+    const ending = B.waitFor<HandleState>(E.HANDLE_STATE, (st) => st.closed);
     const b = await answer(B, { answer: "yes", ack: true });
-    expect(b.closed).toBe(true);
-    expect(b.matrixId).toBeUndefined();
+    // Never an instant "closed": that would tell B that A said no.
+    expect(b).toEqual({ mine: "yes", closed: false });
+    expect(await ending).toEqual({ mine: "yes", closed: true });
   });
 
   it("re-checks both are still verified adults at the moment of the reveal", async () => {
@@ -158,9 +165,10 @@ describe("stranger handle exchange and reports", () => {
     toReportCard(gameId);
     await answer(A, { answer: "yes", ack: true });
     await adult(ALICE, "minor");
+    const ending = B.waitFor<HandleState>(E.HANDLE_STATE, (st) => st.closed);
     const b = await answer(B, { answer: "yes", ack: true });
-    expect(b.matrixId).toBeUndefined();
-    expect(b.closed).toBe(true);
+    expect(b).toEqual({ mine: "yes", closed: false });
+    expect(await ending).toEqual({ mine: "yes", closed: true });
   });
 
   it("a report closes the exchange, suspends the reported account and blocks the pair", async () => {
@@ -170,9 +178,10 @@ describe("stranger handle exchange and reports", () => {
     expect((await ok).ok).toBe(true);
     toReportCard(gameId);
     await answer(A, { answer: "yes", ack: true });
+    const ending = B.waitFor<HandleState>(E.HANDLE_STATE, (st) => st.closed);
     const st = await answer(B, { answer: "yes", ack: true });
     expect(st.matrixId).toBeUndefined();
-    expect(st.closed).toBe(true);
+    expect((await ending).matrixId).toBeUndefined();
     const bobSubject = await stranger.age.subjectHash(BOB);
     expect(await repo.stranger.isSuspended(bobSubject)).toBe(true);
     expect(await repo.stranger.isBlocked(await stranger.age.subjectHash(ALICE), bobSubject)).toBe(true);
@@ -294,5 +303,161 @@ describe("stranger handle exchange and reports", () => {
     expect((await post(`/admin/stranger/reports/${counter.id}/resolve`, { action: "lift" }, auth)).status).toBe(400);
     expect((await post(`/admin/stranger/reports/${counter.id}/resolve`, { action: "keep" }, auth)).status).toBe(200);
     expect(await repo.stranger.isSuspended(alice)).toBe(true);
+  });
+
+  it("the other seat sees the same neutral ending, after a delay, for a no, a timeout and a report", async () => {
+    const seenBy = async (how: "no" | "timeout" | "report") => {
+      cfg.handleWindowMs = how === "timeout" ? 150 : 600_000;
+      const { A, B, gameId } = await pair();
+      toReportCard(gameId);
+      const seen: Array<{ st: HandleState; at: number }> = [];
+      const t0 = Date.now();
+      B.socket.on(E.HANDLE_STATE, (st: HandleState) => seen.push({ st, at: Date.now() - t0 }));
+      B.emit(E.HANDLE_EXCHANGE, { answer: "yes", ack: true });
+      await wait(20);
+      if (how === "no") A.emit(E.HANDLE_EXCHANGE, { answer: "no" });
+      if (how === "report") A.emit(E.STRANGER_REPORT, { reason: "x" });
+      await wait(400);
+      for (const c of clients.splice(0)) c.close();
+      await built.close();
+      await bootAgain();
+      return seen;
+    };
+    const no = await seenBy("no");
+    const timeout = await seenBy("timeout");
+    const report = await seenBy("report");
+    const states = (xs: Array<{ st: HandleState }>) => xs.map((x) => x.st);
+    expect(states(no)).toEqual([{ mine: "yes", closed: false }, { mine: "yes", closed: true }]);
+    expect(states(timeout)).toEqual(states(no));
+    expect(states(report)).toEqual(states(no));
+    // The ending is never immediate: at least the minimum delay after the cause.
+    expect(no[1].at).toBeGreaterThanOrEqual(20 + 30);
+    expect(report[1].at).toBeGreaterThanOrEqual(20 + 30);
+  });
+
+  it("a lift racing a new report never leaves an open report without its suspension", async () => {
+    const auth = { Authorization: "Bearer admin-test-token" };
+    const bob = await stranger.age.subjectHash(BOB);
+    for (let i = 0; i < 5; i++) {
+      // A fresh reporter each round (a reporter with a lifted report goes to review).
+      const CAROL = `@carol${i}:multiversegames.ai`;
+      await adult(CAROL);
+      const id = `first-${i}`;
+      await repo.stranger.addReport({ id, gameId: `g-${i}`, reporter: `r-${i}`, reported: bob, reason: "a", createdAt: Date.now(), status: "open" });
+      await repo.stranger.suspend(bob, "report");
+      // A second game where Carol (a verified adult) sits opposite Bob.
+      const g2 = `g2-${i}`;
+      await repo.stranger.createRun({ gameId: g2, meetupCode: "tea-party", parent1: await stranger.age.subjectHash(CAROL), parent2: bob });
+      const [, filed] = await Promise.all([
+        post(`/admin/stranger/reports/${id}/resolve`, { action: "lift" }, auth),
+        stranger.report(g2, "parent1", "b", CAROL),
+      ]);
+      expect(filed.ok).toBe(true);
+      const holding = (await repo.stranger.reportsAgainst(bob)).filter((r) => r.status === "open" || r.status === "kept");
+      expect(holding.length).toBeGreaterThan(0);
+      expect(await repo.stranger.isSuspended(bob)).toBe(true);
+      // Clean slate for the next round.
+      for (const r of holding) await repo.stranger.resolveReport(r.id, "lifted");
+      await repo.stranger.lift(bob);
+    }
+  });
+
+  it("the suspension is lifted in one step: never while a holding report exists", async () => {
+    const bob = await stranger.age.subjectHash(BOB);
+    await repo.stranger.suspend(bob, "report");
+    await repo.stranger.addReport({ id: "h", gameId: "g", reporter: "r", reported: bob, reason: "a", createdAt: Date.now(), status: "open" });
+    expect(await repo.stranger.liftIfUnheld(bob)).toBe(false);
+    expect(await repo.stranger.isSuspended(bob)).toBe(true);
+    await repo.stranger.resolveReport("h", "lifted");
+    expect(await repo.stranger.liftIfUnheld(bob)).toBe(true);
+    expect(await repo.stranger.isSuspended(bob)).toBe(false);
+  });
+
+  // ---- Second review ----
+
+  /** A game between `reporterMxid` (parent1) and Bob, as stored, without playing it. */
+  async function runAgainstBob(reporterMxid: string, n: number) {
+    const g = `cap-${n}-${reporterMxid}`;
+    await repo.stranger.createRun({ gameId: g, meetupCode: "tea-party", parent1: await stranger.age.subjectHash(reporterMxid), parent2: await stranger.age.subjectHash(`@target${n}:multiversegames.ai`) });
+    return g;
+  }
+
+  it("one reporter can't suspend partner after partner: past the cap, reports go to review", async () => {
+    const MALLORY = "@mallory:multiversegames.ai";
+    await adult(MALLORY);
+    const statuses: string[] = [];
+    for (let n = 0; n < 5; n++) {
+      const g = await runAgainstBob(MALLORY, n);
+      statuses.push((await stranger.report(g, "parent1", "x", MALLORY)).status ?? "");
+    }
+    expect(statuses).toEqual(["open", "open", "open", "review", "review"]);
+    expect(await repo.stranger.isSuspended(await stranger.age.subjectHash("@target3:multiversegames.ai"))).toBe(false);
+  });
+
+  it("a reporter whose report was found unfounded (lifted) files to review only", async () => {
+    const MALLORY = "@mallory:multiversegames.ai";
+    await adult(MALLORY);
+    const g0 = await runAgainstBob(MALLORY, 0);
+    await stranger.report(g0, "parent1", "x", MALLORY);
+    const [first] = await repo.stranger.reportsBy(await stranger.age.subjectHash(MALLORY));
+    const auth = { Authorization: "Bearer admin-test-token" };
+    expect((await post(`/admin/stranger/reports/${first.id}/resolve`, { action: "lift" }, auth)).body.suspensionLifted).toBe(true);
+    const g1 = await runAgainstBob(MALLORY, 1);
+    expect((await stranger.report(g1, "parent1", "y", MALLORY)).status).toBe("review");
+  });
+
+  it("the admin list shows unresolved reports oldest first, and filters", async () => {
+    const auth = { Authorization: "Bearer admin-test-token" };
+    for (let i = 0; i < 3; i++) {
+      await repo.stranger.addReport({ id: `r${i}`, gameId: `g${i}`, reporter: `a${i}`, reported: `b${i}`, reason: "x", createdAt: 1000 + i, status: i === 1 ? "lifted" : "open" });
+    }
+    const get = async (q: string) => ((await (await fetch(`${origin}/api/admin/stranger/reports${q}`, { headers: auth })).json()) as { reports: Array<{ id: string }> }).reports.map((r) => r.id);
+    expect(await get("")).toEqual(["r0", "r2"]);
+    expect(await get("?status=lifted")).toEqual(["r1"]);
+    // No body at all: a 400, not a crash.
+    const res = await fetch(`${origin}/api/admin/stranger/reports/r0/resolve`, { method: "POST", headers: auth });
+    expect(res.status).toBe(400);
+  });
+
+  it("a reveal is resent to a seat that reconnects (it was missed while away)", async () => {
+    const { A, B, a, ma, gameId } = await pair();
+    toReportCard(gameId);
+    await answer(A, { answer: "yes", ack: true });
+    A.close();
+    await wait(50);
+    expect((await answer(B, { answer: "yes", ack: true })).matrixId).toBe(ALICE);
+    const again = await client();
+    const j = again.once(E.JOINED);
+    again.emit(E.JOIN_GAME, { gameId, playerToken: ma.playerToken, strangerPass: a });
+    await j;
+    expect((await answer(again, { answer: "status" })).matrixId).toBe(BOB);
+  });
+
+  it("a no survives a restart: two later yeses reveal nothing", async () => {
+    const { A, gameId, ma, mb } = await pair();
+    toReportCard(gameId);
+    expect(await answer(A, { answer: "no" })).toEqual({ mine: "no", closed: true });
+    await wait(50);
+    for (const c of clients.splice(0)) c.close();
+    await built.close();
+    await bootAgain();
+    const sitAgain = async (mxid: string, token: unknown) => {
+      const pass = stranger.passes.issue(mxid, "tea-party");
+      const c = await client();
+      const j = c.once(E.JOINED);
+      c.emit(E.JOIN_GAME, { gameId, playerToken: token, strangerPass: pass });
+      await j;
+      return c;
+    };
+    const A2 = await sitAgain(ALICE, ma.playerToken);
+    const B2 = await sitAgain(BOB, mb.playerToken);
+    toReportCard(gameId);
+    const seen: unknown[] = [];
+    A2.socket.on(E.HANDLE_STATE, (st) => seen.push(st));
+    B2.socket.on(E.HANDLE_STATE, (st) => seen.push(st));
+    A2.emit(E.HANDLE_EXCHANGE, { answer: "yes", ack: true });
+    B2.emit(E.HANDLE_EXCHANGE, { answer: "yes", ack: true });
+    await wait(200);
+    expect(JSON.stringify(seen)).not.toMatch(/@alice|@bob/);
   });
 });

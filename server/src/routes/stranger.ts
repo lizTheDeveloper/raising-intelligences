@@ -5,6 +5,7 @@ import { verifyWebhookSignature } from "../payments/stripe.js";
 import { CONSENT_VERSION, type VerificationSession } from "../stranger/identity.js";
 import type { StrangerService } from "../stranger/service.js";
 import { requireAdmin } from "./admin.js";
+import { UNRESOLVED_STATUSES } from "../stranger/store.js";
 
 export const IDENTITY_WEBHOOK_PATH = "/api/stripe/identity-webhook";
 
@@ -171,13 +172,18 @@ export function createStrangerAdminRoutes(stranger: StrangerService): Router {
     res.setHeader("Cache-Control", "no-store");
     next();
   });
-  router.get("/admin/stranger/reports", async (_req: Request, res: Response) => {
-    const reports = await stranger.store.listReports(200);
-    res.json({ reports });
+  // Unresolved first (oldest first), so spam can't push a report off the page.
+  // ?status=open,counter,review,lifted,kept,dismissed  ?offset=N
+  router.get("/admin/stranger/reports", async (req: Request, res: Response) => {
+    const known = ["open", "counter", "review", "lifted", "kept", "dismissed"] as const;
+    const asked = typeof req.query.status === "string" ? req.query.status.split(",").filter((x): x is (typeof known)[number] => (known as readonly string[]).includes(x)) : [];
+    const offset = Math.max(0, Number.parseInt(String(req.query.offset ?? "0"), 10) || 0);
+    const reports = await stranger.store.listReports(200, { statuses: asked.length ? asked : UNRESOLVED_STATUSES, offset });
+    res.json({ reports, offset, next: reports.length === 200 ? offset + 200 : null });
   });
   router.post("/admin/stranger/reports/:id/resolve", async (req: Request, res: Response) => {
     // The pair block stays whatever the decision: these two are never matched again.
-    const out = await stranger.resolveReport(String(req.params.id), (req.body as { action?: unknown }).action);
+    const out = await stranger.resolveReport(String(req.params.id), (req.body as { action?: unknown } | undefined)?.action);
     res.status(out.status).json(out.body);
   });
   return router;

@@ -572,6 +572,12 @@ export function useMultiplayer() {
 
     socket.on(E.JOINED, (d: { gameId: string; slot: Slot; playerToken?: string; campus?: string }) => {
       if (d.campus === "unknown") campusIdentityUnknown();
+      if (gameIdRef.current !== d.gameId) {
+        // A different game: nothing from the last one's exchange carries over.
+        setHandleState(null);
+        setStrangerReported(false);
+        setStrangerNoShow(false);
+      }
       setGameId(d.gameId);
       gameIdRef.current = d.gameId;
       setSlot(d.slot);
@@ -770,6 +776,9 @@ export function useMultiplayer() {
   /** Stranger mode, after the report card: share Matrix handles? */
   const answerHandle = useCallback((answer: "yes" | "no", ack: boolean) => {
     socketRef.current?.emit(E.HANDLE_EXCHANGE, { answer, ...(ack ? { ack: true } : {}) });
+  }, []);
+  const handleStatus = useCallback(() => {
+    socketRef.current?.emit(E.HANDLE_EXCHANGE, { answer: "status" });
   }, []);
   const reportStranger = useCallback((reason: string) => {
     socketRef.current?.emit(E.STRANGER_REPORT, { reason });
@@ -1030,6 +1039,7 @@ export function useMultiplayer() {
     strangerNoShow,
     handleState,
     answerHandle,
+    handleStatus,
     strangerReported,
     reportStranger,
     clearError,

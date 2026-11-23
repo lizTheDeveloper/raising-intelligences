@@ -1,4 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+/**
+ * The one ending for every way the exchange doesn't happen — they said no,
+ * never answered, a check refused it, a report. Nobody is told which.
+ */
+export const EXCHANGE_ENDING = "this one ends here. thanks for raising them together.";
 
 export interface HandleState {
   mine: "yes" | "no" | null;
@@ -13,8 +19,10 @@ export interface HandleState {
  * touch? Nothing is shared unless both say yes, having read the notice. No
  * "match" screen, no profile: one Matrix handle each way, or nothing.
  */
-export function HandleExchange({ state, onAnswer }: { state: HandleState | null; onAnswer: (answer: "yes" | "no", ack: boolean) => void }) {
+export function HandleExchange({ state, onAnswer, onStatus }: { state: HandleState | null; onAnswer: (answer: "yes" | "no", ack: boolean) => void; onStatus: () => void }) {
   const [read, setRead] = useState(false);
+  // Where this seat stands (a reload, or a reveal missed while away).
+  useEffect(() => onStatus(), [onStatus]);
 
   if (state?.matrixId) {
     return (
@@ -33,14 +41,14 @@ export function HandleExchange({ state, onAnswer }: { state: HandleState | null;
   if (state?.closed) {
     return (
       <div className="lobby stranger-mode handle-exchange" role="status">
-        <p className="dim">{state.mine === "yes" ? "no handles were shared. that's the end of this one. thank you for raising a child together." : "nothing was shared. thank you for raising a child together."}</p>
+        <p className="dim">{EXCHANGE_ENDING}</p>
       </div>
     );
   }
   if (state?.mine === "yes") {
     return (
       <div className="lobby stranger-mode handle-exchange" role="status" aria-live="polite">
-        <p className="dim">you said yes. if your co-parent says yes too, you'll each see the other's Matrix handle here. if they don't, nothing is shared, and they won't know you said yes.</p>
+        <p className="dim">you said yes. if your co-parent says yes too, you'll each see the other's Matrix handle here. if not, nothing is shared, and they won't know you said yes. this can take a while.</p>
       </div>
     );
   }
