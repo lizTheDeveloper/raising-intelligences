@@ -357,4 +357,43 @@ describe("stranger matching", () => {
     A.c.emit(E.READY, { ready: true });
     await gone;
   });
+
+  it("a join that is mid-save when the window lapses still counts as arrived (no false no-show, no stray seat)", async () => {
+    cfg = strangerConfig({ joinWindowMs: 1500 });
+    const a = await adult(ALICE);
+    const b = await adult(BOB);
+    await queue(a);
+    await queue(b);
+    const ma = (await poll(a)).body;
+    const mb = (await poll(b)).body;
+    const A = await sit(a, ma);
+    let noShow = false;
+    A.c.socket.on(E.STRANGER_NO_SHOW, () => { noShow = true; });
+    const save = repo.savePlayer.bind(repo);
+    repo.savePlayer = (async (...args: Parameters<typeof repo.savePlayer>) => {
+      if (args[1] === "parent2") await wait(1800);
+      return save(...args);
+    }) as typeof repo.savePlayer;
+    const B = await sit(b, mb);
+    expect(B.joined.slot).toBe("parent2");
+    await wait(100);
+    expect(noShow).toBe(false);
+    const players = built.sessions.get(ma.gameId as string)!.players;
+    expect(players.map((p) => p.slot).sort()).toEqual(["parent1", "parent2"]);
+    expect(players.find((p) => p.slot === "parent2")!.token).toBe(mb.playerToken);
+  });
+
+  it("eligibility that changes while the game is being made: no match, the other keeps waiting", async () => {
+    const a = await adult(ALICE);
+    const b = await adult(BOB);
+    await queue(a);
+    const saveGame = repo.saveGame.bind(repo);
+    repo.saveGame = (async (...args: Parameters<typeof repo.saveGame>) => {
+      await adult(ALICE, "minor");
+      return saveGame(...args);
+    }) as typeof repo.saveGame;
+    await queue(b);
+    repo.saveGame = saveGame;
+    expect((await poll(b)).body).toMatchObject({ status: "waiting", count: 1 });
+  });
 });

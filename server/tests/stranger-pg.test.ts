@@ -99,4 +99,18 @@ describe.skipIf(!process.env.DATABASE_URL)("stranger store on Postgres", () => {
     await store.closeExchange(g, "revealed");
     expect(await store.exchangeOutcome(g)).toBe("closed");
   });
+
+  it("concurrent reports from one reporter: the cap holds inside the database", async () => {
+    const reporter = `m-${randomUUID()}`;
+    const rows = Array.from({ length: 40 }, (_, n) => ({
+      id: randomUUID(), gameId: randomUUID(), reporter, reported: `t-${n}-${randomUUID()}`, reason: "x", createdAt: Date.now(), status: "open" as const,
+    }));
+    const statuses = await Promise.all(rows.map((r) => store.fileReport(r, { cap: 3, capSince: Date.now() - 86_400_000, unfoundedSince: Date.now() - 86_400_000 })));
+    expect(statuses.filter((x) => x === "open")).toHaveLength(3);
+    let suspended = 0;
+    for (const r of rows) if (await store.isSuspended(r.reported)) suspended++;
+    expect(suspended).toBe(3);
+    // A duplicate (same game, same reporter) files nothing.
+    expect(await store.fileReport({ ...rows[0], id: randomUUID() }, { cap: 3, capSince: 0, unfoundedSince: 0 })).toBeNull();
+  });
 });

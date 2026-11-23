@@ -837,7 +837,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     // event that would generate for it waits on paidOrFree. With the paywall
     // off this passes straight through, synchronously, as before.
     // A stranger seat stays bound to a verified adult for the whole game: a
-    // later minor result, ban or suspension ends it at their next action.
+    // later minor result or ban ends it at their next action.
     let strangerSeat: { gameId: string; mxid: string; subject: string } | null = null;
     socket.use((packet, next) => {
       const seat = strangerSeat;
@@ -845,9 +845,10 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       // putting a reported player out right there would tell them they were
       // reported (and by whom). They just see the neutral ending.
       if (!seat || seat.gameId !== data.gameId || !stranger || !GENERATING_EVENTS.has(String(packet[0]))) return next();
-      Promise.all([stranger.age.adultForPool(seat.mxid), stranger.store.isSuspended(seat.subject)]).then(
-        ([pool, suspended]) => {
-          if (pool.ok && !suspended && !stranger.off()) return next();
+      // Minors and bans are put out. A suspension is not (see seatHolderOk).
+      stranger.age.adultForPool(seat.mxid).then(
+        (pool) => {
+          if (pool.ok && !stranger.off()) return next();
           logger.warn("stranger_seat_closed", { gameId: seat.gameId });
           socket.emit(E.ERROR, { error: STRANGER_PRIVATE });
           socket.disconnect(true);
@@ -1065,12 +1066,18 @@ export function registerSocketHandlers(deps: SocketDeps): void {
             const seat: Player = { slot, connectionId: "", displayName: matching.reservedName(gameId, slot), ready: false, connected: false, token };
             session = { ...session, players: [...session.players.filter((p) => p.slot !== slot), seat] };
             sessions.set(gameId, session);
+            // Arrived NOW, in the same turn as taking the seat: the join window
+            // must not lapse this seat while the save below is in flight.
+            matching.markArrived(gameId, slot);
             await repo.savePlayer(gameId, slot, seat.displayName, token);
             session = sessions.get(gameId) ?? session;
           } else if (!matching.isPending(gameId) && session.players.length < 2) {
             // Restarted mid-window: the other reservation died with the process.
             strandedNoShow = true;
           }
+          // Whatever happened during the awaits, a stranger join only ever
+          // continues as a reconnect to its own seat — never to "new player".
+          if (!getPlayerByToken(session, token)) return fail(STRANGER_PRIVATE);
           strangerSeat = { gameId, mxid: holder, subject: seats[slot] };
           stranger.noteSeatHolder(gameId, slot, holder);
           matching.markArrived(gameId, slot);
