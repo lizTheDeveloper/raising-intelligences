@@ -497,8 +497,10 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     );
   }
 
-  // ---- The $20 per-child step: partner has joined, nothing generated yet ----
-  if (preGame && state?.payment?.status === "due") {
+  // ---- The $20 per-child step: the partner has joined (at the opening, or
+  // mid-story in a game played solo until now) and nothing more is generated
+  // until the host pays. ----
+  if (state?.payment?.status === "due") {
     const hostName = mp.players.find((p) => p.slot === "parent1")?.displayName?.trim() || "your partner";
     return (
       <div className="app fade-in">

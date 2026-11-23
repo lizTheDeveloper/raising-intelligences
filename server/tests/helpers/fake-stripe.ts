@@ -10,6 +10,7 @@ import type { PaymentConfig } from "../../src/payments/config.js";
 export class FakeCheckout implements CheckoutApi {
   sessions = new Map<string, CheckoutSession>();
   private byKey = new Map<string, string>();
+  private paramsByKey = new Map<string, string>();
   refunds: Array<{ id: string; paymentIntent: string; key: string; reason: string }> = [];
   private refundByKey = new Map<string, Refund>();
   createCalls = 0;
@@ -20,7 +21,14 @@ export class FakeCheckout implements CheckoutApi {
   async createCheckoutSession(params: StripeParams, idempotencyKey: string): Promise<CheckoutSession> {
     this.createCalls++;
     const existing = this.byKey.get(idempotencyKey);
-    if (existing) return { ...this.sessions.get(existing)! };
+    if (existing) {
+      // Real Stripe: a reused key with different parameters is an error.
+      if (this.paramsByKey.get(idempotencyKey) !== JSON.stringify(params)) {
+        throw new StripeError("Keys for idempotent requests can only be used with the same parameters they were first used with.", 400, "idempotency_error");
+      }
+      return { ...this.sessions.get(existing)! };
+    }
+    this.paramsByKey.set(idempotencyKey, JSON.stringify(params));
     const id = `cs_test_fake${String(++this.n).padStart(12, "0")}`;
     const session: CheckoutSession = {
       id,

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { PartnerPayments } from "../src/payments/partner-payments.js";
 import { InMemoryPartnerPaymentStore } from "../src/payments/store.js";
 import { keyMode, paywallState, readPaymentConfig, type PaymentConfig } from "../src/payments/config.js";
-import { signWebhookPayload, verifyWebhookSignature } from "../src/payments/stripe.js";
+import { createStripeRest, signWebhookPayload, verifyWebhookSignature, StripeError } from "../src/payments/stripe.js";
 import { FakeCheckout, WEBHOOK_SECRET, checkoutCompletedEvent, paywallConfig } from "./helpers/fake-stripe.js";
 
 const GAME = "11111111-2222-4333-8444-555555555555";
@@ -29,6 +29,15 @@ describe("Stripe webhook signatures", () => {
     const t = Math.floor(Date.now() / 1000);
     const good = signWebhookPayload(body, "whsec_x", t).split("v1=")[1];
     expect(verifyWebhookSignature(body, `t=${t},v1=${"0".repeat(64)},v1=${good}`, "whsec_x")).toBe(true);
+  });
+});
+
+describe("Stripe REST errors", () => {
+  it("surfaces an idempotency mismatch (which Stripe sends as a type, not a code)", async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify({ error: { type: "idempotency_error", message: "Keys for idempotent requests…" } }), { status: 400 })) as typeof fetch;
+    const err = await createStripeRest("sk_test_x", fetchImpl).request("POST", "/v1/checkout/sessions", {}, "k").catch((e) => e);
+    expect(err).toBeInstanceOf(StripeError);
+    expect(err.code).toBe("idempotency_error");
   });
 });
 
@@ -175,12 +184,55 @@ describe("PartnerPayments", () => {
     await payments.checkoutUrl(GAME);
     const id = [...stripe.sessions.keys()][0];
     const paid = stripe.pay(id);
-    expect(await payments.applySession({ ...paid, id: "cs_test_someoneelse0000" }, "webhook")).toBe("ignored");
+    expect(await payments.applySession({ ...paid, livemode: true }, "webhook")).toBe("ignored");
     expect(await payments.applySession({ ...paid, amount_total: 100 }, "webhook")).toBe("ignored");
     expect(await payments.applySession({ ...paid, currency: "eur" }, "webhook")).toBe("ignored");
     expect(await payments.applySession({ ...paid, payment_status: "unpaid" }, "webhook")).toBe("ignored");
     expect(await payments.applySession({ ...paid, metadata: { game: "precursors" } }, "webhook")).toBe("ignored");
     expect((await store.get(GAME))?.status).toBe("due");
+  });
+
+  it("a crash between Stripe's reply and our insert neither locks checkout nor loses a payment", async () => {
+    await dueChild();
+    const realAdd = store.addSession.bind(store);
+    let failOnce = true;
+    store.addSession = async (row) => {
+      if (failOnce) { failOnce = false; throw new Error("db blip"); }
+      return realAdd(row);
+    };
+    await expect(payments.checkoutUrl(GAME)).rejects.toThrow("db blip");
+    const orphan = [...stripe.sessions.keys()][0];
+    // A later click (a second later: new expiry, so new parameters) still works.
+    stripe.now = () => Date.now() + 1000;
+    const p2 = new PartnerPayments({ store, config: () => cfg, checkout: stripe, now: () => Date.now() + 1000 });
+    p2.onPaid((g) => paidCalls.push(g));
+    const r = await p2.checkoutUrl(GAME);
+    expect("url" in r).toBe(true);
+    // And if the host had paid the orphan, it settles the child.
+    expect(await p2.applySession(stripe.pay(orphan), "webhook")).toBe("paid");
+    expect((await store.get(GAME))?.status).toBe("paid");
+    expect(paidCalls).toEqual([GAME]);
+  });
+
+  it("still opens the child if bookkeeping after the paid write fails", async () => {
+    await dueChild();
+    await payments.checkoutUrl(GAME);
+    const paid = stripe.pay([...stripe.sessions.keys()][0]);
+    const realUpdate = store.updateSession.bind(store);
+    store.updateSession = async () => { throw new Error("db blip"); };
+    await payments.applySession(paid, "webhook").catch(() => {});
+    store.updateSession = realUpdate;
+    expect((await store.get(GAME))?.status).toBe("paid");
+    expect(paidCalls).toEqual([GAME]);
+  });
+
+  it("never reuses a test-mode session once the key is live", async () => {
+    await dueChild();
+    await payments.checkoutUrl(GAME);
+    cfg = paywallConfig({ secretKey: "sk_live_x", livePaymentsAllowed: true });
+    const before = stripe.sessions.size;
+    await payments.checkoutUrl(GAME);
+    expect(stripe.sessions.size).toBe(before + 1);
   });
 
   it("webhook: rejects a bad signature without touching anything", async () => {

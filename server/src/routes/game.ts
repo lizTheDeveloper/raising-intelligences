@@ -73,6 +73,8 @@ interface GameRouteOptions {
   /** True when this is a two-human child whose host hasn't paid the $20 yet
    * (app.ts). Such a child gets no scene, no kid turn and no seed over REST. */
   partnerGate?: (gameId: string) => Promise<boolean>;
+  /** The seat this player token holds in a game, and whether the game has seats at all. */
+  seatOf?: (gameId: string, token: unknown) => Promise<{ seated: boolean; slot: string | null }>;
 }
 
 export function createGameRoutes(
@@ -82,7 +84,7 @@ export function createGameRoutes(
   repo: GameRepository,
   options: GameRouteOptions = {}
 ): Router {
-  const { llmRateLimit, gameCreateLimit, gameLocks = new Map<string, Promise<void>>(), llm, hasSeat = () => false, partnerGate = async () => false } = options;
+  const { llmRateLimit, gameCreateLimit, gameLocks = new Map<string, Promise<void>>(), llm, hasSeat = () => false, partnerGate = async () => false, seatOf = async () => ({ seated: false, slot: null }) } = options;
   const PARTNER_UNPAID = "This child's partner play isn't paid for yet.";
   const router = Router();
 
@@ -1020,12 +1022,25 @@ export function createGameRoutes(
       return;
     }
 
-    const { ocean, confessional1, confessional2, slot } = req.body as {
+    const { ocean, confessional1, confessional2, slot, playerToken } = req.body as {
       ocean: unknown;
       confessional1?: string;
       confessional2?: string;
       slot?: string;
+      playerToken?: unknown;
     };
+
+    // A seated (multiplayer) game: an answer comes from the seat that holds
+    // this player token, for that seat only. No answering for a seat nobody
+    // has taken, or for the other parent. Seatless solo games are unchanged.
+    const seat = await seatOf(gameId, playerToken);
+    if (seat.seated) {
+      const wanted = slot === "parent2" ? "parent2" : "parent1";
+      if (!seat.slot || seat.slot !== wanted) {
+        res.status(403).json({ error: "Answer from your own seat." });
+        return;
+      }
+    }
 
     // Validate ocean: must be an array of 5 integers each 1-4
     if (

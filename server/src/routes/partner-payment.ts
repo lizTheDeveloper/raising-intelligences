@@ -14,7 +14,7 @@ export const STRIPE_WEBHOOK_PATH = "/api/stripe/webhook";
 
 const SESSION_ID_RE = /^cs_(test|live)_[A-Za-z0-9]{10,200}$/;
 
-function safeEqual(a: string, b: string): boolean {
+export function safeEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a);
   const bb = Buffer.from(b);
   return ab.length === bb.length && timingSafeEqual(ab, bb);

@@ -161,15 +161,30 @@ export class PartnerPayments {
 
     const now = this.now();
     const sessions = await this.store.listSessions(gameId);
-    const reusable = sessions.find((s) => s.status === "open" && s.expiresAt - now > REUSE_MIN_REMAINING_MS);
+    // Only a session made with the current key's mode: after a switch from
+    // test to live keys, a stored test session must never be handed out.
+    const modePrefix = keyMode(this.config().secretKey) === "live" ? "cs_live_" : "cs_test_";
+    const reusable = sessions.find(
+      (s) => s.status === "open" && s.sessionId.startsWith(modePrefix) && s.expiresAt - now > REUSE_MIN_REMAINING_MS,
+    );
     if (reusable) return { url: reusable.url };
 
     // Keyed on how many sessions this child has had, so a retried request
     // after a crash between Stripe's reply and our insert gets the SAME
     // session back from Stripe instead of a second one.
     let attempt = sessions.length + 1;
-    for (let tries = 0; tries < 2; tries++, attempt++) {
-      const created = await api.createCheckoutSession(this.sessionParams(gameId, now), `ri-checkout-${gameId}-${attempt}`);
+    for (let tries = 0; tries < 3; tries++, attempt++) {
+      let created: CheckoutSession;
+      try {
+        created = await api.createCheckoutSession(this.sessionParams(gameId, now), `ri-checkout-${gameId}-${attempt}`);
+      } catch (err) {
+        // The key was used before with other parameters (a crash after Stripe
+        // made a session but before we recorded it, then a retry with a new
+        // expiry). That orphan is still settled if paid — applySession adopts
+        // any session carrying our metadata — so move on to the next key.
+        if (err instanceof StripeError && err.code === "idempotency_error") continue;
+        throw err;
+      }
       const expiresAt = created.expires_at * 1000;
       const usable = created.status === "open" && !!created.url && expiresAt - now > REUSE_MIN_REMAINING_MS;
       await this.store.addSession({
@@ -233,21 +248,46 @@ export class PartnerPayments {
       logger.error("partner_payment_amount_mismatch", { gameId, sessionId: session.id, amount: session.amount_total, currency: session.currency });
       return "ignored";
     }
-    const known = (await this.store.listSessions(gameId)).find((s) => s.sessionId === session.id);
-    if (!known) {
-      // Not a session this service created for this child (the studio's other
-      // checkout services share the Stripe account). Never settle a child on it.
-      logger.error("partner_payment_unknown_session", { gameId, sessionId: session.id, source });
+    // The session must be in the mode of the key we charge with: a test-mode
+    // payment never settles a child while live keys are in use, or vice versa.
+    if (session.livemode !== (keyMode(this.config().secretKey) === "live")) {
+      logger.error("partner_payment_mode_mismatch", { gameId, sessionId: session.id, livemode: session.livemode });
       return "ignored";
+    }
+    // Only Stripe tells us about a session here (a signed webhook, or a
+    // retrieve by id), and only this service sets ri_purpose/ri_game_id on a
+    // session, so one we have no row for is still ours: a session created
+    // just before a crash. Adopt it rather than keep the host's money and
+    // leave the child due.
+    let known = (await this.store.listSessions(gameId)).find((s) => s.sessionId === session.id);
+    if (!known) {
+      logger.warn("partner_payment_adopted_session", { gameId, sessionId: session.id, source });
+      known = {
+        sessionId: session.id,
+        gameId,
+        url: "",
+        expiresAt: (session.expires_at ?? 0) * 1000,
+        status: "open",
+        paymentIntentId: session.payment_intent ?? null,
+        refundId: null,
+        createdAt: this.now(),
+      };
+      await this.store.addSession(known);
     }
 
     const pi = session.payment_intent ?? null;
     const { transitioned, row } = await this.store.markPaid(gameId, session.id, pi, session.livemode);
     if (transitioned) {
-      await this.store.updateSession(session.id, { status: "paid", paymentIntentId: pi ?? undefined });
       this.cache.set(gameId, row);
       logger.info("partner_payment_paid", { gameId, source, livemode: session.livemode });
-      await this.expireOtherSessions(gameId, session.id);
+      // Bookkeeping only: the child is paid either way, and the opening must
+      // not wait on it (a failure here used to skip the listeners for good).
+      try {
+        await this.store.updateSession(session.id, { status: "paid", paymentIntentId: pi ?? undefined });
+        await this.expireOtherSessions(gameId, session.id);
+      } catch (err) {
+        logger.error("partner_payment_bookkeeping_failed", { gameId, error: err instanceof Error ? err.message : String(err) });
+      }
       for (const listener of this.paidListeners) {
         try {
           listener(gameId);

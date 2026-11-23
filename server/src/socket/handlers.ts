@@ -509,10 +509,46 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     }
   }
 
-  /** Both parent seats are held by people. (The AI co-parent is never charged for.) */
-  function twoHumanSeats(gameId: string): boolean {
-    return (sessions.get(gameId)?.players.length ?? 0) >= 2;
+  /**
+   * How many parent seats people hold, from the server's own records: the
+   * live session and the saved seat rows, whichever knows more (a restart
+   * empties the first). Never from anything the client says the game is —
+   * `relationshipType` is client-chosen and plays no part in billing. (The AI
+   * co-parent holds no seat row and is never charged for.)
+   */
+  async function humanSeats(gameId: string): Promise<number> {
+    const live = sessions.get(gameId)?.players.length ?? 0;
+    if (live >= 2) return live;
+    try {
+      return Math.max(live, (await repo.loadPlayers(gameId)).length);
+    } catch {
+      return live;
+    }
   }
+
+  /**
+   * The partner-payment check for one step that would generate something for
+   * the child. Free (true) with the paywall off, or with fewer than two people
+   * seated. With two people seated, the child is marked due (once — markDue
+   * is insert-if-absent) and nothing proceeds until the host has paid. On a
+   * refusal both seats are sent their payment step.
+   */
+  async function paidOrFree(gameId: string): Promise<boolean> {
+    if (!payments?.active()) return true;
+    const two = (await humanSeats(gameId)) >= 2;
+    const allowed = await payments.openingAllowed(gameId, two);
+    if (!allowed) broadcastState(gameId);
+    return allowed;
+  }
+
+  /**
+   * Socket events that make the server generate something for the child.
+   * Once the child exists (it has a seed), each one re-checks the payment.
+   */
+  const GENERATING_EVENTS = new Set<string>([
+    E.READY, E.PARENT_MESSAGE, E.THERAPY_MESSAGE, E.START_SIDEBAR, E.END_SIDEBAR,
+    E.END_CHAT, E.START_EPILOGUE, E.ADULT_CHAT, E.REPORT_CARD,
+  ]);
 
   /**
    * The opening: once every parent's answers are in, generate the personality
@@ -532,19 +568,24 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
     const parent1 = updatedState.parentPersonalities.parent1;
     const parent2 = updatedState.parentPersonalities.parent2;
-    const allPersonalitiesReady = isSolo ? !!parent1 : !!(parent1 && parent2);
+    // With the paywall on, two people seated means two answers, whatever the
+    // label: the partner has "joined" (and the host is charged) only once
+    // both have answered, exactly as in an invite game.
+    const twoSeated = !!payments?.active() && (await humanSeats(gameId)) >= 2;
+    const soloOpening = isSolo && !twoSeated;
+    const allPersonalitiesReady = soloOpening ? !!parent1 : !!(parent1 && parent2);
 
     if (!allPersonalitiesReady || !parent1) {
       await repo.saveGame(updatedState);
       return;
     }
 
-    const opening = updatedState.phase === "event_intro" && updatedState.currentEventNumber === 0;
-    if (payments && opening && !updatedState.personalitySeed) {
-      const allowed = await payments.openingAllowed(gameId, !isSolo && twoHumanSeats(gameId));
-      if (!allowed) {
+    // Seats, not `isSolo`: a game the client labelled solo that a second
+    // person has sat down in is a two-human child.
+    if (payments?.active()) {
+      games.set(gameId, updatedState);
+      if (!(await paidOrFree(gameId))) {
         await repo.saveGame(updatedState);
-        broadcastState(gameId);
         return;
       }
     }
@@ -554,7 +595,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       conversationEngine.llm,
       updatedState.childName,
       parent1,
-      isSolo ? undefined : parent2
+      soloOpening ? undefined : parent2
     );
     const withSeed: GameState = { ...updatedState, personalitySeed: seed };
     games.set(gameId, withSeed);
@@ -756,6 +797,26 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
   io.on("connection", (socket: Socket) => {
     const data = socket.data as SocketData;
+
+    // The partner payment, on every later step: once a child exists, an
+    // event that would generate for it waits on paidOrFree. With the paywall
+    // off this passes straight through, synchronously, as before.
+    socket.use((packet, next) => {
+      const gameId = data.gameId;
+      if (!payments?.active() || !gameId || !GENERATING_EVENTS.has(String(packet[0]))) return next();
+      const state = games.get(gameId);
+      // No seed yet: nothing these events do generates (READY waits on the
+      // seed); the opening's own gate in runOpening covers the seed itself.
+      if (!state?.personalitySeed) return next();
+      paidOrFree(gameId).then(
+        (ok) => { if (ok) next(); },
+        (err) => {
+          // Fail closed for a two-human child: say so, generate nothing.
+          logger.error("partner_gate_check_failed", { gameId, error: err instanceof Error ? err.message : String(err) });
+          socket.emit(E.ERROR, { error: "couldn't check this child's payment. try again." });
+        },
+      );
+    });
 
     function fail(message: string): void {
       socket.emit(E.ERROR, { error: message });
@@ -1048,6 +1109,9 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         E.STATE,
         view(state, added.player.slot, generatingGames.has(gameId))
       );
+      // A second person sitting down in a child that already exists (a game
+      // played solo until now) is the partner joining: the child is due now.
+      if (games.get(gameId)?.personalitySeed) await paidOrFree(gameId);
     });
 
     // ---- REQUEST_HANDOFF ----
@@ -1900,6 +1964,8 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         if (firstSceneStarted.has(gameId)) return;
         if (state.personalitySeed) {
           // The seed survived a failed scene 1: build the scene, keep the child.
+          // Still nothing for an unpaid two-human child.
+          if (!(await paidOrFree(gameId))) return;
           stage = "scene";
           await startFirstScene(gameId, state);
           return;

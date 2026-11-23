@@ -40,10 +40,11 @@ export function createStripeRest(secretKey: string, fetchImpl: typeof fetch = fe
         body: method === "POST" ? body.toString() : undefined,
         signal: AbortSignal.timeout(20_000),
       });
-      const json = (await res.json().catch(() => ({}))) as { error?: { message?: string; code?: string } };
+      const json = (await res.json().catch(() => ({}))) as { error?: { message?: string; code?: string; type?: string } };
       if (!res.ok) {
         // Never include the request body: it can carry return URLs with game ids.
-        throw new StripeError(json.error?.message ?? `Stripe ${res.status}`, res.status, json.error?.code);
+        // `type` carries idempotency_error (which has no `code`).
+        throw new StripeError(json.error?.message ?? `Stripe ${res.status}`, res.status, json.error?.code ?? json.error?.type);
       }
       return json as T;
     },
