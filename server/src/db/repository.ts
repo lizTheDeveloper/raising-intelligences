@@ -16,6 +16,7 @@ import type { MomentLabel } from "../research/moment-label.js";
 import { ESCALATION_DARK_CONCERN } from "../safety/escalation.js";
 import { InMemoryChildSafetyStore, PgChildSafetyStore, type ChildSafetyStore } from "../safety/child-safety/store.js";
 import { InMemoryPartnerPaymentStore, PgPartnerPaymentStore, type PartnerPaymentStore } from "../payments/store.js";
+import { InMemoryStrangerStore, PgStrangerStore, type StrangerStore } from "../stranger/store.js";
 import {
   isWithheld,
   preserveModerationFlag,
@@ -84,6 +85,7 @@ export interface GameRepository {
    * record that outlives the game).
    */
   readonly partnerPayments: PartnerPaymentStore;
+  readonly stranger: StrangerStore;
   /** Upsert the top-level game checkpoint (phase, counters, identity doc). */
   saveGame(state: GameState): Promise<void>;
   saveMessage(gameId: string, message: Message): Promise<void>;
@@ -377,9 +379,11 @@ function reconstructState(input: {
 export class PgGameRepository implements GameRepository {
   readonly childSafety: ChildSafetyStore;
   readonly partnerPayments: PartnerPaymentStore;
+  readonly stranger: StrangerStore;
   constructor(private db: Pick<pg.Pool, "query"> & Partial<Pick<pg.Pool, "connect">> = pool) {
     this.childSafety = new PgChildSafetyStore(db);
     this.partnerPayments = new PgPartnerPaymentStore(db);
+    this.stranger = new PgStrangerStore(db);
   }
 
   async saveGame(state: GameState): Promise<void> {
@@ -1235,6 +1239,7 @@ export class PgGameRepository implements GameRepository {
 export class InMemoryGameRepository implements GameRepository {
   readonly childSafety = new InMemoryChildSafetyStore();
   readonly partnerPayments: PartnerPaymentStore = new InMemoryPartnerPaymentStore();
+  readonly stranger: StrangerStore = new InMemoryStrangerStore();
   private games = new Map<
     string,
     {

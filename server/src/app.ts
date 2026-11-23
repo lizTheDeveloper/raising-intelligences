@@ -15,6 +15,8 @@ import { createResearchRoutes } from "./routes/research.js";
 import { createSupportRoutes } from "./routes/support.js";
 import { createCampusRoutes } from "./routes/campus.js";
 import { createChildSafetyAdminRoutes, createChildSafetyIngestRoutes, INGEST_PATH } from "./routes/child-safety.js";
+import { createStrangerRoutes, createIdentityWebhookRoute, IDENTITY_WEBHOOK_PATH } from "./routes/stranger.js";
+import { StrangerService } from "./stranger/service.js";
 import { createPartnerPaymentRoutes, createStripeWebhookRoute, STRIPE_WEBHOOK_PATH, safeEqual, createRequirePaid } from "./routes/partner-payment.js";
 import { PartnerPayments } from "./payments/partner-payments.js";
 import type { AdminQueries } from "./db/admin-queries.js";
@@ -60,6 +62,8 @@ export interface BuildServerOptions {
   /** The $20 per-child partner payment. Tests inject one with a fake Stripe;
    * production builds it from the environment over `repo.partnerPayments`. */
   payments?: PartnerPayments;
+  /** Stranger mode (Tier 4). Defaults to the env-configured service (off unless RI_STRANGER_MODE says otherwise). */
+  stranger?: StrangerService;
 }
 
 /**
@@ -78,6 +82,7 @@ export interface BuiltServer {
   endgameEngine: EndgameEngine;
   repo: GameRepository;
   payments: PartnerPayments;
+  stranger: StrangerService;
   close: () => Promise<void>;
 }
 
@@ -103,6 +108,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     adminQueries,
   } = options;
   const payments = options.payments ?? new PartnerPayments({ store: repo.partnerPayments });
+  const stranger = options.stranger ?? StrangerService.fromEnv(repo.stranger, repo.childSafety);
 
   const app = express();
   app.set("trust proxy", 1);
@@ -154,7 +160,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   const jsonParser = express.json();
   // Stripe's webhook signature is over the raw bytes, so that route parses
   // its own body too (routes/partner-payment.ts).
-  app.use((req, res, next) => (req.path === INGEST_PATH || req.path === STRIPE_WEBHOOK_PATH ? next() : jsonParser(req, res, next)));
+  app.use((req, res, next) => (req.path === INGEST_PATH || req.path === STRIPE_WEBHOOK_PATH || req.path === IDENTITY_WEBHOOK_PATH ? next() : jsonParser(req, res, next)));
 
   // Security headers — defense-in-depth against common browser-based attacks.
   // (No X-Frame-Options: framing is governed by CSP frame-ancestors above.)
@@ -271,6 +277,8 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   // Partner payment + Stripe webhook: before the admin routers, whose
   // router-level requireAdmin answers every /api path that reaches them.
   app.use("/api", createStripeWebhookRoute(payments));
+  app.use("/api", createIdentityWebhookRoute(stranger));
+  app.use("/api", createStrangerRoutes(stranger, rateLimit({ windowMs: 60_000, max: 30, standardHeaders: true, legacyHeaders: false })));
   app.use("/api", createPartnerPaymentRoutes({ payments, repo, sessions, gameLocks, limit: paymentLimit }));
   // Child safety: evidence ingestion (own token) must be mounted before the
   // admin router, whose router-level requireAdmin answers every /api path
@@ -376,6 +384,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     endgameEngine,
     repo,
     payments,
+    stranger,
     close,
   };
 }
