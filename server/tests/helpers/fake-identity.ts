@@ -84,6 +84,9 @@ export function strangerConfig(overrides: Partial<StrangerConfig> = {}): Strange
     publicBaseUrl: "http://localhost:5173",
     joinWindowMs: 180_000,
     queueIdleMs: 90_000,
+    handleWindowMs: 600_000,
+    handleEndingMinMs: 30,
+    handleEndingMaxMs: 60,
     takeoverGraceMs: 90_000,
     ...overrides,
   };

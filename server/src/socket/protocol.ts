@@ -221,6 +221,17 @@ export const SOCKET_EVENTS = {
   /** Stranger mode: your match didn't arrive in time (server → the one who came). */
   STRANGER_NO_SHOW: "stranger_no_show",
   /**
+   * Stranger mode, after the report card: client → server
+   * `{ answer: "yes" | "no", ack?: true }` (ack = the safety notice was read;
+   * required for yes). Answers are final. Server → that seat: HANDLE_STATE.
+   */
+  HANDLE_EXCHANGE: "handle_exchange",
+  /** `{ mine, closed, matrixId?, error? }` — matrixId is the OTHER player's, sent only on a mutual yes, only to each seat. */
+  HANDLE_STATE: "handle_state",
+  /** Stranger mode, any time: client → server `{ reason }`. Suspends the reported player, blocks the pair, closes the exchange. */
+  STRANGER_REPORT: "stranger_report",
+  STRANGER_REPORTED: "stranger_reported",
+  /**
    * "I want to continue this on another device." Mints a short-lived,
    * single-use code bound to the requesting socket's {gameId, slot}, answered
    * with HANDOFF_CODE to that socket alone.

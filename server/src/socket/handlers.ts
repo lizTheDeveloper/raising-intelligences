@@ -305,6 +305,9 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
   // ---- Stranger mode: matching creates games here, where games and seats live ----
   const STRANGER_PRIVATE = "This game is private.";
+  if (stranger) {
+    stranger.onHandleState = (gameId, slot, st) => io.to(slotRoom(gameId, slot)).emit(E.HANDLE_STATE, st);
+  }
   stranger?.attachMatching({
     createGame: async (host, partner) => {
       const state = createGame(host.childName, STRANGER_RELATIONSHIP);
@@ -838,6 +841,9 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     let strangerSeat: { gameId: string; mxid: string; subject: string } | null = null;
     socket.use((packet, next) => {
       const seat = strangerSeat;
+      // Not HANDLE_EXCHANGE: the reveal re-checks both seats itself, and
+      // putting a reported player out right there would tell them they were
+      // reported (and by whom). They just see the neutral ending.
       if (!seat || seat.gameId !== data.gameId || !stranger || !GENERATING_EVENTS.has(String(packet[0]))) return next();
       Promise.all([stranger.age.adultForPool(seat.mxid), stranger.store.isSuspended(seat.subject)]).then(
         ([pool, suspended]) => {
@@ -1066,6 +1072,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
             strandedNoShow = true;
           }
           strangerSeat = { gameId, mxid: holder, subject: seats[slot] };
+          stranger.noteSeatHolder(gameId, slot, holder);
           matching.markArrived(gameId, slot);
           if (strandedNoShow) {
             const me = getPlayerByToken(session, token);
@@ -1903,6 +1910,43 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         broadcastState(gameId);
       } catch (err) {
         failWithError(err, "ADULT_CHAT");
+      }
+    });
+
+    // ---- Stranger mode: the handle exchange and reports ----
+    socket.on(E.HANDLE_EXCHANGE, async (payload: { answer?: unknown; ack?: unknown } | undefined) => {
+      const gameId = data.gameId;
+      const slot = data.slot;
+      const refuse = (error: string) => socket.emit(E.HANDLE_STATE, { mine: null, closed: true, error });
+      try {
+        if (!gameId || (slot !== "parent1" && slot !== "parent2") || !stranger?.matching) return refuse("Not available in this game.");
+        if (!(await stranger.matching.runFor(gameId))) return refuse("Not available in this game.");
+        const state = games.get(gameId);
+        if (state?.phase !== "report_card") return refuse("This comes after the report card.");
+        if ((sessions.get(gameId)?.players.length ?? 0) < 2) return refuse("Not available in this game.");
+        const out = await stranger.answerHandle(gameId, slot, payload?.answer, payload?.ack);
+        socket.emit(E.HANDLE_STATE, out.self);
+        if (out.self.matrixId) io.to(slotRoom(gameId, slot)).except(socket.id).emit(E.HANDLE_STATE, out.self);
+        const other = slot === "parent1" ? "parent2" : "parent1";
+        if (out.other) io.to(slotRoom(gameId, other)).emit(E.HANDLE_STATE, out.other);
+      } catch (err) {
+        logger.error("handle_exchange_failed", { gameId, error: err instanceof Error ? err.message : String(err) });
+        refuse("Something went wrong. Nothing was shared.");
+      }
+    });
+
+    socket.on(E.STRANGER_REPORT, async (payload: { reason?: unknown } | undefined) => {
+      const gameId = data.gameId;
+      const slot = data.slot;
+      try {
+        if (!gameId || (slot !== "parent1" && slot !== "parent2") || !stranger?.matching) return fail("Reports are for stranger games.");
+        // Free text, read by a person: control characters and angle brackets go.
+        const reason = typeof payload?.reason === "string" ? payload.reason.replace(/[\u0000-\u001f\u007f<>]/g, " ").trim().slice(0, 1000) : "";
+        const reporter = strangerSeat && strangerSeat.gameId === gameId ? strangerSeat.mxid : null;
+        if (!(await stranger.report(gameId, slot, reason || "(no reason given)", reporter)).ok) return fail("Reports are for stranger games.");
+        socket.emit(E.STRANGER_REPORTED, { ok: true });
+      } catch (err) {
+        failWithError(err, "stranger_report");
       }
     });
 

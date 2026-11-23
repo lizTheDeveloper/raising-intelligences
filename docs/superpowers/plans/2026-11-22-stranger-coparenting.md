@@ -157,6 +157,24 @@ partner has really joined; everything off by default.
 
 ## Phase 4 — Queue, matchmaker, join window, AI co-parent
 
+> **As built (2.7.0, #207; review fixes in the same PR).** The queue and join
+> window shipped. These differ from the plan below:
+> - **Matching is FIFO, with no LLM matchmaker.** There is no pre-match intake
+>   to match on, at meetup scale the queue is a handful of people, and no
+>   parenting answers go to a model for pairing.
+> - **Seats are reserved, not ticketed.** A match reserves a seat token per
+>   slot, held by the matching. The token enters the game only when that
+>   seat's verified adult joins with their live stranger pass.
+> - **The AI co-parent is not built**, and neither are the takeover and the
+>   unverified fork. Each needs its own safety design. After a no-show, the
+>   player who came can requeue at their original place or play solo for free.
+> - **Additions:**
+>   - REST writes are refused for stranger games;
+>   - a discarded match is persisted and never reopens;
+>   - a restart turns a half-arrived match into a no-show;
+>   - idle queue entries expire;
+>   - a seated stranger is re-checked on every generating action.
+
 **Server**
 - `server/src/stranger/queue.ts`: in-memory queue keyed by subject, one entry
   per subject, scoped by meetup code; live count broadcast; matchmaker runs on
@@ -203,6 +221,16 @@ partner has really joined; everything off by default.
 - [ ] Is the host still the payer after a no-show conversion or a requeue?
 
 ## Phase 5 — Handle exchange, report and block
+
+> **As built (2.8.0, #208).** Built as planned, minus the AI cases, plus these
+> fixes from the security review:
+> - A report closes the exchange synchronously, and the reveal re-checks after
+>   its last await.
+> - A report back from a reported seat is a counter-report: reviewed, never an
+>   automatic suspension.
+> - Each seat can file one report per game, persisted.
+> - An admin lift clears a suspension only when no other open or upheld report
+>   holds it. A report that has been decided can't be decided again.
 
 **Server**
 - `HANDLE_EXCHANGE` socket event (yes / no + disclosure ack), allowed only after

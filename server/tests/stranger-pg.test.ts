@@ -66,4 +66,37 @@ describe.skipIf(!process.env.DATABASE_URL)("stranger store on Postgres", () => {
     await store.lift(a);
     expect(await store.isSuspended(a)).toBe(false);
   });
+
+  it("reports: one per seat per game, resolved once, found by game and by subject", async () => {
+    const g = randomUUID();
+    const row = { id: randomUUID(), gameId: g, reporter: "r1", reported: "x1", reason: "why", createdAt: Date.now(), status: "open" as const };
+    expect(await store.addReport(row)).toBe(true);
+    expect(await store.addReport({ ...row, id: randomUUID() })).toBe(false);
+    expect(await store.gameReported(g)).toBe(true);
+    expect((await store.reportsForGame(g)).map((r) => r.id)).toEqual([row.id]);
+    expect((await store.reportsAgainst("x1")).some((r) => r.id === row.id)).toBe(true);
+    expect(await store.resolveReport(row.id, "lifted")).toBe(true);
+    expect(await store.resolveReport(row.id, "kept")).toBe(false);
+    expect((await store.getReport(row.id))?.status).toBe("lifted");
+  });
+
+  it("lift in one step, listing filter, reports by reporter, exchange outcome", async () => {
+    const x = `x-${randomUUID()}`;
+    await store.suspend(x, "report");
+    const id = randomUUID();
+    await store.addReport({ id, gameId: randomUUID(), reporter: `r-${randomUUID()}`, reported: x, reason: "a", createdAt: Date.now(), status: "open" });
+    expect(await store.liftIfUnheld(x)).toBe(false);
+    expect(await store.isSuspended(x)).toBe(true);
+    await store.resolveReport(id, "lifted");
+    expect(await store.liftIfUnheld(x)).toBe(true);
+    expect(await store.isSuspended(x)).toBe(false);
+    const listed = await store.listReports(500, { statuses: ["lifted"] });
+    expect(listed.some((r) => r.id === id)).toBe(true);
+    expect((await store.listReports(500, { statuses: ["open"] })).some((r) => r.id === id)).toBe(false);
+    const g = randomUUID();
+    expect(await store.exchangeOutcome(g)).toBeNull();
+    await store.closeExchange(g, "closed");
+    await store.closeExchange(g, "revealed");
+    expect(await store.exchangeOutcome(g)).toBe("closed");
+  });
 });

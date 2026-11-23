@@ -16,7 +16,7 @@ import { createResearchRoutes } from "./routes/research.js";
 import { createSupportRoutes } from "./routes/support.js";
 import { createCampusRoutes } from "./routes/campus.js";
 import { createChildSafetyAdminRoutes, createChildSafetyIngestRoutes, INGEST_PATH } from "./routes/child-safety.js";
-import { createStrangerRoutes, createIdentityWebhookRoute, IDENTITY_WEBHOOK_PATH } from "./routes/stranger.js";
+import { createStrangerRoutes, createStrangerAdminRoutes, createIdentityWebhookRoute, IDENTITY_WEBHOOK_PATH } from "./routes/stranger.js";
 import { StrangerService } from "./stranger/service.js";
 import { createPartnerPaymentRoutes, createStripeWebhookRoute, STRIPE_WEBHOOK_PATH, safeEqual, createRequirePaid } from "./routes/partner-payment.js";
 import { PartnerPayments } from "./payments/partner-payments.js";
@@ -301,6 +301,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   // that reaches it. The review queue is admin-only on its own.
   app.use("/api", createChildSafetyIngestRoutes(repo));
   app.use("/api", createChildSafetyAdminRoutes(repo));
+  app.use("/api", createStrangerAdminRoutes(stranger));
   if (adminQueries) {
     app.use("/api", createAdminRoutes(adminQueries, repo));
   }
