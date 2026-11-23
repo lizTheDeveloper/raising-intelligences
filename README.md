@@ -79,6 +79,15 @@ Solo play is free. Raising a child with a second human costs the host **$20 per 
 - **Routes**: `POST /api/partner-payment/checkout` (host token), `POST /api/partner-payment/confirm` (after the Stripe redirect), `POST /api/stripe/webhook` (signed), `POST /api/admin/games/:id/refund` (admin token).
 - **Off by default.** With `RI_PARTNER_PAYWALL` unset, partner play is exactly the old free flow.
 
+## Stranger mode
+
+Raise a child with an adult you haven't met (spec: `docs/superpowers/specs/2026-07-31-coparent-matchmaking-design.md`, plan: `docs/superpowers/plans/2026-11-22-stranger-coparenting.md`). Code: `server/src/stranger/`, `server/src/routes/stranger.ts`, `client/src/components/StrangerMode.tsx`.
+
+- **Off by default.** `RI_STRANGER_MODE=off` (or unset, or any unknown value) makes every `/api/stranger/*` route answer 404, and the client never shows the entry.
+- **Meetup mode**: `RI_STRANGER_MODE=meetup` + `RI_MEETUP_CODES=code1,code2`. The entry shows only on `…/raising-intelligences/?meetup=code1`. Removing a code from the list shuts out passes already issued for it.
+- **The hard line**: no minor reaches the stranger pool. Every player signs in with Matrix (verified server-side through Synapse OpenID userinfo), agrees to the ID-check consent, and passes Stripe Identity (document + live selfie, 18+ computed from the document's date of birth). Only the outcome is stored, the Identity session is redacted, a minor result is final for that account, and a test-mode check never admits anyone in production. Free solo play and the AI co-parent stay open to everyone.
+- Env: `RI_STRANGER_MODE`, `RI_MEETUP_CODES`, `RI_STRIPE_IDENTITY_KEY`, `RI_STRIPE_IDENTITY_WEBHOOK_SECRET`, `RI_STRANGER_PEPPER`, `RI_IDENTITY_REDACT`.
+
 ## Architecture
 
 ### Tech

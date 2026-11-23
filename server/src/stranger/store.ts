@@ -1,0 +1,158 @@
+import type { Pool } from "pg";
+
+/**
+ * Stranger-mode records. Every account appears only as `subject`: an HMAC of
+ * its Matrix id (identity.ts subjectHash), never the id itself. There is no
+ * date of birth anywhere in here, by design — an age check stores its
+ * outcome (adult / minor) and nothing it was computed from.
+ */
+
+export type AgeOutcome = "adult" | "minor";
+
+export interface AgeVerificationRow {
+  subject: string;
+  outcome: AgeOutcome;
+  /** Was the check made with a live Identity key? A test-mode check never admits anyone in production. */
+  livemode: boolean;
+  verifiedAt: number;
+  sessionId: string;
+}
+
+export interface VerificationSessionRow {
+  sessionId: string;
+  subject: string;
+  createdAt: number;
+}
+
+export interface ConsentRow {
+  subject: string;
+  version: string;
+  at: number;
+}
+
+export interface StrangerStore {
+  recordConsent(row: ConsentRow): Promise<void>;
+  getConsent(subject: string): Promise<ConsentRow | null>;
+  addVerificationSession(row: VerificationSessionRow): Promise<void>;
+  getVerificationSession(sessionId: string): Promise<VerificationSessionRow | null>;
+  latestVerificationSession(subject: string): Promise<VerificationSessionRow | null>;
+  countVerificationSessionsSince(subject: string, sinceMs: number): Promise<number>;
+  getVerification(subject: string): Promise<AgeVerificationRow | null>;
+  /** Write an outcome. A stored "minor" is final: it is never replaced. */
+  setVerification(row: AgeVerificationRow): Promise<AgeVerificationRow>;
+}
+
+export class InMemoryStrangerStore implements StrangerStore {
+  consents = new Map<string, ConsentRow>();
+  sessions = new Map<string, VerificationSessionRow>();
+  verifications = new Map<string, AgeVerificationRow>();
+
+  async recordConsent(row: ConsentRow): Promise<void> {
+    this.consents.set(row.subject, { ...row });
+  }
+  async getConsent(subject: string): Promise<ConsentRow | null> {
+    return this.consents.get(subject) ?? null;
+  }
+  async addVerificationSession(row: VerificationSessionRow): Promise<void> {
+    this.sessions.set(row.sessionId, { ...row });
+  }
+  async getVerificationSession(sessionId: string): Promise<VerificationSessionRow | null> {
+    return this.sessions.get(sessionId) ?? null;
+  }
+  async latestVerificationSession(subject: string): Promise<VerificationSessionRow | null> {
+    let best: VerificationSessionRow | null = null;
+    for (const s of this.sessions.values()) {
+      if (s.subject === subject && (!best || s.createdAt >= best.createdAt)) best = s;
+    }
+    return best;
+  }
+  async countVerificationSessionsSince(subject: string, sinceMs: number): Promise<number> {
+    let n = 0;
+    for (const s of this.sessions.values()) if (s.subject === subject && s.createdAt >= sinceMs) n++;
+    return n;
+  }
+  async getVerification(subject: string): Promise<AgeVerificationRow | null> {
+    const v = this.verifications.get(subject);
+    return v ? { ...v } : null;
+  }
+  async setVerification(row: AgeVerificationRow): Promise<AgeVerificationRow> {
+    const existing = this.verifications.get(row.subject);
+    if (existing?.outcome === "minor") return { ...existing };
+    this.verifications.set(row.subject, { ...row });
+    return { ...row };
+  }
+}
+
+export class PgStrangerStore implements StrangerStore {
+  constructor(private readonly db: Pick<Pool, "query">) {}
+
+  async recordConsent(row: ConsentRow): Promise<void> {
+    await this.db.query(
+      `INSERT INTO stranger_consents (subject, version, consented_at) VALUES ($1, $2, to_timestamp($3 / 1000.0))
+       ON CONFLICT (subject) DO UPDATE SET version = EXCLUDED.version, consented_at = EXCLUDED.consented_at`,
+      [row.subject, row.version, row.at],
+    );
+  }
+  async getConsent(subject: string): Promise<ConsentRow | null> {
+    const r = await this.db.query(
+      `SELECT subject, version, (extract(epoch from consented_at) * 1000)::bigint AS at FROM stranger_consents WHERE subject = $1`,
+      [subject],
+    );
+    return r.rows[0] ? { subject: r.rows[0].subject, version: r.rows[0].version, at: Number(r.rows[0].at) } : null;
+  }
+  async addVerificationSession(row: VerificationSessionRow): Promise<void> {
+    await this.db.query(
+      `INSERT INTO stranger_verification_sessions (session_id, subject, created_at) VALUES ($1, $2, to_timestamp($3 / 1000.0))
+       ON CONFLICT (session_id) DO NOTHING`,
+      [row.sessionId, row.subject, row.createdAt],
+    );
+  }
+  private toSession(r: { session_id: string; subject: string; at: string | number }): VerificationSessionRow {
+    return { sessionId: r.session_id, subject: r.subject, createdAt: Number(r.at) };
+  }
+  async getVerificationSession(sessionId: string): Promise<VerificationSessionRow | null> {
+    const r = await this.db.query(
+      `SELECT session_id, subject, (extract(epoch from created_at) * 1000)::bigint AS at FROM stranger_verification_sessions WHERE session_id = $1`,
+      [sessionId],
+    );
+    return r.rows[0] ? this.toSession(r.rows[0]) : null;
+  }
+  async latestVerificationSession(subject: string): Promise<VerificationSessionRow | null> {
+    const r = await this.db.query(
+      `SELECT session_id, subject, (extract(epoch from created_at) * 1000)::bigint AS at FROM stranger_verification_sessions
+       WHERE subject = $1 ORDER BY created_at DESC LIMIT 1`,
+      [subject],
+    );
+    return r.rows[0] ? this.toSession(r.rows[0]) : null;
+  }
+  async countVerificationSessionsSince(subject: string, sinceMs: number): Promise<number> {
+    const r = await this.db.query(
+      `SELECT count(*)::int AS n FROM stranger_verification_sessions WHERE subject = $1 AND created_at >= to_timestamp($2 / 1000.0)`,
+      [subject, sinceMs],
+    );
+    return r.rows[0]?.n ?? 0;
+  }
+  private toVerification(r: { subject: string; outcome: AgeOutcome; livemode: boolean; at: string | number; session_id: string }): AgeVerificationRow {
+    return { subject: r.subject, outcome: r.outcome, livemode: r.livemode, verifiedAt: Number(r.at), sessionId: r.session_id };
+  }
+  async getVerification(subject: string): Promise<AgeVerificationRow | null> {
+    const r = await this.db.query(
+      `SELECT subject, outcome, livemode, (extract(epoch from verified_at) * 1000)::bigint AS at, session_id
+       FROM stranger_age_verifications WHERE subject = $1`,
+      [subject],
+    );
+    return r.rows[0] ? this.toVerification(r.rows[0]) : null;
+  }
+  async setVerification(row: AgeVerificationRow): Promise<AgeVerificationRow> {
+    // A stored minor outcome is final: the WHERE leaves it untouched.
+    await this.db.query(
+      `INSERT INTO stranger_age_verifications (subject, outcome, livemode, verified_at, session_id)
+       VALUES ($1, $2, $3, to_timestamp($4 / 1000.0), $5)
+       ON CONFLICT (subject) DO UPDATE SET outcome = EXCLUDED.outcome, livemode = EXCLUDED.livemode,
+         verified_at = EXCLUDED.verified_at, session_id = EXCLUDED.session_id
+       WHERE stranger_age_verifications.outcome <> 'minor'`,
+      [row.subject, row.outcome, row.livemode, row.verifiedAt, row.sessionId],
+    );
+    return (await this.getVerification(row.subject))!;
+  }
+}

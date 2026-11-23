@@ -106,7 +106,7 @@ async function main() {
       ? "/raising-intelligences/socket.io"
       : "/socket.io";
 
-  const { httpServer, close } = buildServer({
+  const { httpServer, close, stranger } = buildServer({
     llm,
     repo,
     adminQueries,
@@ -126,6 +126,7 @@ async function main() {
         }
       : undefined,
   });
+  stranger.logState();
 
   const PORT = process.env.PORT || 3000;
   httpServer.listen(PORT, () => {

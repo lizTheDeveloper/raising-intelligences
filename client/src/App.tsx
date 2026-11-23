@@ -7,6 +7,7 @@ import { getSavedKids } from "./hooks/useGame";
 import { track } from "./analytics";
 import { useMatrixAuth } from "./hooks/useMatrixAuth";
 import { Credits } from "./components/Credits";
+import { StrangerMode } from "./components/StrangerMode";
 
 const TAGLINES = [
   // funny
@@ -172,7 +173,7 @@ const TAGLINES = [
 
 const TAGLINE = TAGLINES[Math.floor(Math.random() * TAGLINES.length)];
 
-type Mode = "choose" | "solo" | "multiplayer";
+type Mode = "choose" | "solo" | "multiplayer" | "stranger";
 type Theme = "" | "theme-ocean-grunge" | "theme-cyber";
 
 const THEMES: { id: Theme; label: string }[] = [
@@ -190,7 +191,26 @@ export function App() {
   const params = new URLSearchParams(window.location.search);
   const joinGameId = params.get("game") ?? undefined;
   const isSoloResume = joinGameId && params.get("mode") === "solo";
-  const [mode, setMode] = useState<Mode>(isSoloResume ? "solo" : joinGameId ? "multiplayer" : "choose");
+  // Stranger mode is invisible unless the server says otherwise for this link
+  // (RI_STRANGER_MODE, and in meetup mode a listed ?meetup= code). Coming
+  // back from the Stripe ID check (?stranger=identity) reopens it.
+  const meetup = params.get("meetup");
+  const backFromIdCheck = params.get("stranger") === "identity";
+  const [mode, setMode] = useState<Mode>(
+    isSoloResume ? "solo" : joinGameId ? "multiplayer" : backFromIdCheck ? "stranger" : "choose",
+  );
+  const [stranger, setStranger] = useState<{ consentVersion: string } | null>(null);
+  useEffect(() => {
+    let live = true;
+    const q = meetup ? `?meetup=${encodeURIComponent(meetup)}` : "";
+    fetch(`${import.meta.env.BASE_URL}api/stranger/status${q}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b: { visible?: boolean; consentVersion?: string } | null) => {
+        if (live && b?.visible && b.consentVersion) setStranger({ consentVersion: b.consentVersion });
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [meetup]);
   const [theme, setTheme] = useState<Theme>("theme-ocean-grunge");
   const auth = useMatrixAuth();
   const titleSeenRef = useRef(false);
@@ -233,6 +253,19 @@ export function App() {
   }, [mode]);
 
   if (mode === "solo") return <SoloGame />;
+  if (mode === "stranger") {
+    if (!stranger) {
+      return (
+        <div className="app"><div className="lobby" role="status"><p className="dim">one moment…</p>
+          <button className="btn btn-secondary" onClick={() => setMode("choose")}>back</button></div></div>
+      );
+    }
+    return (
+      <div className="app fade-in">
+        <StrangerMode meetup={meetup} consentVersion={stranger.consentVersion} onBack={() => setMode("choose")} />
+      </div>
+    );
+  }
   if (mode === "multiplayer") return <MultiplayerGame joinGameId={joinGameId} matrixDisplayName={auth.user?.displayName ?? auth.user?.userId} />;
 
   return (
@@ -258,6 +291,11 @@ export function App() {
           <button className="btn btn-secondary" onClick={() => { track("mode_selected", { mode: "solo" }); setMode("solo"); }}>
             play solo
           </button>
+          {stranger && (
+            <button className="btn btn-secondary" data-testid="btn-stranger-mode" onClick={() => { track("mode_selected", { mode: "stranger" }); setMode("stranger"); }}>
+              raise a child with someone new
+            </button>
+          )}
         </div>
         <div className="theme-picker">
           {THEMES.map((t) => (
