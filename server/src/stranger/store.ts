@@ -71,6 +71,17 @@ export interface StrangerStore {
   liftIfUnheld(subject: string): Promise<boolean>;
   /** False when this reporter already has a report on this game (one per seat per game). */
   addReport(row: StrangerReport): Promise<boolean>;
+  /**
+   * File a report, deciding its status, blocking the pair and (for `open`)
+   * suspending the reported account — all as ONE atomic step, so parallel
+   * reports can't each see room under the cap. `row.status` is the
+   * requested status ("open", or "counter" when the reporter failed a
+   * re-check); it becomes "counter" if the reporter was already reported in
+   * this game or is suspended, else "review" if the reporter is at the cap
+   * or has an unfounded (lifted) report since `unfoundedSince`. Returns the
+   * filed status, or null if this reporter already reported this game.
+   */
+  fileReport(row: StrangerReport, rules: { cap: number; capSince: number; unfoundedSince: number }): Promise<StrangerReport["status"] | null>;
   /** Oldest first. `statuses` filters; default every status. */
   listReports(limit: number, opts?: { statuses?: readonly StrangerReport["status"][]; offset?: number }): Promise<StrangerReport[]>;
   reportsBy(reporter: string): Promise<StrangerReport[]>;
@@ -204,6 +215,21 @@ export class InMemoryStrangerStore implements StrangerStore {
   async reportsForGame(gameId: string): Promise<StrangerReport[]> {
     return [...this.reports.values()].filter((r) => r.gameId === gameId).map((r) => ({ ...r }));
   }
+  async fileReport(row: StrangerReport, rules: { cap: number; capSince: number; unfoundedSince: number }): Promise<StrangerReport["status"] | null> {
+    // No await from here to the end: atomic in one event-loop turn.
+    const all = [...this.reports.values()];
+    if (all.some((r) => r.gameId === row.gameId && r.reporter === row.reporter)) return null;
+    const wasReported = all.some((r) => r.gameId === row.gameId && r.reported === row.reporter && HOLDING_STATUSES.has(r.status));
+    const mine = all.filter((r) => r.reporter === row.reporter);
+    const atCap = mine.filter((r) => r.createdAt >= rules.capSince && (r.status === "open" || r.status === "kept" || r.status === "lifted")).length >= rules.cap;
+    const unfounded = mine.some((r) => r.status === "lifted" && r.createdAt >= rules.unfoundedSince);
+    const status: StrangerReport["status"] =
+      row.status === "counter" || wasReported || this.suspended.has(row.reporter) ? "counter" : atCap || unfounded ? "review" : "open";
+    this.reports.set(row.id, { ...row, status });
+    this.blocks.add(pairKey(row.reporter, row.reported));
+    if (status === "open") this.suspended.set(row.reported, "report");
+    return status;
+  }
   async reportsAgainst(subject: string): Promise<StrangerReport[]> {
     return [...this.reports.values()].filter((r) => r.reported === subject).map((r) => ({ ...r }));
   }
@@ -252,7 +278,7 @@ export class InMemoryStrangerStore implements StrangerStore {
 }
 
 export class PgStrangerStore implements StrangerStore {
-  constructor(private readonly db: Pick<Pool, "query">) {}
+  constructor(private readonly db: Pick<Pool, "query"> & Partial<Pick<Pool, "connect">>) {}
 
   async recordConsent(row: ConsentRow): Promise<void> {
     await this.db.query(
@@ -415,6 +441,57 @@ export class PgStrangerStore implements StrangerStore {
   }
   reportsBy(reporter: string): Promise<StrangerReport[]> {
     return this.reportsWhere("reporter_subject", reporter);
+  }
+
+  async fileReport(row: StrangerReport, rules: { cap: number; capSince: number; unfoundedSince: number }): Promise<StrangerReport["status"] | null> {
+    if (!this.db.connect) throw new Error("fileReport needs a pool that can open a transaction");
+    const client = await this.db.connect();
+    try {
+      await client.query("BEGIN");
+      // Serialise every report touching this game or either account. Locks
+      // are taken in sorted order, so two reports can never deadlock.
+      const keys = [`g:${row.gameId}`, `s:${row.reporter}`, `s:${row.reported}`].sort();
+      for (const k of keys) await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [k]);
+      // Each statement below takes a fresh snapshot, after the locks: it sees
+      // every report committed by whoever held them before us.
+      const r = await client.query(
+        `INSERT INTO stranger_reports (id, game_id, reporter_subject, reported_subject, reason, created_at, status)
+         SELECT $1, $2, $3, $4, $5, to_timestamp($6 / 1000.0),
+           CASE
+             WHEN $7 = 'counter'
+               OR EXISTS (SELECT 1 FROM stranger_reports WHERE game_id = $2 AND reported_subject = $3 AND status IN ('open', 'kept'))
+               OR EXISTS (SELECT 1 FROM stranger_suspensions WHERE subject = $3)
+               THEN 'counter'
+             WHEN (SELECT count(*) FROM stranger_reports WHERE reporter_subject = $3 AND created_at >= to_timestamp($8 / 1000.0)
+                     AND status IN ('open', 'kept', 'lifted')) >= $9
+               OR EXISTS (SELECT 1 FROM stranger_reports WHERE reporter_subject = $3 AND status = 'lifted' AND created_at >= to_timestamp($10 / 1000.0))
+               THEN 'review'
+             ELSE 'open'
+           END
+         ON CONFLICT (game_id, reporter_subject) DO NOTHING
+         RETURNING status`,
+        [row.id, row.gameId, row.reporter, row.reported, row.reason, row.createdAt, row.status, rules.capSince, rules.cap, rules.unfoundedSince],
+      );
+      const status = (r.rows[0]?.status as StrangerReport["status"] | undefined) ?? null;
+      if (status) {
+        const [lo, hi] = row.reporter < row.reported ? [row.reporter, row.reported] : [row.reported, row.reporter];
+        await client.query(`INSERT INTO stranger_blocks (subject_a, subject_b, created_at) VALUES ($1, $2, now()) ON CONFLICT DO NOTHING`, [lo, hi]);
+        if (status === "open") {
+          await client.query(
+            `INSERT INTO stranger_suspensions (subject, reason, created_at) VALUES ($1, 'report', now())
+             ON CONFLICT (subject) DO UPDATE SET reason = EXCLUDED.reason`,
+            [row.reported],
+          );
+        }
+      }
+      await client.query("COMMIT");
+      return status;
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   private toReport(r: Record<string, unknown>): StrangerReport {

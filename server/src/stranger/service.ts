@@ -3,7 +3,7 @@ import type { ChildSafetyStore } from "../safety/child-safety/store.js";
 import { readStrangerConfig, strangerVisible, normalizeMeetupCode, pepperProblem, MIN_PEPPER_BYTES, type StrangerConfig } from "./config.js";
 import { AgeVerification, type CheckOutcome, type PoolRefusal } from "./identity.js";
 import { StrangerPasses, verifyOpenIdToken } from "./matrix-identity.js";
-import { HOLDING_STATUSES, UNRESOLVED_STATUSES, type StrangerReport, type StrangerStore } from "./store.js";
+import { UNRESOLVED_STATUSES, type StrangerStore } from "./store.js";
 import { randomUUID } from "node:crypto";
 
 export interface HandleState { mine: "yes" | "no" | null; closed: boolean; matrixId?: string; error?: string }
@@ -17,8 +17,10 @@ interface Exchange {
   reportFiled: boolean;
   /** The stored outcome has been read (once per process). */
   loaded: boolean;
-  /** Seats already given (or scheduled) the neutral ending. */
-  ended: Set<StrangerSlot>;
+  /** Seats whose neutral ending is on its way (timer set): they still see "waiting". */
+  endingScheduled: Set<StrangerSlot>;
+  /** Seats that have been given the neutral ending: only now does status say so. */
+  endingDelivered: Set<StrangerSlot>;
   window: ReturnType<typeof setTimeout> | null;
   answering: Promise<unknown>;
   reporting: Promise<unknown>;
@@ -80,7 +82,10 @@ export class StrangerService {
     if (!p || p === "hidden") return null;
     if ((await this.age.subjectHash(p.subject)) !== seats[slot]) return null;
     if (!(await this.age.adultForPool(p.subject)).ok) return null;
-    if (await this.store.isSuspended(seats[slot])) return null;
+    // A suspension (a report pending review) keeps someone out of the POOL —
+    // queue, matching, handle reveal — not out of a seat they already hold:
+    // putting them out right after their partner reported them would tell
+    // them exactly who did. Their partner can leave; no handle is ever shared.
     return p.subject;
   }
 
@@ -103,7 +108,7 @@ export class StrangerService {
     if (!x) {
       x = {
         holders: {}, answers: {}, closed: false, revealed: false, reportFiled: false, loaded: false,
-        ended: new Set(), window: null, answering: Promise.resolve(), reporting: Promise.resolve(),
+        endingScheduled: new Set(), endingDelivered: new Set(), window: null, answering: Promise.resolve(), reporting: Promise.resolve(),
       };
       this.exchanges.set(gameId, x);
     }
@@ -131,7 +136,8 @@ export class StrangerService {
   private selfView(x: Exchange, slot: StrangerSlot): HandleState {
     const mine = x.answers[slot];
     if (mine === "no") return { mine: "no", closed: true };
-    if (mine === "yes") return x.ended.has(slot) ? ENDED : { mine: "yes", closed: false };
+    // Never ahead of the push: until the delayed ending is delivered, "waiting".
+    if (mine === "yes") return x.endingDelivered.has(slot) ? ENDED : { mine: "yes", closed: false };
     return { mine: null, closed: false };
   }
 
@@ -150,6 +156,8 @@ export class StrangerService {
       // only while it would still be allowed now.
       let ok = false;
       try { ok = !x.reportFiled && (await this.revealAllowed(gameId, seats, x)); } catch { ok = false; }
+      // Re-checked after the last await: a report that landed meanwhile wins.
+      if (x.reportFiled) ok = false;
       return { self: ok && x.holders[other] ? { mine: "yes", closed: true, matrixId: x.holders[other] } : ENDED };
     }
     if (answer === "status") return { self: this.selfView(x, slot) };
@@ -210,10 +218,13 @@ export class StrangerService {
   }
 
   private scheduleEnding(gameId: string, x: Exchange, slot: StrangerSlot): void {
-    if (x.ended.has(slot)) return;
-    x.ended.add(slot);
+    if (x.endingScheduled.has(slot)) return;
+    x.endingScheduled.add(slot);
     const { handleEndingMinMs: lo, handleEndingMaxMs: hi } = this.config();
-    const t = setTimeout(() => this.onHandleState?.(gameId, slot, ENDED), lo + Math.random() * Math.max(0, hi - lo));
+    const t = setTimeout(() => {
+      x.endingDelivered.add(slot);
+      this.onHandleState?.(gameId, slot, ENDED);
+    }, lo + Math.random() * Math.max(0, hi - lo));
     t.unref?.();
   }
 
@@ -262,24 +273,20 @@ export class StrangerService {
     const other: StrangerSlot = slot === "parent1" ? "parent2" : "parent1";
     const reporter = seats[slot];
     const reported = seats[other];
-    const prior = await this.store.reportsForGame(gameId);
-    if (prior.some((r) => r.reporter === reporter)) return { ok: true };
+    // The reporter's identity is re-checked here; everything that depends on
+    // OTHER reports (already reported in this game, suspended, the cap, an
+    // unfounded report) is decided inside the store's one atomic step.
     const reporterOk =
       !!reporterMxid &&
       (await this.age.subjectHash(reporterMxid)) === reporter &&
-      (await this.age.adultForPool(reporterMxid)).ok &&
-      !(await this.store.isSuspended(reporter));
-    const wasReported = prior.some((r) => r.reported === reporter && HOLDING_STATUSES.has(r.status));
+      (await this.age.adultForPool(reporterMxid)).ok;
     const now = Date.now();
-    const theirs = await this.store.reportsBy(reporter);
-    const suspending = theirs.filter((r) => r.createdAt >= now - REPORT_CAP_WINDOW_MS && (r.status === "open" || r.status === "kept" || r.status === "lifted")).length;
-    const unfounded = theirs.some((r) => r.status === "lifted" && r.createdAt >= now - UNFOUNDED_WINDOW_MS);
-    const status: StrangerReport["status"] = !reporterOk || wasReported ? "counter" : suspending >= REPORT_SUSPENSION_CAP || unfounded ? "review" : "open";
-    const added = await this.store.addReport({ id: randomUUID(), gameId, reporter, reported, reason, createdAt: now, status });
-    await this.store.addBlock(reporter, reported);
-    if (added && status === "open") await this.store.suspend(reported, "report");
-    logger.warn("stranger_report", { gameId, status });
-    return { ok: true, status };
+    const status = await this.store.fileReport(
+      { id: randomUUID(), gameId, reporter, reported, reason, createdAt: now, status: reporterOk ? "open" : "counter" },
+      { cap: REPORT_SUSPENSION_CAP, capSince: now - REPORT_CAP_WINDOW_MS, unfoundedSince: now - UNFOUNDED_WINDOW_MS },
+    );
+    if (status) logger.warn("stranger_report", { gameId, status });
+    return { ok: true, ...(status ? { status } : {}) };
   }
 
   /**

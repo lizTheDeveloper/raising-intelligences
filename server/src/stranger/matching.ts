@@ -88,6 +88,12 @@ export class StrangerMatching {
   private runs = new Map<string, Run>();
   private seatCache = new Map<string, StrangerRunSeats | null>();
   private seq = 0;
+  /**
+   * Suspended accounts (a report pending review) who queue: held here, shown
+   * "waiting", never matched. Refusing them outright, right after a game,
+   * would tell them who reported them.
+   */
+  private held = new Map<string, QueueEntry>();
   private chain: Promise<void> = Promise.resolve();
 
   constructor(
@@ -108,7 +114,10 @@ export class StrangerMatching {
     const pool = await this.deps.age.adultForPool(mxid);
     if (!pool.ok) return { ok: false, status: 403, error: "Pass the age check first." };
     const subject = await this.deps.age.subjectHash(mxid);
-    if (await this.deps.store.isSuspended(subject)) return { ok: false, status: 403, error: "This account can't use stranger mode right now." };
+    if (await this.deps.store.isSuspended(subject)) {
+      this.hold({ mxid, subject, meetupCode, displayName, childName, queuedAt: this.now(), seq: ++this.seq, lastSeen: this.now() });
+      return { ok: true };
+    }
     if (this.matched.has(mxid)) return { ok: true };
     const existing = this.queue.find((e) => e.mxid === mxid);
     if (existing) {
@@ -125,6 +134,13 @@ export class StrangerMatching {
 
   leave(mxid: string): void {
     this.queue = this.queue.filter((e) => e.mxid !== mxid);
+    this.held.delete(mxid);
+  }
+
+  private hold(entry: QueueEntry): void {
+    this.queue = this.queue.filter((e) => e.mxid !== entry.mxid);
+    const prior = this.held.get(entry.mxid);
+    this.held.set(entry.mxid, { ...(prior ?? entry), lastSeen: this.now() });
   }
 
   poll(mxid: string): PollResult {
@@ -138,6 +154,11 @@ export class StrangerMatching {
       this.matched.delete(mxid);
     }
     this.pruneIdle();
+    const held = this.held.get(mxid);
+    if (held) {
+      held.lastSeen = this.now();
+      return { status: "waiting", position: 1, count: 1 };
+    }
     const mine = this.queue.find((e) => e.mxid === mxid);
     if (!mine) return { status: "none" };
     mine.lastSeen = this.now();
@@ -224,9 +245,14 @@ export class StrangerMatching {
     const entry = run.entries[present];
     if (entry.mxid !== mxid) return false;
     const pool = await this.deps.age.adultForPool(mxid);
-    if (!pool.ok || (await this.deps.store.isSuspended(entry.subject))) return false;
+    if (!pool.ok) return false;
+    const suspended = await this.deps.store.isSuspended(entry.subject);
     if (this.runs.get(gameId) !== run) return false; // raced with another requeue
     await this.discard(gameId);
+    if (suspended) {
+      this.hold({ ...entry, lastSeen: this.now() });
+      return true;
+    }
     // Never twice in the queue (a /queue/join may have landed meanwhile).
     if (!this.matched.has(mxid) && !this.queue.some((e) => e.mxid === mxid)) {
       this.queue.push({ ...entry, lastSeen: this.now() });
@@ -238,6 +264,7 @@ export class StrangerMatching {
   private pruneIdle(): void {
     const cutoff = this.now() - this.deps.config().queueIdleMs;
     this.queue = this.queue.filter((e) => e.lastSeen >= cutoff);
+    for (const [k, e] of this.held) if (e.lastSeen < cutoff) this.held.delete(k);
   }
 
   private sorted(meetupCode: string | null): QueueEntry[] {
@@ -263,7 +290,8 @@ export class StrangerMatching {
       // adult while waiting leaves the queue.
       for (const e of waiting) {
         const pool = await this.deps.age.adultForPool(e.mxid);
-        if (!pool.ok || (await this.deps.store.isSuspended(e.subject))) this.leave(e.mxid);
+        if (!pool.ok) this.leave(e.mxid);
+        else if (await this.deps.store.isSuspended(e.subject)) this.hold(e);
       }
       const eligible = this.sorted(meetupCode);
       let pair: [QueueEntry, QueueEntry] | null = null;
@@ -294,8 +322,15 @@ export class StrangerMatching {
       logger.error("stranger_match_create_failed", { error: err instanceof Error ? err.message : String(err) });
       return false;
     }
+    // Re-checked AFTER the awaits above (making the game took time): either
+    // may have become ineligible, or been suspended, in the meantime.
+    for (const e of [host, partner]) {
+      if (!(await this.deps.age.adultForPool(e.mxid)).ok) this.leave(e.mxid);
+      else if (await this.deps.store.isSuspended(e.subject)) this.hold(e);
+    }
     if (!this.queue.includes(host) || !this.queue.includes(partner)) {
-      // One left while the game was being made: throw it away, keep the other queued.
+      // One left (or stopped being eligible) while the game was being made:
+      // throw it away, keep the other queued.
       this.cacheSeats(gameId, { gameId, meetupCode: host.meetupCode, parent1: host.subject, parent2: partner.subject });
       await this.markDiscarded(gameId);
       return true;

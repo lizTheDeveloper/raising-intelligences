@@ -185,8 +185,9 @@ describe("stranger handle exchange and reports", () => {
     const bobSubject = await stranger.age.subjectHash(BOB);
     expect(await repo.stranger.isSuspended(bobSubject)).toBe(true);
     expect(await repo.stranger.isBlocked(await stranger.age.subjectHash(ALICE), bobSubject)).toBe(true);
-    // Suspended: Bob can't queue again until it's reviewed.
-    expect((await post("/stranger/queue/join", { pass: b, childName: "X" })).status).toBe(403);
+    // Suspended: Bob is never matched again until it's reviewed — but he is
+    // not told so (a refusal right after this game would say who reported him).
+    expect((await post("/stranger/queue/join", { pass: b, childName: "X" })).status).toBe(200);
   });
 
   it("admin sees reports (no Matrix ids) and can lift a suspension", async () => {
@@ -459,5 +460,81 @@ describe("stranger handle exchange and reports", () => {
     B2.emit(E.HANDLE_EXCHANGE, { answer: "yes", ack: true });
     await wait(200);
     expect(JSON.stringify(seen)).not.toMatch(/@alice|@bob/);
+  });
+
+  // ---- Third review + own sweep: check-then-act across an await, and state seen early ----
+
+  it("concurrent reports from one reporter never pass the cap of automatic suspensions", async () => {
+    const MALLORY = "@mallory:multiversegames.ai";
+    await adult(MALLORY);
+    const games: string[] = [];
+    for (let n = 0; n < 6; n++) games.push(await runAgainstBob(MALLORY, n));
+    const out = await Promise.all(games.map((g) => stranger.report(g, "parent1", "x", MALLORY)));
+    expect(out.filter((o) => o.status === "open")).toHaveLength(3);
+    let suspended = 0;
+    for (let n = 0; n < 6; n++) if (await repo.stranger.isSuspended(await stranger.age.subjectHash(`@target${n}:multiversegames.ai`))) suspended++;
+    expect(suspended).toBe(3);
+  });
+
+  it("polling status during the ending's delay shows nothing new until it is delivered", async () => {
+    cfg.handleEndingMinMs = 300;
+    cfg.handleEndingMaxMs = 320;
+    const { A, B, gameId } = await pair();
+    toReportCard(gameId);
+    await answer(B, { answer: "yes", ack: true });
+    await answer(A, { answer: "no" });
+    await wait(100);
+    expect(await answer(B, { answer: "status" })).toEqual({ mine: "yes", closed: false });
+    const ending = B.waitFor<HandleState>(E.HANDLE_STATE, (st) => st.closed);
+    expect(await ending).toEqual({ mine: "yes", closed: true });
+    expect(await answer(B, { answer: "status" })).toEqual({ mine: "yes", closed: true });
+  });
+
+  it("a report landing while a reveal is being resent stops the resend", async () => {
+    const { A, B, gameId } = await pair();
+    toReportCard(gameId);
+    await answer(A, { answer: "yes", ack: true });
+    const revealToA = A.waitFor<HandleState>(E.HANDLE_STATE, (st) => !!st.matrixId);
+    expect((await answer(B, { answer: "yes", ack: true })).matrixId).toBe(ALICE);
+    await revealToA; // the original reveal, delivered; what follows is the resend
+    const isSuspended = repo.stranger.isSuspended.bind(repo.stranger);
+    repo.stranger.isSuspended = async (x: string) => {
+      const r = await isSuspended(x);
+      await wait(40);
+      return r;
+    };
+    const seen: unknown[] = [];
+    A.socket.on(E.HANDLE_STATE, (st) => seen.push(st));
+    A.emit(E.HANDLE_EXCHANGE, { answer: "status" });
+    await wait(30);
+    const done = B.once(E.STRANGER_REPORTED);
+    B.emit(E.STRANGER_REPORT, { reason: "x" });
+    await done;
+    await wait(250);
+    expect(JSON.stringify(seen)).not.toMatch(/@bob/);
+  });
+
+  it("a reported player isn't told: they keep playing, can reload, and queue as if nothing happened (never matched)", async () => {
+    const { A, B, b, mb, gameId } = await pair();
+    const ok = A.once(E.STRANGER_REPORTED);
+    A.emit(E.STRANGER_REPORT, { reason: "x" });
+    await ok;
+    // A generating action: not put out.
+    let gone = false;
+    B.socket.once("disconnect", () => { gone = true; });
+    B.emit(E.READY, { ready: true });
+    await wait(150);
+    expect(gone).toBe(false);
+    // A reload: back in their own seat.
+    const again = await client();
+    const j = again.once<{ slot: string }>(E.JOINED);
+    again.emit(E.JOIN_GAME, { gameId, playerToken: mb.playerToken, strangerPass: b });
+    expect((await j).slot).toBe("parent2");
+    // Queue: looks like waiting, never matched — even with someone else there.
+    const c = await adult("@carol:multiversegames.ai");
+    expect((await post("/stranger/queue/join", { pass: b, childName: "X" })).body).toMatchObject({ status: "waiting" });
+    await post("/stranger/queue/join", { pass: c, childName: "Y" });
+    expect((await post("/stranger/queue/poll", { pass: b })).body).toMatchObject({ status: "waiting" });
+    expect((await post("/stranger/queue/poll", { pass: c })).body).toMatchObject({ status: "waiting" });
   });
 });
