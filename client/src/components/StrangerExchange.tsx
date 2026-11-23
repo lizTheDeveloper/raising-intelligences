@@ -104,3 +104,18 @@ export function StrangerReport({ reported, onReport }: { reported: boolean; onRe
     </form>
   );
 }
+
+/**
+ * A stranger game that has ended. The same words for every cause; the
+ * reporter (who knows why) also gets their report's confirmation.
+ */
+export function StrangerGameEnded({ reported, onLeave }: { reported: boolean; onLeave: () => void }) {
+  return (
+    <div className="lobby stranger-mode" role="status">
+      <h2>the end of this story</h2>
+      <p>{EXCHANGE_ENDING}</p>
+      {reported && <p className="dim">your report was sent. a person reads every one. you won't be paired with them again, and nothing about you was shared.</p>}
+      <button className="btn" onClick={onLeave}>back to the start</button>
+    </div>
+  );
+}

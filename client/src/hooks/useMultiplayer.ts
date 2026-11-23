@@ -28,6 +28,7 @@ const E = {
   HANDLE_STATE: "handle_state",
   STRANGER_REPORT: "stranger_report",
   STRANGER_REPORTED: "stranger_reported",
+  STRANGER_GAME_ENDED: "stranger_game_ended",
   PERSONALITY_SUBMITTED: "personality_submitted",
   PERSONALITY_SEED_READY: "personality_seed_ready",
   /** "let me keep playing from my phone" — see HANDOFF_CODE. */
@@ -294,6 +295,7 @@ export function useMultiplayer() {
   const [strangerNoShow, setStrangerNoShow] = useState(false);
   const [handleState, setHandleState] = useState<HandleState | null>(null);
   const [strangerReported, setStrangerReported] = useState(false);
+  const [strangerEnded, setStrangerEnded] = useState(false);
   const [inLobby, setInLobby] = useState(false);
   const [seedReady, setSeedReady] = useState(false);
   const [sceneEnding, setSceneEnding] = useState(false);
@@ -577,6 +579,7 @@ export function useMultiplayer() {
         setHandleState(null);
         setStrangerReported(false);
         setStrangerNoShow(false);
+        setStrangerEnded(false);
       }
       setGameId(d.gameId);
       gameIdRef.current = d.gameId;
@@ -720,6 +723,7 @@ export function useMultiplayer() {
     socket.on(E.STRANGER_NO_SHOW, () => setStrangerNoShow(true));
     socket.on(E.HANDLE_STATE, (st: HandleState) => setHandleState(st));
     socket.on(E.STRANGER_REPORTED, () => setStrangerReported(true));
+    socket.on(E.STRANGER_GAME_ENDED, () => setStrangerEnded(true));
 
     socket.on(E.SUPERSEDED, () => {
       supersededRef.current = true;
@@ -1042,6 +1046,7 @@ export function useMultiplayer() {
     handleStatus,
     strangerReported,
     reportStranger,
+    strangerEnded,
     clearError,
     startSidebar,
     endSidebar,

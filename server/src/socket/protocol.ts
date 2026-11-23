@@ -232,6 +232,12 @@ export const SOCKET_EVENTS = {
   STRANGER_REPORT: "stranger_report",
   STRANGER_REPORTED: "stranger_reported",
   /**
+   * Stranger mode, server → seat: this game has ended. One neutral message
+   * for every cause (a report in this game, either seat's account no longer
+   * able to play), never saying which.
+   */
+  STRANGER_GAME_ENDED: "stranger_game_ended",
+  /**
    * "I want to continue this on another device." Mints a short-lived,
    * single-use code bound to the requesting socket's {gameId, slot}, answered
    * with HANDOFF_CODE to that socket alone.

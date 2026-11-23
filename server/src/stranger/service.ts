@@ -82,10 +82,10 @@ export class StrangerService {
     if (!p || p === "hidden") return null;
     if ((await this.age.subjectHash(p.subject)) !== seats[slot]) return null;
     if (!(await this.age.adultForPool(p.subject)).ok) return null;
-    // A suspension (a report pending review) keeps someone out of the POOL —
-    // queue, matching, handle reveal — not out of a seat they already hold:
-    // putting them out right after their partner reported them would tell
-    // them exactly who did. Their partner can leave; no handle is ever shared.
+    // A suspended account takes no seat, reserved or its own. The refusal is
+    // the same one every unavailable seat gets: it never says why. (The game
+    // a report was filed in ends for both seats anyway: see report().)
+    if (await this.store.isSuspended(seats[slot])) return null;
     return p.subject;
   }
 
@@ -203,6 +203,38 @@ export class StrangerService {
     };
   }
 
+  // ---- A game a report was filed in ----
+  // It stops generating at once (both seats' actions are dropped, silently),
+  // and ends for both seats with one neutral message after the same random
+  // delay as the exchange's ending, so neither the timing nor the words say
+  // "report". The reporter never has to keep co-parenting with them.
+  private stopped = new Map<string, number>(); // gameId -> when the ending is (or was) delivered
+  /** Set by the socket layer: tell both seats the game has ended. */
+  onGameEnded: ((gameId: string) => void) | null = null;
+
+  private stopGame(gameId: string): void {
+    if (this.stopped.has(gameId)) return;
+    const { handleEndingMinMs: lo, handleEndingMaxMs: hi } = this.config();
+    const delay = lo + Math.random() * Math.max(0, hi - lo);
+    this.stopped.set(gameId, Date.now() + delay);
+    const t = setTimeout(() => this.onGameEnded?.(gameId), delay);
+    t.unref?.();
+  }
+
+  /** Has a report been filed in this game (stored, so it survives a restart)? */
+  async gameStopped(gameId: string): Promise<boolean> {
+    if (this.stopped.has(gameId)) return true;
+    if (!(await this.store.gameReported(gameId))) return false;
+    if (!this.stopped.has(gameId)) this.stopped.set(gameId, Date.now()); // found after a restart: already ended
+    return true;
+  }
+
+  /** Stopped, and its neutral ending already due: show it (a reload, a late action). */
+  gameEndedNow(gameId: string): boolean {
+    const at = this.stopped.get(gameId);
+    return at !== undefined && at <= Date.now();
+  }
+
   /** Ends the exchange without a reveal; every seat that said yes gets the neutral ending later. */
   private close(gameId: string, x: Exchange): void {
     if (x.window) clearTimeout(x.window);
@@ -259,6 +291,7 @@ export class StrangerService {
     if (this.matching?.isRun(gameId)) {
       x.reportFiled = true;
       this.close(gameId, x);
+      this.stopGame(gameId);
     }
     const run = x.reporting.then(() => this.reportOne(gameId, x, slot, reason, reporterMxid));
     x.reporting = run.catch(() => undefined);
@@ -270,6 +303,7 @@ export class StrangerService {
     if (!seats) return { ok: false };
     x.reportFiled = true;
     this.close(gameId, x);
+    this.stopGame(gameId);
     const other: StrangerSlot = slot === "parent1" ? "parent2" : "parent1";
     const reporter = seats[slot];
     const reported = seats[other];
