@@ -37,8 +37,10 @@ export class StrangerPasses {
 
   constructor(private readonly now: () => number = Date.now) {}
 
+  /** One live pass per account: issuing a new one retires the old. */
   issue(subject: string, meetupCode: string | null): string {
     this.sweep();
+    this.revokeSubject(subject);
     const token = randomBytes(32).toString("base64url");
     this.passes.set(token, { subject, meetupCode, expiresAt: this.now() + PASS_TTL_MS });
     return token;

@@ -84,6 +84,19 @@ export function readStrangerConfig(env: NodeJS.ProcessEnv = process.env): Strang
   };
 }
 
+/**
+ * RI_STRANGER_PEPPER keys the HMAC that stands in for a Matrix id in every
+ * stranger record (and in the metadata sent to Stripe). It must be secret and
+ * strong: with a known pepper, anyone holding a database dump or the Stripe
+ * dashboard could recompute HMAC(pepper, "@user:server") and re-identify
+ * people. No fallback: missing or short means stranger mode stays off.
+ */
+export const MIN_PEPPER_BYTES = 32;
+export function pepperProblem(raw: string | undefined | null): "missing" | "too_short" | null {
+  if (!raw) return "missing";
+  return Buffer.byteLength(raw, "utf8") < MIN_PEPPER_BYTES ? "too_short" : null;
+}
+
 /** Is stranger mode shown to a visitor carrying this meetup code (or none)? */
 export function strangerVisible(cfg: StrangerConfig, code: unknown): boolean {
   if (cfg.mode === "public") return true;

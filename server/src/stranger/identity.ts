@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { pepperProblem } from "./config.js";
 import { logger } from "../logger.js";
 import { createStripeRest, type StripeParams, type StripeRest } from "../payments/stripe.js";
 import type { ChildSafetyStore } from "../safety/child-safety/store.js";
@@ -11,9 +12,13 @@ import type { StrangerStore } from "./store.js";
  * Every stranger-mode player — host or not, payer or not — passes a Stripe
  * Identity check: a government ID plus a live selfie matched to it. We ask
  * Stripe for the date of birth on the document, compute 18+ on the spot, and
- * keep ONLY the outcome. Then the Identity session is redacted at Stripe
- * (RI_IDENTITY_REDACT, on by default), so the document and selfie don't sit
- * there either.
+ * keep ONLY the outcome. Then we ask Stripe to redact the Identity session
+ * (RI_IDENTITY_REDACT, on by default). Stripe redacts asynchronously (it can
+ * take days) and may keep some records where the law requires.
+ *
+ * One document verifies one account: a keyed hash of the document's number
+ * is bound to the first account it passed for, so one adult's ID can't vouch
+ * for a string of other accounts.
  *
  * Fail closed everywhere: an unfinished check, an unreadable date of birth,
  * a test-mode check in production, a Stripe outage — none of them admit
@@ -26,6 +31,14 @@ import type { StrangerStore } from "./store.js";
  */
 export const CONSENT_VERSION = "2026-11-22.1";
 
+/**
+ * Age is computed on a clock 14 hours behind UTC. The UTC date can run ahead
+ * of a player's local date (time zones run up to 12 hours behind it), so a
+ * plain UTC birthday would admit some 17-year-olds on the eve of their 18th.
+ * Lagging by 14h means the birthday has started in every time zone on Earth.
+ */
+export const AGE_CLOCK_LAG_MS = 14 * 60 * 60 * 1000;
+
 /** A day's checks per account: enough for a blurry photo or two, not a brute force. */
 export const MAX_CHECKS_PER_DAY = 3;
 
@@ -37,6 +50,10 @@ export interface VerificationSession {
   metadata?: Record<string, string>;
   last_error: { code?: string; reason?: string } | null;
   verified_outputs?: { dob?: { day: number | null; month: number | null; year: number | null } | null } | null;
+  /** Non-null once Stripe has redacted (or is redacting) the session: its outputs are placeholders then. */
+  redaction?: { status?: string } | null;
+  /** Expanded: the report's document, for its number (one document, one account). */
+  last_verification_report?: string | { document?: { number?: string | null; issuing_country?: string | null } | null } | null;
 }
 
 /** What age verification needs from Stripe Identity. Faked in tests. */
@@ -54,7 +71,7 @@ export function createIdentityApi(rest: StripeRest): IdentityApi {
       rest.request<VerificationSession>(
         "GET",
         `/v1/identity/verification_sessions/${encodeURIComponent(id)}`,
-        expandDob ? { "expand[]": "verified_outputs.dob" } : {},
+        expandDob ? { "expand[0]": "verified_outputs.dob", "expand[1]": "last_verification_report.document.number" } : {},
       ),
     redactVerificationSession: async (id) => {
       await rest.request("POST", `/v1/identity/verification_sessions/${encodeURIComponent(id)}/redact`);
@@ -82,8 +99,8 @@ interface Deps {
   /** Injected in tests; otherwise built from RI_STRIPE_IDENTITY_KEY. */
   api?: IdentityApi;
   now?: () => number;
-  /** HMAC key for subject hashes. RI_STRANGER_PEPPER, with a fixed fallback. */
-  pepper?: string;
+  /** HMAC key for subject and document hashes: RI_STRANGER_PEPPER, 32+ bytes. No fallback. */
+  pepper: string;
 }
 
 export class AgeVerification {
@@ -100,18 +117,36 @@ export class AgeVerification {
     this.childSafety = deps.childSafety;
     this.injectedApi = deps.api;
     this.now = deps.now ?? Date.now;
-    this.pepper = deps.pepper ?? process.env.RI_STRANGER_PEPPER ?? "ri-stranger-subject-v1";
+    this.pepper = deps.pepper;
   }
 
   /** The opaque per-account id used in every stranger record and sent to Stripe. */
   async subjectHash(matrixId: string): Promise<string> {
-    return createHmac("sha256", this.pepper).update(matrixId).digest("hex");
+    return this.hmac(`subject:${matrixId}`);
+  }
+
+  private hmac(value: string): string {
+    // Fail closed: never hash with a missing or guessable key.
+    if (pepperProblem(this.pepper)) throw new Error("RI_STRANGER_PEPPER is missing or too short");
+    return createHmac("sha256", this.pepper).update(value).digest("hex");
+  }
+
+  /** Is this address under a child-safety ban? */
+  async ipBanned(ip: string): Promise<boolean> {
+    try {
+      return await this.childSafety.isIdentifierBanned({ kind: "ip", value: ip });
+    } catch {
+      return true; // fail closed
+    }
   }
 
   private api(): IdentityApi | null {
     if (this.injectedApi) return this.injectedApi;
     const key = this.config().identityKey;
-    if (!key || !/^(sk|rk)_(live|test)_/.test(key)) return null;
+    // Restricted keys only: reading the date of birth needs a restricted key
+    // with Identity "Verification Results" and "Recent Detailed Verification
+    // Results" set to Read; a plain secret key can't, so it would never admit anyone.
+    if (!key || !/^rk_(live|test)_/.test(key)) return null;
     return createIdentityApi(createStripeRest(key));
   }
 
@@ -143,8 +178,11 @@ export class AgeVerification {
     if (!(await this.hasConsent(matrixId))) return { error: "Please read and agree to the ID check first.", reason: "no_consent" };
     const existing = await this.store.getVerification(subject);
     if (existing?.outcome === "minor") return { error: "Stranger mode is for adults only.", reason: "minor" };
-    const since = this.now() - 24 * 60 * 60 * 1000;
-    if ((await this.store.countVerificationSessionsSince(subject, since)) >= MAX_CHECKS_PER_DAY) {
+    // Each check costs money: take one of today's slots atomically BEFORE
+    // calling Stripe, so parallel requests can't all slip under the cap.
+    const day = new Date(this.now()).toISOString().slice(0, 10);
+    const attempt = await this.store.reserveCheckSlot(subject, day, MAX_CHECKS_PER_DAY);
+    if (attempt === null) {
       return { error: "That's the most checks for one day. Try again tomorrow.", reason: "rate_limited" };
     }
     const base = this.config().publicBaseUrl;
@@ -157,7 +195,7 @@ export class AgeVerification {
       "metadata[ri_purpose]": "ri_stranger_age",
       "metadata[ri_subject]": subject,
       return_url: returnUrl,
-    });
+    }, `ri-age-${subject.slice(0, 32)}-${day}-${attempt}`);
     await this.store.addVerificationSession({ sessionId: session.id, subject, createdAt: this.now() });
     if (!session.url) return { error: "The ID check didn't open. Try again.", reason: "no_url" };
     logger.info("stranger_identity_started", { livemode: session.livemode });
@@ -194,13 +232,29 @@ export class AgeVerification {
   private async settle(subject: string, session: VerificationSession): Promise<CheckOutcome> {
     if (session.metadata?.ri_subject !== subject) return "unverified";
     if (session.status !== "verified") return "unverified";
+    // A redacted session's outputs are placeholders (a 1/1/1 birth date).
+    if (session.redaction) return "unverified";
     const dob = session.verified_outputs?.dob;
-    if (!dob || !dob.year || !dob.month || !dob.day) {
-      // Verified, but no readable date of birth: not proof of adulthood.
+    if (!dob || !dob.year || !dob.month || !dob.day || dob.year < 1900) {
+      // Verified, but no plausible date of birth: not proof of adulthood.
       logger.warn("stranger_identity_no_dob", { sessionId: session.id });
       return "unverified";
     }
-    const outcome = ageOn({ year: dob.year, month: dob.month, day: dob.day }, new Date(this.now())) >= 18 ? "adult" : "minor";
+    // One document, one account.
+    const report = typeof session.last_verification_report === "object" ? session.last_verification_report : null;
+    const number = report?.document?.number?.trim();
+    if (!number) {
+      logger.warn("stranger_identity_no_document_number", { sessionId: session.id });
+      return "unverified";
+    }
+    const docHash = this.hmac(`document:${(report?.document?.issuing_country ?? "").toUpperCase()}:${number.toUpperCase()}`);
+    if (!(await this.store.bindDocument(docHash, subject, this.now()))) {
+      logger.warn("stranger_identity_document_reused", { sessionId: session.id });
+      return "unverified";
+    }
+    // Conservative across time zones: measured on a clock behind even the
+    // furthest-behind zone (UTC-12), so the 18th birthday has begun everywhere.
+    const outcome = ageOn({ year: dob.year, month: dob.month, day: dob.day }, new Date(this.now() - AGE_CLOCK_LAG_MS)) >= 18 ? "adult" : "minor";
     const row = await this.store.setVerification({
       subject,
       outcome,

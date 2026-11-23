@@ -30,7 +30,7 @@ describe("stranger mode routes", () => {
     const stranger = new StrangerService({
       config: () => cfg,
       passes: new StrangerPasses(),
-      age: new AgeVerification({ store, api: identity, config: () => cfg, childSafety: repo.childSafety }),
+      age: new AgeVerification({ store, api: identity, config: () => cfg, childSafety: repo.childSafety, pepper: "p".repeat(64) }),
       verifyMatrix: async (t) => tokens.get(String(t)) ?? null,
     });
     built = buildServer({
@@ -65,15 +65,30 @@ describe("stranger mode routes", () => {
     return r.body.pass as string;
   }
 
-  it("off: every stranger route answers 404, whatever the code", async () => {
+  /** What a path that doesn't exist answers: "off" must look exactly like this. */
+  async function unknownGet() {
+    const r = await fetch(`${base}/no-such-route-${Date.now()}`);
+    return { status: r.status, body: await r.text() };
+  }
+  async function unknownPost() {
+    const r = await post(`/no-such-route-${Date.now()}`, {});
+    return r.status;
+  }
+
+  it("off: every stranger route, the webhook included, answers exactly like an unknown path", async () => {
     cfg = strangerConfig({ mode: "off" });
-    expect((await fetch(`${base}/stranger/status?meetup=tea-party`)).status).toBe(404);
-    expect((await post("/stranger/pass", { openIdToken: "tok-alice", meetup: "tea-party" })).status).toBe(404);
+    const u = await unknownGet();
+    const s1 = await fetch(`${base}/stranger/status?meetup=tea-party`);
+    expect({ status: s1.status, body: await s1.text() }).toEqual(u);
+    const unknown = await unknownPost();
+    expect((await post("/stranger/pass", { openIdToken: "tok-alice", meetup: "tea-party" })).status).toBe(unknown);
+    expect((await post("/stripe/identity-webhook", "{}", { "Stripe-Signature": "t=1,v1=x" })).status).toBe(unknown);
   });
 
   it("meetup: visible only with a listed code", async () => {
-    expect((await fetch(`${base}/stranger/status?meetup=nope`)).status).toBe(404);
-    expect((await fetch(`${base}/stranger/status`)).status).toBe(404);
+    const u = await unknownGet();
+    expect((await fetch(`${base}/stranger/status?meetup=nope`)).status).toBe(u.status);
+    expect((await fetch(`${base}/stranger/status`)).status).toBe(u.status);
     const ok = await fetch(`${base}/stranger/status?meetup=Tea-Party`);
     expect(ok.status).toBe(200);
     expect(await ok.json()).toMatchObject({ visible: true, consentVersion: CONSENT_VERSION });
@@ -88,7 +103,7 @@ describe("stranger mode routes", () => {
   it("switching the mode off mid-evening shuts out passes already issued", async () => {
     const pass = await passFor();
     cfg = strangerConfig({ mode: "off" });
-    expect((await post("/stranger/me", { pass })).status).toBe(404);
+    expect((await post("/stranger/me", { pass })).status).toBe(await unknownPost());
   });
 
   it("consent, then the ID check, then the pool — in that order only", async () => {
@@ -105,6 +120,13 @@ describe("stranger mode routes", () => {
     expect(checked.body).toMatchObject({ age: "adult", eligible: true });
   });
 
+  it("one pass per account: signing in again retires the old pass", async () => {
+    const first = await passFor();
+    const second = await passFor();
+    expect((await post("/stranger/me", { pass: first })).status).toBe(401);
+    expect((await post("/stranger/me", { pass: second })).status).toBe(200);
+  });
+
   it("a minor is told plainly and kept out", async () => {
     const pass = await passFor("tok-bob");
     await post("/stranger/consent", { pass, version: CONSENT_VERSION });
@@ -112,7 +134,8 @@ describe("stranger mode routes", () => {
     identity.complete(identity.last(), dobYearsAgo(16));
     const checked = await post("/stranger/identity/check", { pass });
     expect(checked.body).toMatchObject({ age: "minor", eligible: false });
-    expect((await post("/stranger/identity/start", { pass })).status).toBe(403);
+    // The minor result retires the pass on the spot.
+    expect((await post("/stranger/identity/start", { pass })).status).toBe(401);
   });
 
   it("the identity webhook is signed with its own secret and settles the check", async () => {

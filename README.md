@@ -86,7 +86,8 @@ Raise a child with an adult you haven't met (spec: `docs/superpowers/specs/2026-
 - **Off by default.** `RI_STRANGER_MODE=off` (or unset, or any unknown value) makes every `/api/stranger/*` route answer 404, and the client never shows the entry.
 - **Meetup mode**: `RI_STRANGER_MODE=meetup` + `RI_MEETUP_CODES=code1,code2`. The entry shows only on `…/raising-intelligences/?meetup=code1`. Removing a code from the list shuts out passes already issued for it.
 - **The hard line**: no minor reaches the stranger pool. Every player signs in with Matrix (verified server-side through Synapse OpenID userinfo), agrees to the ID-check consent, and passes Stripe Identity (document + live selfie, 18+ computed from the document's date of birth). Only the outcome is stored, the Identity session is redacted, a minor result is final for that account, and a test-mode check never admits anyone in production. Free solo play and the AI co-parent stay open to everyone.
-- Env: `RI_STRANGER_MODE`, `RI_MEETUP_CODES`, `RI_STRIPE_IDENTITY_KEY`, `RI_STRIPE_IDENTITY_WEBHOOK_SECRET`, `RI_STRANGER_PEPPER`, `RI_IDENTITY_REDACT`.
+- One ID document verifies one account (a keyed hash of its number is bound to the first account), and age is measured conservatively across time zones.
+- Env: `RI_STRANGER_MODE`, `RI_MEETUP_CODES`, `RI_STRIPE_IDENTITY_KEY` (restricted `rk_` key only), `RI_STRIPE_IDENTITY_WEBHOOK_SECRET`, `RI_STRANGER_PEPPER` (**required**, 32+ bytes, `openssl rand -hex 32`; without it stranger mode stays off), `RI_IDENTITY_REDACT`.
 
 ## Architecture
 

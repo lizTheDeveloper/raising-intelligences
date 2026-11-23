@@ -40,6 +40,18 @@ export interface StrangerStore {
   getVerification(subject: string): Promise<AgeVerificationRow | null>;
   /** Write an outcome. A stored "minor" is final: it is never replaced. */
   setVerification(row: AgeVerificationRow): Promise<AgeVerificationRow>;
+  /**
+   * Take one of today's ID-check slots (1..max) atomically: a unique
+   * (subject, day, attempt) row. Returns the attempt number, or null when
+   * all are taken. Concurrent callers can never both get the same slot.
+   */
+  reserveCheckSlot(subject: string, day: string, max: number): Promise<number | null>;
+  /**
+   * Bind a document (keyed hash of its number) to an account. True when the
+   * document is now, or already was, this account's; false when it belongs
+   * to another account.
+   */
+  bindDocument(docHash: string, subject: string, at: number): Promise<boolean>;
 }
 
 export class InMemoryStrangerStore implements StrangerStore {
@@ -80,6 +92,27 @@ export class InMemoryStrangerStore implements StrangerStore {
     if (existing?.outcome === "minor") return { ...existing };
     this.verifications.set(row.subject, { ...row });
     return { ...row };
+  }
+  slots = new Set<string>();
+  documents = new Map<string, string>();
+  async reserveCheckSlot(subject: string, day: string, max: number): Promise<number | null> {
+    // No await between the check and the insert: atomic in one event loop turn.
+    for (let attempt = 1; attempt <= max; attempt++) {
+      const k = `${subject}|${day}|${attempt}`;
+      if (!this.slots.has(k)) {
+        this.slots.add(k);
+        return attempt;
+      }
+    }
+    return null;
+  }
+  async bindDocument(docHash: string, subject: string): Promise<boolean> {
+    const owner = this.documents.get(docHash);
+    if (owner === undefined) {
+      this.documents.set(docHash, subject);
+      return true;
+    }
+    return owner === subject;
   }
 }
 
@@ -154,5 +187,28 @@ export class PgStrangerStore implements StrangerStore {
       [row.subject, row.outcome, row.livemode, row.verifiedAt, row.sessionId],
     );
     return (await this.getVerification(row.subject))!;
+  }
+
+  async reserveCheckSlot(subject: string, day: string, max: number): Promise<number | null> {
+    // The primary key does the locking: of N concurrent inserts for one
+    // (subject, day, attempt), exactly one succeeds.
+    for (let attempt = 1; attempt <= max; attempt++) {
+      const r = await this.db.query(
+        `INSERT INTO stranger_check_slots (subject, day, attempt, taken_at) VALUES ($1, $2, $3, now())
+         ON CONFLICT DO NOTHING RETURNING attempt`,
+        [subject, day, attempt],
+      );
+      if (r.rows.length > 0) return attempt;
+    }
+    return null;
+  }
+  async bindDocument(docHash: string, subject: string, at: number): Promise<boolean> {
+    await this.db.query(
+      `INSERT INTO stranger_documents (doc_hash, subject, bound_at) VALUES ($1, $2, to_timestamp($3 / 1000.0))
+       ON CONFLICT (doc_hash) DO NOTHING`,
+      [docHash, subject, at],
+    );
+    const r = await this.db.query(`SELECT subject FROM stranger_documents WHERE doc_hash = $1`, [docHash]);
+    return r.rows[0]?.subject === subject;
   }
 }

@@ -4,13 +4,23 @@ import type { StrangerConfig } from "../../src/stranger/config.js";
 
 /** In-memory Stripe Identity. `complete()` plays the part of the person holding the ID. */
 export class FakeIdentity implements IdentityApi {
-  sessions = new Map<string, VerificationSession & { dob?: { day: number; month: number; year: number } | null }>();
+  sessions = new Map<string, VerificationSession & { dob?: { day: number; month: number; year: number } | null; docNumber?: string | null }>();
   created: StripeParams[] = [];
   redacted: string[] = [];
   livemode = true;
   private n = 0;
 
-  async createVerificationSession(params: StripeParams): Promise<VerificationSession> {
+  keys: string[] = [];
+  private byKey = new Map<string, string>();
+
+  async createVerificationSession(params: StripeParams, idempotencyKey?: string): Promise<VerificationSession> {
+    // A real network hop: lets parallel callers interleave, as in production.
+    await new Promise((r) => setTimeout(r, 5));
+    if (idempotencyKey) {
+      const prior = this.byKey.get(idempotencyKey);
+      if (prior) return { ...this.sessions.get(prior)! };
+      this.keys.push(idempotencyKey);
+    }
     this.created.push(params);
     const id = `vs_fake${String(++this.n).padStart(10, "0")}`;
     const s = {
@@ -22,14 +32,20 @@ export class FakeIdentity implements IdentityApi {
       last_error: null,
     };
     this.sessions.set(id, s);
+    if (idempotencyKey) this.byKey.set(idempotencyKey, id);
     return { ...s };
   }
 
   async retrieveVerificationSession(id: string, expandDob: boolean): Promise<VerificationSession> {
     const s = this.sessions.get(id);
     if (!s) throw new Error("no such session");
-    const { dob, ...rest } = s;
-    return { ...rest, ...(expandDob && s.status === "verified" ? { verified_outputs: { dob: dob ?? null } } : {}) };
+    const { dob, docNumber, ...rest } = s;
+    if (!(expandDob && s.status === "verified")) return { ...rest };
+    return {
+      ...rest,
+      verified_outputs: { dob: dob ?? null },
+      last_verification_report: { document: { number: docNumber ?? null, issuing_country: "US" } },
+    };
   }
 
   async redactVerificationSession(id: string): Promise<void> {
@@ -37,10 +53,11 @@ export class FakeIdentity implements IdentityApi {
   }
 
   /** The person completes the check with a document showing this date of birth. */
-  complete(id: string, dob: { day: number; month: number; year: number } | null): void {
+  complete(id: string, dob: { day: number; month: number; year: number } | null, docNumber: string | null = `D${id}`): void {
     const s = this.sessions.get(id)!;
     s.status = "verified";
     s.dob = dob;
+    s.docNumber = docNumber;
   }
 
   fail(id: string): void {

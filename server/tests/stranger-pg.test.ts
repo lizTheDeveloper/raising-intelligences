@@ -34,4 +34,19 @@ describe.skipIf(!process.env.DATABASE_URL)("stranger store on Postgres", () => {
     expect(await store.countVerificationSessionsSince(s, Date.now() - 60_000)).toBe(2);
     expect((await store.getVerificationSession(last))?.subject).toBe(s);
   });
+
+  it("check slots: parallel reservations never exceed the cap", async () => {
+    const s = `s-${randomUUID()}`;
+    const got = await Promise.all(Array.from({ length: 10 }, () => store.reserveCheckSlot(s, "2026-11-23", 3)));
+    expect(got.filter((g) => g !== null).sort()).toEqual([1, 2, 3]);
+    expect(await store.reserveCheckSlot(s, "2026-11-24", 3)).toBe(1);
+  });
+
+  it("one document binds to one account, even under a race", async () => {
+    const doc = `d-${randomUUID()}`;
+    const [a, b] = await Promise.all([store.bindDocument(doc, "subject-a", Date.now()), store.bindDocument(doc, "subject-b", Date.now())]);
+    expect([a, b].filter(Boolean)).toHaveLength(1);
+    const winner = a ? "subject-a" : "subject-b";
+    expect(await store.bindDocument(doc, winner, Date.now())).toBe(true);
+  });
 });
