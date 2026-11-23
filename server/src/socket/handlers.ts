@@ -307,6 +307,9 @@ export function registerSocketHandlers(deps: SocketDeps): void {
   const STRANGER_PRIVATE = "This game is private.";
   if (stranger) {
     stranger.onHandleState = (gameId, slot, st) => io.to(slotRoom(gameId, slot)).emit(E.HANDLE_STATE, st);
+    stranger.onGameEnded = (gameId) => {
+      for (const s of ["parent1", "parent2"] as const) io.to(slotRoom(gameId, s)).emit(E.STRANGER_GAME_ENDED, {});
+    };
   }
   stranger?.attachMatching({
     createGame: async (host, partner) => {
@@ -584,6 +587,9 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     E.READY, E.PARENT_MESSAGE, E.THERAPY_MESSAGE, E.START_SIDEBAR, E.END_SIDEBAR,
     E.END_CHAT, E.START_EPILOGUE, E.ADULT_CHAT, E.REPORT_CARD,
   ]);
+  // Everything a stranger seat does that generates, or reaches the other
+  // player: re-checked on every event.
+  const STRANGER_GATED = new Set<string>([...GENERATING_EVENTS, E.SUBMIT_PERSONALITY, E.RETRY_OPENING, E.TYPING]);
 
   /**
    * The opening: once every parent's answers are in, generate the personality
@@ -841,17 +847,32 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     let strangerSeat: { gameId: string; mxid: string; subject: string } | null = null;
     socket.use((packet, next) => {
       const seat = strangerSeat;
-      // Not HANDLE_EXCHANGE: the reveal re-checks both seats itself, and
-      // putting a reported player out right there would tell them they were
-      // reported (and by whom). They just see the neutral ending.
-      if (!seat || seat.gameId !== data.gameId || !stranger || !GENERATING_EVENTS.has(String(packet[0]))) return next();
-      // Minors and bans are put out. A suspension is not (see seatHolderOk).
-      stranger.age.adultForPool(seat.mxid).then(
-        (pool) => {
-          if (pool.ok && !stranger.off()) return next();
-          logger.warn("stranger_seat_closed", { gameId: seat.gameId });
-          socket.emit(E.ERROR, { error: STRANGER_PRIVATE });
-          socket.disconnect(true);
+      // Not HANDLE_EXCHANGE (the reveal re-checks both seats itself) or
+      // STRANGER_REPORT (always accepted; a report filed by a suspended seat
+      // is a counter-report, reviewed only).
+      if (!seat || seat.gameId !== data.gameId || !stranger || !STRANGER_GATED.has(String(packet[0]))) return next();
+      Promise.all([stranger.age.adultForPool(seat.mxid), stranger.store.isSuspended(seat.subject), stranger.gameStopped(seat.gameId)]).then(
+        ([pool, suspended, stopped]) => {
+          if (!pool.ok || stranger.off()) {
+            // A minor result or a ban: put out of the seat, now.
+            logger.warn("stranger_seat_closed", { gameId: seat.gameId });
+            socket.emit(E.ERROR, { error: STRANGER_PRIVATE });
+            socket.disconnect(true);
+            return;
+          }
+          if (stopped) {
+            // A report was filed in this game: nothing more happens in it.
+            // Silent until its neutral ending is due, then that ending.
+            if (stranger.gameEndedNow(seat.gameId)) socket.emit(E.STRANGER_GAME_ENDED, {});
+            return;
+          }
+          if (suspended) {
+            // Suspended (a report elsewhere, or upheld): the game just ends.
+            logger.info("stranger_seat_suspended", { gameId: seat.gameId });
+            socket.emit(E.STRANGER_GAME_ENDED, {});
+            return;
+          }
+          next();
         },
         (err) => {
           logger.error("stranger_seat_check_failed", { error: err instanceof Error ? err.message : String(err) });
@@ -1047,6 +1068,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       // Recognised from state already in hand (or this process's own run
       // table): an ordinary game takes no extra await here.
       let strandedNoShow = false;
+      let strangerEnded = false;
       if (stranger?.matching && (state.relationshipType === STRANGER_RELATIONSHIP || stranger.matching.isRun(gameId))) {
         const matching = stranger.matching;
         const seats = await matching.runFor(gameId);
@@ -1079,6 +1101,9 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           // continues as a reconnect to its own seat — never to "new player".
           if (!getPlayerByToken(session, token)) return fail(STRANGER_PRIVATE);
           strangerSeat = { gameId, mxid: holder, subject: seats[slot] };
+          strangerEnded = (await stranger.gameStopped(gameId)) && stranger.gameEndedNow(gameId);
+          session = sessions.get(gameId) ?? session;
+          if (!getPlayerByToken(session, token)) return fail(STRANGER_PRIVATE);
           stranger.noteSeatHolder(gameId, slot, holder);
           matching.markArrived(gameId, slot);
           if (strandedNoShow) {
@@ -1175,6 +1200,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
             view(state, reconnected.player.slot, generatingGames.has(gameId))
           );
           if (strandedNoShow) socket.emit(E.STRANGER_NO_SHOW, {});
+          if (strangerEnded) socket.emit(E.STRANGER_GAME_ENDED, {});
           return;
         }
       }

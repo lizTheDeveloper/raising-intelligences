@@ -514,23 +514,115 @@ describe("stranger handle exchange and reports", () => {
     expect(JSON.stringify(seen)).not.toMatch(/@bob/);
   });
 
-  it("a reported player isn't told: they keep playing, can reload, and queue as if nothing happened (never matched)", async () => {
-    const { A, B, b, mb, gameId } = await pair();
-    const ok = A.once(E.STRANGER_REPORTED);
+  // ---- The reported game ends; a suspended subject is refused, neutrally ----
+
+  /** Everything a socket receives, for "nothing tell-tale was said" checks. */
+  function record(c: TestClient): Array<[string, unknown[]]> {
+    const got: Array<[string, unknown[]]> = [];
+    c.socket.onAny((ev: string, ...args: unknown[]) => got.push([ev, args]));
+    return got;
+  }
+  const readyFlag = (gameId: string, slot: string) => built.sessions.get(gameId)?.players.find((p) => p.slot === slot)?.ready;
+
+  it("a report ends that game for both seats: generation stops at once, then one neutral ending for each, after the delay", async () => {
+    cfg.handleEndingMinMs = 200;
+    cfg.handleEndingMaxMs = 220;
+    const { A, B, gameId } = await pair();
+    const seenA = record(A);
+    const seenB = record(B);
+    const t0 = Date.now();
+    const endA = A.once(E.STRANGER_GAME_ENDED);
+    const endB = B.once(E.STRANGER_GAME_ENDED);
+    const reported = A.once(E.STRANGER_REPORTED);
     A.emit(E.STRANGER_REPORT, { reason: "x" });
-    await ok;
-    // A generating action: not put out.
+    await reported;
+    // During the delay: the reported seat's actions do nothing, silently.
     let gone = false;
     B.socket.once("disconnect", () => { gone = true; });
     B.emit(E.READY, { ready: true });
-    await wait(150);
+    A.emit(E.READY, { ready: true });
+    await wait(100);
+    expect(readyFlag(gameId, "parent2")).toBeFalsy();
+    expect(readyFlag(gameId, "parent1")).toBeFalsy();
+    expect(seenB.filter(([ev]) => ev === E.ERROR || ev === E.STRANGER_GAME_ENDED)).toEqual([]);
     expect(gone).toBe(false);
-    // A reload: back in their own seat.
-    const again = await client();
-    const j = again.once<{ slot: string }>(E.JOINED);
-    again.emit(E.JOIN_GAME, { gameId, playerToken: mb.playerToken, strangerPass: b });
-    expect((await j).slot).toBe("parent2");
-    // Queue: looks like waiting, never matched — even with someone else there.
+    // Then the same ending for both, never before the delay.
+    const [a, b] = await Promise.all([endA, endB]);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(200);
+    expect(a).toEqual(b);
+    // Nothing anyone received mentions a report or a suspension (the reporter's own confirmation aside).
+    expect(JSON.stringify(seenB)).not.toMatch(/report|suspend/i);
+    expect(JSON.stringify(seenA.filter(([ev]) => ev !== E.STRANGER_REPORTED))).not.toMatch(/suspend/i);
+  });
+
+  it("a reported game stays ended: rejoining it after the ending gets the ending again, and it still generates nothing", async () => {
+    cfg.handleEndingMinMs = 30;
+    cfg.handleEndingMaxMs = 40;
+    const { A, a, ma, b, mb, gameId } = await pair();
+    const reported = A.once(E.STRANGER_REPORTED);
+    A.emit(E.STRANGER_REPORT, { reason: "x" });
+    await reported;
+    await wait(100);
+    // The reporter, reloading after the ending: the ending again, and nothing generates.
+    const back = await client();
+    const ended = back.once(E.STRANGER_GAME_ENDED);
+    back.emit(E.JOIN_GAME, { gameId, playerToken: ma.playerToken, strangerPass: a });
+    await ended;
+    back.emit(E.READY, { ready: true });
+    await wait(80);
+    expect(readyFlag(gameId, "parent1")).toBeFalsy();
+    // Bob is suspended now, so his seat is simply unavailable.
+    expect(await (async () => {
+      const c = await client();
+      const err = c.once<{ error: string }>(E.ERROR);
+      c.emit(E.JOIN_GAME, { gameId, playerToken: mb.playerToken, strangerPass: b });
+      return (await err).error;
+    })()).toMatch(/private/);
+  });
+
+  it("a suspended subject can't take a seat (reserved or their own) and is told nothing about why", async () => {
+    const a = await adult(ALICE);
+    const b = await adult(BOB);
+    await post("/stranger/queue/join", { pass: a, childName: "Wren" });
+    await post("/stranger/queue/join", { pass: b, childName: "Juniper" });
+    const ma = (await post("/stranger/queue/poll", { pass: a })).body;
+    const mb = (await post("/stranger/queue/poll", { pass: b })).body;
+    // Suspended (another game's report, upheld) after matching, before arriving.
+    await repo.stranger.suspend(await stranger.age.subjectHash(BOB), "report upheld");
+    const c = await client();
+    const seen = record(c);
+    const err = c.once<{ error: string }>(E.ERROR);
+    c.emit(E.JOIN_GAME, { gameId: mb.gameId, playerToken: mb.playerToken, strangerPass: b });
+    expect((await err).error).toMatch(/private/);
+    expect(JSON.stringify(seen)).not.toMatch(/report|suspend/i);
+    void ma;
+  });
+
+  it("a seated player suspended mid-game (elsewhere): generating events are refused with the neutral ending", async () => {
+    const { B, gameId } = await pair();
+    const seen = record(B);
+    await repo.stranger.suspend(await stranger.age.subjectHash(BOB), "report upheld");
+    const ended = B.once(E.STRANGER_GAME_ENDED);
+    B.emit(E.READY, { ready: true });
+    await ended;
+    await wait(50);
+    expect(readyFlag(gameId, "parent2")).toBeFalsy();
+    expect(JSON.stringify(seen)).not.toMatch(/report|suspend/i);
+  });
+
+  it("REST can't generate in a stranger game (so neither can a suspended player)", async () => {
+    const { gameId } = await pair();
+    await repo.stranger.suspend(await stranger.age.subjectHash(BOB), "report upheld");
+    for (const path of ["next-event", "message", "end-chat", "report-card", "epilogue", "personality"]) {
+      expect((await post(`/game/${gameId}/${path}`, { content: "hi", sender: "parent2" })).status).toBe(403);
+    }
+  });
+
+  it("a suspended subject queueing again sees waiting and is never matched", async () => {
+    const { A, b } = await pair();
+    const ok = A.once(E.STRANGER_REPORTED);
+    A.emit(E.STRANGER_REPORT, { reason: "x" });
+    await ok;
     const c = await adult("@carol:multiversegames.ai");
     expect((await post("/stranger/queue/join", { pass: b, childName: "X" })).body).toMatchObject({ status: "waiting" });
     await post("/stranger/queue/join", { pass: c, childName: "Y" });

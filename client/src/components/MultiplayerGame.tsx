@@ -17,7 +17,7 @@ import { ChildPortrait } from "./ChildPortrait";
 import { FamilyAlbum } from "./FamilyAlbum";
 import { PartnerPaymentGate } from "./PartnerPaymentGate";
 import { StrangerNoShow } from "./StrangerQueue";
-import { HandleExchange, StrangerReport } from "./StrangerExchange";
+import { HandleExchange, StrangerGameEnded, StrangerReport } from "./StrangerExchange";
 
 const API = import.meta.env.BASE_URL + "api";
 
@@ -497,6 +497,21 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
             </button>
           )}
         </div>
+      </div>
+    );
+  }
+
+  // ---- Stranger mode: the game has ended (neutral, whatever the cause) ----
+  if (state?.strangerRun && (mp.strangerEnded || mp.strangerReported)) {
+    return (
+      <div className="app fade-in">
+        <StrangerGameEnded
+          reported={mp.strangerReported}
+          onLeave={() => {
+            mp.leaveGame();
+            window.location.assign(import.meta.env.BASE_URL);
+          }}
+        />
       </div>
     );
   }
