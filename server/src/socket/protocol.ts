@@ -128,6 +128,13 @@ export interface ViewerState {
    */
   partnerPersonalitySubmitted: boolean;
   /**
+   * Has THIS seat's guardian-quiz answer reached the server? A player who
+   * reloads after submitting (the Stripe redirect is one such reload), or a
+   * stranger-mode player whose intake was taken before matching, opens the
+   * guardian screen on its waiting step instead of retaking the quiz.
+   */
+  yourPersonalitySubmitted: boolean;
+  /**
    * The epilogue narrative, or "" before it has been generated.
    *
    * Carried on every STATE for the same reason as the two fields above: the
@@ -138,6 +145,12 @@ export interface ViewerState {
    * for the epilogue to ask for a report card about it.
    */
   epilogue: string;
+  /**
+   * The $20 per-child partner payment, for this seat. Null when nothing is
+   * due (solo, AI co-parent, paywall off, or before the partner has joined).
+   * `youPay` is true on the host's (parent1's) view only.
+   */
+  payment: { status: "due" | "paid" | "refunded"; youPay: boolean; amountCents: number } | null;
 }
 
 /** Server → room co-presence broadcast, emitted to the *other* player only. */
@@ -194,6 +207,13 @@ export const SOCKET_EVENTS = {
   ADULT_CHAT: "adult_chat",
   REPORT_CARD: "report_card",
   SUBMIT_PERSONALITY: "submit_personality",
+  /**
+   * Re-run the opening (seed + scene 1) for a seat whose answers are already
+   * in: after the host pays, or after a failed opening on a client that no
+   * longer holds the quiz answers to re-submit. Idempotent: does nothing once
+   * the opening has run, and nothing while the child is still unpaid.
+   */
+  RETRY_OPENING: "retry_opening",
   /**
    * "I want to continue this on another device." Mints a short-lived,
    * single-use code bound to the requesting socket's {gameId, slot}, answered

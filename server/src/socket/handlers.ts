@@ -66,6 +66,7 @@ import { generateMultiplayerAlbums } from "../game/album-generator.js";
 import { logger } from "../logger.js";
 import { isResearchEnabled } from "../research/config.js";
 import { loadParentContext } from "../research/parent-context.js";
+import type { PartnerPayments } from "../payments/partner-payments.js";
 
 export interface SocketDeps {
   io: Server;
@@ -87,6 +88,9 @@ export interface SocketDeps {
   /** Lifetime of a device-handoff code. Injectable so tests can expire one
    * without waiting; production always takes the default. */
   handoffTtlMs?: number;
+  /** The $20 per-child partner payment (payments/partner-payments.ts).
+   * Optional so tests that build SocketDeps directly keep the free flow. */
+  payments?: PartnerPayments;
 }
 
 /**
@@ -264,7 +268,9 @@ function viewerState(state: GameState, slot: Sender, generating: boolean): Viewe
     therapyMessages: state.therapyMessages,
     generating,
     partnerPersonalitySubmitted: !!state.parentPersonalities[otherSlot],
+    yourPersonalitySubmitted: slot !== "kid" && !!state.parentPersonalities[slot],
     epilogue: state.epilogue,
+    payment: null,
   };
 }
 
@@ -283,7 +289,13 @@ function lobbyState(session: Session): LobbyState {
 export function registerSocketHandlers(deps: SocketDeps): void {
   const { io, games, sessions, conversationEngine, endgameEngine, repo, llm,
           gameLocks = new Map<string, Promise<void>>(),
-          handoffTtlMs = HANDOFF_TTL_MS } = deps;
+          handoffTtlMs = HANDOFF_TTL_MS, payments } = deps;
+
+  /** viewerState plus the per-seat payment step, which lives outside GameState. */
+  const view = (state: GameState, slot: Sender, generating: boolean): ViewerState => ({
+    ...viewerState(state, slot, generating),
+    payment: payments?.view(state.id, slot) ?? null,
+  });
 
   const lock = <T>(gameId: string, fn: () => Promise<T>) => withGameLock(gameLocks, gameId, fn);
 
@@ -419,7 +431,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       // the protocol kept arriving. See slotRoom.
       io.to(slotRoom(gameId, player.slot)).emit(
         E.STATE,
-        viewerState(state, player.slot, generating)
+        view(state, player.slot, generating)
       );
     }
   }
@@ -496,6 +508,125 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       }
     }
   }
+
+  /** Both parent seats are held by people. (The AI co-parent is never charged for.) */
+  function twoHumanSeats(gameId: string): boolean {
+    return (sessions.get(gameId)?.players.length ?? 0) >= 2;
+  }
+
+  /**
+   * The opening: once every parent's answers are in, generate the personality
+   * seed, then scene 1. Caller holds the game lock.
+   *
+   * Between the two sits the partner-payment gate. A child raised by two
+   * humans whose host hasn't paid stops here, before anything is generated for
+   * it: the state is saved, STATE shows the payment step, and the opening is
+   * re-run when the payment lands (payments.onPaid) or when a client sends
+   * RETRY_OPENING. With the paywall off this is exactly the old flow.
+   */
+  async function runOpening(gameId: string, updatedState: GameState, setStage: (s: "seed" | "scene") => void): Promise<void> {
+    // Determine readiness: solo needs only parent1; multiplayer needs both
+    const isSolo =
+      updatedState.relationshipType === "solo parent" ||
+      updatedState.relationshipType === "solo";
+
+    const parent1 = updatedState.parentPersonalities.parent1;
+    const parent2 = updatedState.parentPersonalities.parent2;
+    const allPersonalitiesReady = isSolo ? !!parent1 : !!(parent1 && parent2);
+
+    if (!allPersonalitiesReady || !parent1) {
+      await repo.saveGame(updatedState);
+      return;
+    }
+
+    const opening = updatedState.phase === "event_intro" && updatedState.currentEventNumber === 0;
+    if (payments && opening && !updatedState.personalitySeed) {
+      const allowed = await payments.openingAllowed(gameId, !isSolo && twoHumanSeats(gameId));
+      if (!allowed) {
+        await repo.saveGame(updatedState);
+        broadcastState(gameId);
+        return;
+      }
+    }
+
+    setStage("seed");
+    const seed = await generatePersonalitySeed(
+      conversationEngine.llm,
+      updatedState.childName,
+      parent1,
+      isSolo ? undefined : parent2
+    );
+    const withSeed: GameState = { ...updatedState, personalitySeed: seed };
+    games.set(gameId, withSeed);
+    await repo.saveGame(withSeed);
+    io.to(gameId).emit(E.PERSONALITY_SEED_READY, { personalitySeed: seed });
+
+    // The reorder's whole point: scene 1 is generated HERE, from
+    // `withSeed`, so the world manager sees the personality seed and both
+    // parents' personalities. Passing `updatedState` (the pre-seed state)
+    // or re-reading via currentState() before the games.set above would
+    // silently reproduce the exact bug this replaces.
+    //
+    // Only for the opening — a co-parent submitting late (routes/game.ts
+    // allows it) must never regenerate the scene that is already running.
+    if (withSeed.phase === "event_intro" && withSeed.currentEventNumber === 0) {
+      setStage("scene");
+      await startFirstScene(gameId, withSeed);
+    }
+  }
+
+  /**
+   * The opening's failure has to be *said*, to both parents, in words a
+   * player can act on — the same requirements the READY catch above
+   * is written to, for the same reason.
+   *
+   * This used to be `failWithError(err, "SUBMIT_PERSONALITY")`, which is
+   * wrong the same two ways. It emits to `socket` alone, and the submit
+   * that reaches this code is whichever one completed the pair — so the
+   * other parent, sitting on the identical screen, was told nothing at
+   * all. And what it emitted was `String(err)`: for the failure seen in
+   * the wild, "TimeoutError: The operation was aborted due to timeout"
+   * (both calls above route through llm/routing-client.ts, whose
+   * AbortSignal.timeout(90_000) is the whole budget — withRetry
+   * deliberately does not retry timeouts). Nothing rendered it either
+   * way.
+   *
+   * The retry needs no new protocol: SUBMIT_PERSONALITY is re-emittable
+   * by design, both personalities are still in `games`, and
+   * startFirstScene deletes its own guard on the way out. Either parent
+   * pressing "try again" re-runs the whole opening. What made that
+   * unreachable was the ready flags being cleared out from under the
+   * guardian screen — see startFirstScene's `finally`.
+   */
+  function reportOpeningFailure(gameId: string, stage: "seed" | "scene", err: unknown, event: string): void {
+    captureException(err, { tags: { component: "socket", event } });
+    logger.error("opening_generation_failed", {
+      gameId,
+      stage,
+      error: err instanceof Error ? err.stack : String(err),
+    });
+    io.to(gameId).emit(E.ERROR, {
+      error:
+        stage === "scene"
+          ? "the first scene didn't finish building. try again."
+          : "their personality didn't finish forming. try again.",
+    });
+  }
+
+  // A child's host just paid: run its opening, if the game is live here. (If
+  // it isn't — evicted, or a restart — the players' return sends RETRY_OPENING.)
+  payments?.onPaid((gameId) => {
+    if (!games.has(gameId)) return;
+    let stage: "seed" | "scene" = "seed";
+    lock(gameId, async () => {
+      const state = games.get(gameId);
+      if (!state) return;
+      broadcastState(gameId);
+      if (!(state.phase === "event_intro" && state.currentEventNumber === 0)) return;
+      if (firstSceneStarted.has(gameId) || state.personalitySeed) return;
+      await runOpening(gameId, state, (next) => { stage = next; });
+    }).catch((err) => reportOpeningFailure(gameId, stage, err, "PAYMENT_PAID"));
+  });
 
   /**
    * End-of-chat helper: runs the psychologist / identity-doc flow, saves
@@ -750,6 +881,8 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         }
       }
       if (!state) return fail("Game not found");
+      // The payment step rides on STATE, which is synchronous: load it first.
+      if (payments) await payments.hydrate(gameId);
 
       // Repair the one state the persistence layer cannot represent faithfully
       // (see normalizeRehydrated). Applied to the resolved state, not just to a
@@ -821,7 +954,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         broadcastLobby(gameId);
         socket.emit(
           E.STATE,
-          viewerState(state, moved.player.slot, generatingGames.has(gameId))
+          view(state, moved.player.slot, generatingGames.has(gameId))
         );
         return;
       }
@@ -871,7 +1004,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           // rides on STATE itself, which closes that hole (playtest note 7).
           socket.emit(
             E.STATE,
-            viewerState(state, reconnected.player.slot, generatingGames.has(gameId))
+            view(state, reconnected.player.slot, generatingGames.has(gameId))
           );
           return;
         }
@@ -913,7 +1046,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       broadcastLobby(gameId);
       socket.emit(
         E.STATE,
-        viewerState(state, added.player.slot, generatingGames.has(gameId))
+        view(state, added.player.slot, generatingGames.has(gameId))
       );
     });
 
@@ -1746,79 +1879,33 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         // as "the seed is generating", and only one of them is ever true.
         broadcastState(gameId);
 
-        // Determine readiness: solo needs only parent1; multiplayer needs both
-        const isSolo =
-          updatedState.relationshipType === "solo parent" ||
-          updatedState.relationshipType === "solo";
+        await runOpening(gameId, updatedState, (next) => { stage = next; });
+      }).catch((err) => reportOpeningFailure(gameId, stage, err, "SUBMIT_PERSONALITY"));
+    });
 
-        const parent1 = updatedState.parentPersonalities.parent1;
-        const parent2 = updatedState.parentPersonalities.parent2;
-        const allPersonalitiesReady = isSolo ? !!parent1 : !!(parent1 && parent2);
-
-        if (allPersonalitiesReady && parent1) {
-          const seed = await generatePersonalitySeed(
-            conversationEngine.llm,
-            updatedState.childName,
-            parent1,
-            isSolo ? undefined : parent2
-          );
-          const withSeed: GameState = { ...updatedState, personalitySeed: seed };
-          games.set(gameId, withSeed);
-          await repo.saveGame(withSeed);
-          io.to(gameId).emit(E.PERSONALITY_SEED_READY, { personalitySeed: seed });
-
-          // The reorder's whole point: scene 1 is generated HERE, from
-          // `withSeed`, so the world manager sees the personality seed and both
-          // parents' personalities. Passing `updatedState` (the pre-seed state)
-          // or re-reading via currentState() before the games.set above would
-          // silently reproduce the exact bug this replaces.
-          //
-          // Only for the opening — a co-parent submitting late (routes/game.ts
-          // allows it) must never regenerate the scene that is already running.
-          if (withSeed.phase === "event_intro" && withSeed.currentEventNumber === 0) {
-            stage = "scene";
-            await startFirstScene(gameId, withSeed);
-          }
-        } else {
-          await repo.saveGame(updatedState);
+    // ---- RETRY_OPENING ----
+    // The opening again, for a seat whose answers are already in. Sent by a
+    // client after the host's payment lands, or as the "try again" of a
+    // guardian screen that opened on its waiting step (and so holds no quiz
+    // answers to re-submit). Does nothing once scene 1 exists.
+    socket.on(E.RETRY_OPENING, () => {
+      const gameId = data.gameId;
+      const slot = data.slot;
+      if (!gameId || !slot || slot === "kid") return fail("Not in a game");
+      let stage: "seed" | "scene" = "seed";
+      lock(gameId, async () => {
+        const state = currentState();
+        if (!state) { fail("Not in a game"); return; }
+        if (!(state.phase === "event_intro" && state.currentEventNumber === 0)) return;
+        if (firstSceneStarted.has(gameId)) return;
+        if (state.personalitySeed) {
+          // The seed survived a failed scene 1: build the scene, keep the child.
+          stage = "scene";
+          await startFirstScene(gameId, state);
+          return;
         }
-      }).catch((err) => {
-        /**
-         * The opening's failure has to be *said*, to both parents, in words a
-         * player can act on — the same requirements the READY catch above
-         * is written to, for the same reason.
-         *
-         * This used to be `failWithError(err, "SUBMIT_PERSONALITY")`, which is
-         * wrong the same two ways. It emits to `socket` alone, and the submit
-         * that reaches this code is whichever one completed the pair — so the
-         * other parent, sitting on the identical screen, was told nothing at
-         * all. And what it emitted was `String(err)`: for the failure seen in
-         * the wild, "TimeoutError: The operation was aborted due to timeout"
-         * (both calls above route through llm/routing-client.ts, whose
-         * AbortSignal.timeout(90_000) is the whole budget — withRetry
-         * deliberately does not retry timeouts). Nothing rendered it either
-         * way.
-         *
-         * The retry needs no new protocol: SUBMIT_PERSONALITY is re-emittable
-         * by design, both personalities are still in `games`, and
-         * startFirstScene deletes its own guard on the way out. Either parent
-         * pressing "try again" re-runs the whole opening. What made that
-         * unreachable was the ready flags being cleared out from under the
-         * guardian screen — see startFirstScene's `finally`.
-         */
-        captureException(err, { tags: { component: "socket", event: "SUBMIT_PERSONALITY" } });
-        logger.error("opening_generation_failed", {
-          gameId,
-          stage,
-          error: err instanceof Error ? err.stack : String(err),
-        });
-        io.to(gameId).emit(E.ERROR, {
-          error:
-            stage === "scene"
-              ? "the first scene didn't finish building. try again."
-              : "their personality didn't finish forming. try again.",
-        });
-      });
+        await runOpening(gameId, state, (next) => { stage = next; });
+      }).catch((err) => reportOpeningFailure(gameId, stage, err, "RETRY_OPENING"));
     });
 
     // ---- DISCONNECT: mark disconnected, don't remove ----

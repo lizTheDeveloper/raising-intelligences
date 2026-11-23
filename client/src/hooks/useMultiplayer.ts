@@ -18,6 +18,9 @@ const E = {
   ADULT_CHAT: "adult_chat",
   REPORT_CARD: "report_card",
   SUBMIT_PERSONALITY: "submit_personality",
+  /** Re-run the opening from answers the server already holds (after the
+   * host pays, or a retry from a guardian screen that holds no answers). */
+  RETRY_OPENING: "retry_opening",
   PERSONALITY_SUBMITTED: "personality_submitted",
   PERSONALITY_SEED_READY: "personality_seed_ready",
   /** "let me keep playing from my phone" — see HANDOFF_CODE. */
@@ -238,6 +241,18 @@ interface ViewerState {
    * confident empty string.
    */
   epilogue?: string;
+  /** Has THIS seat's guardian-quiz answer reached the server? Optional for
+   * the same reason as the fields above. */
+  yourPersonalitySubmitted?: boolean;
+  /** The $20 per-child partner payment, for this seat; null/absent when
+   * nothing is due. `youPay` is true on the host's view only. */
+  payment?: PartnerPayment | null;
+}
+
+export interface PartnerPayment {
+  status: "due" | "paid" | "refunded";
+  youPay: boolean;
+  amountCents: number;
 }
 
 export function useMultiplayer() {
@@ -907,6 +922,15 @@ export function useMultiplayer() {
    */
   const clearError = useCallback(() => setError(null), []);
 
+  const retryOpening = useCallback(() => {
+    socketRef.current?.emit(E.RETRY_OPENING);
+  }, []);
+
+  /** This seat's long-lived credential — the host proves they are the host with it. */
+  const playerToken = useCallback((): string | null => {
+    return playerTokenRef.current ?? loadResume()?.playerToken ?? null;
+  }, []);
+
   const leaveGame = useCallback(() => {
     clearResume();
     setGameId(null);
@@ -962,6 +986,8 @@ export function useMultiplayer() {
     sendTherapyMessage,
     setTyping,
     submitPersonality,
+    retryOpening,
+    playerToken,
     clearError,
     startSidebar,
     endSidebar,

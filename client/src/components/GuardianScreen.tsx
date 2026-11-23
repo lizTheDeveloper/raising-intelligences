@@ -219,6 +219,19 @@ interface Props {
    * below can only ever be describing *this* attempt.
    */
   onClearError?: () => void;
+  /**
+   * Multiplayer: this seat's answers are already on the server — the player
+   * reloaded after submitting (the host's Stripe redirect is one such reload),
+   * or is a stranger-mode player whose intake was taken before matching. The
+   * screen opens on its closing beat instead of asking the quiz again.
+   */
+  alreadySubmitted?: boolean;
+  /**
+   * Multiplayer: re-run the opening from the answers the server already holds
+   * (RETRY_OPENING). Used by "try again" when this screen holds no answers of
+   * its own to re-submit.
+   */
+  onRetryOpening?: () => void;
 }
 
 function pickVariant(): number {
@@ -226,8 +239,8 @@ function pickVariant(): number {
 }
 
 // ---------- Component ----------
-export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmitPersonality, seedReadyProp, partnerSubmitted, partnerName, onSeedReady, error, onClearError }: Props) {
-  const [stepIndex, setStepIndex] = useState(0);
+export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmitPersonality, seedReadyProp, partnerSubmitted, partnerName, onSeedReady, error, onClearError, alreadySubmitted, onRetryOpening }: Props) {
+  const [stepIndex, setStepIndex] = useState(() => (alreadySubmitted ? LAST_STEP : 0));
   const [narrativeLines, setNarrativeLines] = useState<string[]>([]);
   const [oceanAnswers, setOceanAnswers] = useState<number[]>([]);
   const [confessional1, setConfessional1] = useState("");
@@ -257,7 +270,7 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
   const base = import.meta.env.BASE_URL;
 
   // Guard against double-firing the personality POST (React strict mode)
-  const personalitySubmitted = useRef(false);
+  const personalitySubmitted = useRef(!!alreadySubmitted);
 
   /**
    * Opening this screen at all.
@@ -514,9 +527,16 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
   // component, and reaching the waiting step is what proves they are complete.
   const handleRetry = useCallback(() => {
     setSeedError(null);
+    // Nothing of our own to re-submit (we opened on the closing beat): ask the
+    // server to re-run the opening from the answers it already has.
+    if (onRetryOpening && oceanAnswers.length === 0) {
+      onClearError?.();
+      onRetryOpening();
+      return;
+    }
     personalitySubmitted.current = false;
     handleConfessionalSubmit();
-  }, [handleConfessionalSubmit]);
+  }, [handleConfessionalSubmit, onRetryOpening, oceanAnswers.length, onClearError]);
 
   // ---------- Ready handler ----------
   const handleNotReady = () => {

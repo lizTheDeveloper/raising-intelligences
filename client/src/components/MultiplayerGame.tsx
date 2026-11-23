@@ -15,6 +15,26 @@ import { ReportCard } from "./ReportCard";
 import { ProcessingScreen } from "./ProcessingScreen";
 import { ChildPortrait } from "./ChildPortrait";
 import { FamilyAlbum } from "./FamilyAlbum";
+import { PartnerPaymentGate } from "./PartnerPaymentGate";
+
+const API = import.meta.env.BASE_URL + "api";
+
+/**
+ * Read (and erase) the `partner_paid` Checkout Session id Stripe puts on the
+ * return URL, so it is confirmed once and never re-sent on a later reload.
+ */
+function takePaidSessionFromUrl(): string | null {
+  try {
+    const url = new URL(window.location.href);
+    const id = url.searchParams.get("partner_paid");
+    if (!id) return null;
+    url.searchParams.delete("partner_paid");
+    window.history.replaceState(null, "", url.toString());
+    return /^cs_(test|live)_[A-Za-z0-9]+$/.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
 
 const RELATIONSHIP_OPTIONS = [
   "romantic partners",
@@ -159,6 +179,38 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     if (matrixUser) syncKidsToServer(matrixUser).catch(() => {});
   }, [mp.gameId, mp.state?.childName, matrixUser]);
 
+  // Back from Stripe Checkout: confirm the session once we're seated again.
+  // The server reads the session from Stripe itself; the webhook settles it
+  // too, so this is only the fast path.
+  const paidSessionRef = useRef<string | null | undefined>(undefined);
+  if (paidSessionRef.current === undefined) paidSessionRef.current = takePaidSessionFromUrl();
+  const { retryOpening } = mp;
+  useEffect(() => {
+    const sessionId = paidSessionRef.current;
+    if (!sessionId || !mp.gameId) return;
+    paidSessionRef.current = null;
+    fetch(`${API}/partner-payment/confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gameId: mp.gameId, sessionId }),
+    })
+      .catch(() => {})
+      .finally(() => retryOpening());
+  }, [mp.gameId, retryOpening]);
+
+  // A paid child whose opening hasn't run here yet (the server restarted, or
+  // the game was rehydrated): nudge it once. The server ignores it otherwise.
+  const openingNudgedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const s = mp.state;
+    if (!s || !mp.gameId || openingNudgedRef.current === mp.gameId) return;
+    const preGameNow = s.phase === "event_intro" && s.currentEventNumber === 0;
+    if (preGameNow && s.payment?.status === "paid" && s.yourPersonalitySubmitted && s.partnerPersonalitySubmitted && !s.generating) {
+      openingNudgedRef.current = mp.gameId;
+      retryOpening();
+    }
+  }, [mp.state, mp.gameId, retryOpening]);
+
   const state = mp.state;
   const mySlot = mp.slot;
   const sidebarActive = state?.sidebarActive ?? null;
@@ -178,7 +230,11 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   // this state now spans the whole guardian quiz, not just the pre-ready wait.
   const preGame = !!state && state.phase === "event_intro" && state.currentEventNumber === 0;
 
-  const inLobbyView = !state || (preGame && !meReady);
+  // A seat whose answers are already on the server has passed the lobby by
+  // definition — even if a reload (the host's Stripe redirect) cleared its
+  // ready flag on the way out.
+  const pastLobby = meReady || !!state?.yourPersonalitySubmitted;
+  const inLobbyView = !state || (preGame && !pastLobby);
 
   /**
    * The lobby wait — the one genuinely new multiplayer event, as opposed to the
@@ -240,7 +296,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   const showGuardian =
     !guardianDismissed &&
     !!state &&
-    ((preGame && meReady) ||
+    ((preGame && pastLobby) ||
       (state.phase === "family_chat" &&
         state.currentEventNumber === 1 &&
         state.messages.length === 0));
@@ -441,6 +497,25 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     );
   }
 
+  // ---- The $20 per-child step: partner has joined, nothing generated yet ----
+  if (preGame && state?.payment?.status === "due") {
+    const hostName = mp.players.find((p) => p.slot === "parent1")?.displayName?.trim() || "your partner";
+    return (
+      <div className="app fade-in">
+        <PartnerPaymentGate
+          gameId={mp.gameId!}
+          childName={state.childName}
+          youPay={state.payment.youPay}
+          amountCents={state.payment.amountCents}
+          hostName={hostName}
+          partnerName={partnerName}
+          playerToken={mp.playerToken}
+          onLeave={mp.leaveGame}
+        />
+      </div>
+    );
+  }
+
   // ---- Lobby: first event_intro, before the story begins ----
   if (inLobbyView) {
     return (
@@ -481,6 +556,8 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
           // `failWithError` was told nothing at all.
           error={mp.error}
           onClearError={mp.clearError}
+          alreadySubmitted={!!state.yourPersonalitySubmitted}
+          onRetryOpening={mp.retryOpening}
         />
         {/* The quiz is long, typed and confessional — the likeliest moment in
             the whole game for someone to get up and walk outside. It had no
