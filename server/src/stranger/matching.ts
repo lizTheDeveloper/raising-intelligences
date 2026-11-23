@@ -15,10 +15,16 @@ import type { StrangerStore } from "./store.js";
  *   used, and they are the one asked to pay (the payment layer charges
  *   parent1). Ties on the clock break by arrival order.
  * - A match reserves the two seats for those two accounts only, and gives each
- *   their own seat token. Nobody else can ever sit in a stranger game.
- * - The join window: if one doesn't arrive in time their seat is removed (so
- *   one human, nothing due), and the one who came can requeue at their
- *   original place. If neither arrives the game is discarded.
+ *   their own seat token. Nobody else can ever sit in a stranger game. A
+ *   reserved seat is NOT a seat (not in the session, not counted by the
+ *   paywall) until its adult actually arrives.
+ * - The join window: if one doesn't arrive in time their reservation lapses
+ *   (one human, nothing due), and the one who came can requeue at their
+ *   original place. If neither arrives the game is discarded. A discarded game
+ *   is marked so in the store and never opens again.
+ * - Once both have arrived the match is released: the game carries on as an
+ *   ordinary two-seat game (seats still bound), and both can queue again later.
+ * - A queued player who stops polling (closed tab) drops out of the queue.
  */
 
 export type StrangerSlot = "parent1" | "parent2";
@@ -39,6 +45,7 @@ export interface QueueEntry {
   childName: string;
   queuedAt: number;
   seq: number;
+  lastSeen: number;
 }
 
 export interface StrangerRunSeats {
@@ -46,7 +53,10 @@ export interface StrangerRunSeats {
   meetupCode: string | null;
   parent1: string;
   parent2: string;
+  discarded?: boolean;
 }
+
+const SEAT_CACHE_MAX = 5000;
 
 export interface MatchingHooks {
   createGame(host: QueueEntry, partner: QueueEntry): Promise<{ gameId: string; tokens: Record<StrangerSlot, string> }>;
@@ -104,9 +114,11 @@ export class StrangerMatching {
     if (existing) {
       existing.displayName = displayName;
       existing.childName = childName;
+      existing.lastSeen = this.now();
       return { ok: true };
     }
-    this.queue.push({ mxid, subject, meetupCode, displayName, childName, queuedAt: this.now(), seq: ++this.seq });
+    const now = this.now();
+    this.queue.push({ mxid, subject, meetupCode, displayName, childName, queuedAt: now, seq: ++this.seq, lastSeen: now });
     await this.runMatch(meetupCode);
     return { ok: true };
   }
@@ -125,8 +137,10 @@ export class StrangerMatching {
       }
       this.matched.delete(mxid);
     }
+    this.pruneIdle();
     const mine = this.queue.find((e) => e.mxid === mxid);
     if (!mine) return { status: "none" };
+    mine.lastSeen = this.now();
     const same = this.sorted(mine.meetupCode);
     return { status: "waiting", position: same.indexOf(mine) + 1, count: same.length };
   }
@@ -136,24 +150,70 @@ export class StrangerMatching {
     return this.runs.has(gameId) || !!this.seatCache.get(gameId);
   }
 
+  /** Is the join window of this match still open (in this process)? */
+  isPending(gameId: string): boolean {
+    return this.runs.has(gameId);
+  }
+
+  /** The slot a still-reserved, never-taken seat token belongs to, or null. */
+  reservedSlot(gameId: string, token: string): StrangerSlot | null {
+    const run = this.runs.get(gameId);
+    if (!run) return null;
+    for (const s of SLOTS) {
+      if (run.tokens[s] === token && run.absent !== s && !run.arrived.has(s)) return s;
+    }
+    return null;
+  }
+
+  reservedName(gameId: string, slot: StrangerSlot): string {
+    return this.runs.get(gameId)?.entries[slot].displayName ?? "a parent";
+  }
+
+  /**
+   * After a restart the join window is gone with the process. The one seat
+   * that had arrived is all that is left (the other's reservation was never
+   * stored): treat it as a no-show now, so the one who came can requeue.
+   */
+  adoptStranded(seats: StrangerRunSeats, present: StrangerSlot, entry: { mxid: string; displayName: string; childName: string }): void {
+    if (this.runs.has(seats.gameId)) return;
+    const now = this.now();
+    const mk = (mxid: string, subject: string, displayName: string): QueueEntry => ({
+      mxid, subject, meetupCode: seats.meetupCode, displayName, childName: entry.childName, queuedAt: now, seq: ++this.seq, lastSeen: now,
+    });
+    const absent: StrangerSlot = present === "parent1" ? "parent2" : "parent1";
+    const entries = {
+      [present]: mk(entry.mxid, seats[present], entry.displayName),
+      [absent]: mk("", seats[absent], ""),
+    } as Record<StrangerSlot, QueueEntry>;
+    this.runs.set(seats.gameId, {
+      gameId: seats.gameId, meetupCode: seats.meetupCode, entries, tokens: { parent1: "", parent2: "" },
+      arrived: new Set([present]), timer: null, absent,
+    });
+    logger.info("stranger_no_show", { gameId: seats.gameId, afterRestart: true });
+  }
+
   /** Whose seat is whose in a stranger game, or null if it isn't one. Survives a restart (stored). */
   async runFor(gameId: string): Promise<StrangerRunSeats | null> {
     const live = this.runs.get(gameId);
     if (live) return { gameId, meetupCode: live.meetupCode, parent1: live.entries.parent1.subject, parent2: live.entries.parent2.subject };
     if (this.seatCache.has(gameId)) return this.seatCache.get(gameId) ?? null;
     const row = await this.deps.store.getRun(gameId);
-    this.seatCache.set(gameId, row);
+    this.cacheSeats(gameId, row);
     return row;
+  }
+
+  private cacheSeats(gameId: string, row: StrangerRunSeats | null): void {
+    this.seatCache.delete(gameId);
+    this.seatCache.set(gameId, row);
+    if (this.seatCache.size > SEAT_CACHE_MAX) this.seatCache.delete(this.seatCache.keys().next().value as string);
   }
 
   markArrived(gameId: string, slot: StrangerSlot): void {
     const run = this.runs.get(gameId);
     if (!run || run.absent) return;
     run.arrived.add(slot);
-    if (run.arrived.size === 2 && run.timer) {
-      clearTimeout(run.timer);
-      run.timer = null;
-    }
+    // Both here: the match is done. The game goes on; the matching forgets it.
+    if (run.arrived.size === 2) this.endRun(gameId);
   }
 
   /** The one who came, after a no-show: back in the queue at their original place. */
@@ -163,13 +223,21 @@ export class StrangerMatching {
     const present: StrangerSlot = run.absent === "parent1" ? "parent2" : "parent1";
     const entry = run.entries[present];
     if (entry.mxid !== mxid) return false;
-    this.endRun(gameId);
-    this.deps.hooks.discardGame(gameId);
     const pool = await this.deps.age.adultForPool(mxid);
-    if (!pool.ok) return false;
-    this.queue.push({ ...entry });
+    if (!pool.ok || (await this.deps.store.isSuspended(entry.subject))) return false;
+    if (this.runs.get(gameId) !== run) return false; // raced with another requeue
+    await this.discard(gameId);
+    // Never twice in the queue (a /queue/join may have landed meanwhile).
+    if (!this.matched.has(mxid) && !this.queue.some((e) => e.mxid === mxid)) {
+      this.queue.push({ ...entry, lastSeen: this.now() });
+    }
     await this.runMatch(entry.meetupCode);
     return true;
+  }
+
+  private pruneIdle(): void {
+    const cutoff = this.now() - this.deps.config().queueIdleMs;
+    this.queue = this.queue.filter((e) => e.lastSeen >= cutoff);
   }
 
   private sorted(meetupCode: string | null): QueueEntry[] {
@@ -189,6 +257,7 @@ export class StrangerMatching {
 
   private async matchOnce(meetupCode: string | null): Promise<void> {
     for (;;) {
+      this.pruneIdle();
       const waiting = this.sorted(meetupCode);
       // Re-check every candidate now: anyone who stopped being an eligible
       // adult while waiting leaves the queue.
@@ -200,6 +269,7 @@ export class StrangerMatching {
       let pair: [QueueEntry, QueueEntry] | null = null;
       outer: for (let i = 0; i < eligible.length; i++) {
         for (let j = i + 1; j < eligible.length; j++) {
+          if (eligible[i].mxid === eligible[j].mxid || eligible[i].subject === eligible[j].subject) continue;
           if (!(await this.deps.store.isBlocked(eligible[i].subject, eligible[j].subject))) {
             pair = [eligible[i], eligible[j]];
             break outer;
@@ -207,15 +277,31 @@ export class StrangerMatching {
         }
       }
       if (!pair) return;
-      await this.makeRun(pair[0], pair[1]);
+      // Either may have left while we were checking.
+      if (!this.queue.includes(pair[0]) || !this.queue.includes(pair[1])) continue;
+      if (!(await this.makeRun(pair[0], pair[1]))) return;
     }
   }
 
-  private async makeRun(host: QueueEntry, partner: QueueEntry): Promise<void> {
+  /** False when the game couldn't be made: both stay queued, and this pass stops. */
+  private async makeRun(host: QueueEntry, partner: QueueEntry): Promise<boolean> {
+    let gameId: string;
+    let tokens: Record<StrangerSlot, string>;
+    try {
+      ({ gameId, tokens } = await this.deps.hooks.createGame(host, partner));
+      await this.deps.store.createRun({ gameId, meetupCode: host.meetupCode, parent1: host.subject, parent2: partner.subject });
+    } catch (err) {
+      logger.error("stranger_match_create_failed", { error: err instanceof Error ? err.message : String(err) });
+      return false;
+    }
+    if (!this.queue.includes(host) || !this.queue.includes(partner)) {
+      // One left while the game was being made: throw it away, keep the other queued.
+      this.cacheSeats(gameId, { gameId, meetupCode: host.meetupCode, parent1: host.subject, parent2: partner.subject });
+      await this.markDiscarded(gameId);
+      return true;
+    }
     this.leave(host.mxid);
     this.leave(partner.mxid);
-    const { gameId, tokens } = await this.deps.hooks.createGame(host, partner);
-    await this.deps.store.createRun({ gameId, meetupCode: host.meetupCode, parent1: host.subject, parent2: partner.subject });
     const run: Run = {
       gameId,
       meetupCode: host.meetupCode,
@@ -231,6 +317,7 @@ export class StrangerMatching {
     this.matched.set(host.mxid, { gameId, slot: "parent1" });
     this.matched.set(partner.mxid, { gameId, slot: "parent2" });
     logger.info("stranger_matched", { gameId, meetup: host.meetupCode });
+    return true;
   }
 
   private windowEnd(gameId: string): void {
@@ -240,8 +327,7 @@ export class StrangerMatching {
     const absent = SLOTS.filter((s) => !run.arrived.has(s));
     if (absent.length === 0) return;
     if (absent.length === 2) {
-      this.endRun(gameId);
-      this.deps.hooks.discardGame(gameId);
+      void this.discard(gameId).catch((err) => logger.error("stranger_discard_failed", { gameId, error: String(err) }));
       logger.info("stranger_match_lapsed", { gameId });
       return;
     }
@@ -249,7 +335,7 @@ export class StrangerMatching {
     const present: StrangerSlot = gone === "parent1" ? "parent2" : "parent1";
     run.absent = gone;
     this.matched.delete(run.entries[gone].mxid);
-    // Their seat goes: one human in the game, so nothing is ever due for it.
+    // Their reservation lapses: one human in the game, so nothing is ever due.
     this.deps.hooks.removeSeat(gameId, gone);
     this.deps.hooks.notifyNoShow(gameId, present);
     logger.info("stranger_no_show", { gameId });
@@ -264,7 +350,20 @@ export class StrangerMatching {
       if (m?.gameId === gameId) this.matched.delete(run.entries[s].mxid);
     }
     this.runs.delete(gameId);
-    // The seat map stays known (cached) so the discarded game still refuses joins.
-    this.seatCache.set(gameId, { gameId, meetupCode: run.meetupCode, parent1: run.entries.parent1.subject, parent2: run.entries.parent2.subject });
+    // The seat map stays known, so the game still recognises its two adults.
+    this.cacheSeats(gameId, { gameId, meetupCode: run.meetupCode, parent1: run.entries.parent1.subject, parent2: run.entries.parent2.subject });
+  }
+
+  /** The match is over for good: marked in the store, so no seat ever opens again. */
+  private async discard(gameId: string): Promise<void> {
+    this.endRun(gameId);
+    this.deps.hooks.discardGame(gameId);
+    await this.markDiscarded(gameId);
+  }
+
+  private async markDiscarded(gameId: string): Promise<void> {
+    const cached = this.seatCache.get(gameId);
+    if (cached) this.cacheSeats(gameId, { ...cached, discarded: true });
+    await this.deps.store.discardRun(gameId);
   }
 }

@@ -8,7 +8,9 @@ CREATE TABLE IF NOT EXISTS stranger_runs (
   meetup_code      TEXT,
   parent1_subject  TEXT NOT NULL,
   parent2_subject  TEXT NOT NULL,
-  created_at       TIMESTAMPTZ NOT NULL
+  created_at       TIMESTAMPTZ NOT NULL,
+  -- Set when the match lapsed or was given up: the game never seats anyone again.
+  discarded_at     TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS stranger_blocks (

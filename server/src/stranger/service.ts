@@ -46,13 +46,15 @@ export class StrangerService {
    * the account the seat was matched to, still an eligible adult, still on
    * a visible meetup.
    */
-  async seatHolderOk(seats: StrangerRunSeats, slot: StrangerSlot, pass: unknown): Promise<boolean> {
-    if (this.off()) return false;
+  /** The seat holder's Matrix id when they may sit in this seat, else null. */
+  async seatHolderOk(seats: StrangerRunSeats, slot: StrangerSlot, pass: unknown): Promise<string | null> {
+    if (this.off()) return null;
     const p = await this.resolveLive(pass);
-    if (!p || p === "hidden") return false;
-    if ((await this.age.subjectHash(p.subject)) !== seats[slot]) return false;
-    if (!(await this.age.adultForPool(p.subject)).ok) return false;
-    return !(await this.store.isSuspended(seats[slot]));
+    if (!p || p === "hidden") return null;
+    if ((await this.age.subjectHash(p.subject)) !== seats[slot]) return null;
+    if (!(await this.age.adultForPool(p.subject)).ok) return null;
+    if (await this.store.isSuspended(seats[slot])) return null;
+    return p.subject;
   }
 
   static fromEnv(store: StrangerStore, childSafety: ChildSafetyStore, env: NodeJS.ProcessEnv = process.env): StrangerService {

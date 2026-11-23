@@ -54,7 +54,9 @@ export interface StrangerStore {
   bindDocument(docHash: string, subject: string, at: number): Promise<boolean>;
   /** A stranger game's seats: which account (subject) each seat belongs to. */
   createRun(row: { gameId: string; meetupCode: string | null; parent1: string; parent2: string }): Promise<void>;
-  getRun(gameId: string): Promise<{ gameId: string; meetupCode: string | null; parent1: string; parent2: string } | null>;
+  getRun(gameId: string): Promise<{ gameId: string; meetupCode: string | null; parent1: string; parent2: string; discarded?: boolean } | null>;
+  /** The match lapsed or was given up: the game never seats anyone again. */
+  discardRun(gameId: string): Promise<void>;
   /** Two accounts that must never be matched again (either reported the other). Order doesn't matter. */
   addBlock(a: string, b: string): Promise<void>;
   isBlocked(a: string, b: string): Promise<boolean>;
@@ -105,7 +107,11 @@ export class InMemoryStrangerStore implements StrangerStore {
     this.verifications.set(row.subject, { ...row });
     return { ...row };
   }
-  runs = new Map<string, { gameId: string; meetupCode: string | null; parent1: string; parent2: string }>();
+  runs = new Map<string, { gameId: string; meetupCode: string | null; parent1: string; parent2: string; discarded?: boolean }>();
+  async discardRun(gameId: string): Promise<void> {
+    const r = this.runs.get(gameId);
+    if (r) r.discarded = true;
+  }
   blocks = new Set<string>();
   suspended = new Map<string, string>();
   async createRun(row: { gameId: string; meetupCode: string | null; parent1: string; parent2: string }): Promise<void> {
@@ -257,9 +263,17 @@ export class PgStrangerStore implements StrangerStore {
     );
   }
   async getRun(gameId: string) {
-    const r = await this.db.query(`SELECT game_id, meetup_code, parent1_subject, parent2_subject FROM stranger_runs WHERE game_id = $1`, [gameId]);
+    const r = await this.db.query(
+      `SELECT game_id, meetup_code, parent1_subject, parent2_subject, discarded_at FROM stranger_runs WHERE game_id = $1`,
+      [gameId],
+    );
     const x = r.rows[0];
-    return x ? { gameId: x.game_id, meetupCode: x.meetup_code, parent1: x.parent1_subject, parent2: x.parent2_subject } : null;
+    return x
+      ? { gameId: x.game_id, meetupCode: x.meetup_code, parent1: x.parent1_subject, parent2: x.parent2_subject, ...(x.discarded_at ? { discarded: true } : {}) }
+      : null;
+  }
+  async discardRun(gameId: string): Promise<void> {
+    await this.db.query(`UPDATE stranger_runs SET discarded_at = now() WHERE game_id = $1 AND discarded_at IS NULL`, [gameId]);
   }
   async addBlock(a: string, b: string): Promise<void> {
     const [lo, hi] = a < b ? [a, b] : [b, a];

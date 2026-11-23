@@ -39,6 +39,8 @@ export interface StrangerConfig {
   publicBaseUrl: string;
   /** How long a matched pair has to both arrive before the match lapses. */
   joinWindowMs: number;
+  /** A queued player who stops polling this long is dropped from the queue (a closed tab mustn't be matched). */
+  queueIdleMs: number;
   /** How long a stranger-mode co-parent may be gone before the AI takes their seat. */
   takeoverGraceMs: number;
 }
@@ -80,6 +82,7 @@ export function readStrangerConfig(env: NodeJS.ProcessEnv = process.env): Strang
       env.RI_MATRIX_USERINFO_URL?.trim() || "https://matrix.multiversegames.ai/_matrix/federation/v1/openid/userinfo",
     publicBaseUrl: (env.RI_PUBLIC_BASE_URL?.trim() || defaultBase).replace(/\/+$/, ""),
     joinWindowMs: positiveInt(env.RI_STRANGER_JOIN_WINDOW_MS, 3 * 60 * 1000),
+    queueIdleMs: positiveInt(env.RI_STRANGER_QUEUE_IDLE_MS, 90 * 1000),
     takeoverGraceMs: positiveInt(env.RI_STRANGER_TAKEOVER_GRACE_MS, 90 * 1000),
   };
 }

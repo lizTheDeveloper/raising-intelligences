@@ -1,4 +1,4 @@
-import { STRANGER_RELATIONSHIP } from "../stranger/matching.js";
+import { STRANGER_RELATIONSHIP, type StrangerSlot } from "../stranger/matching.js";
 import { randomUUID } from "node:crypto";
 import type { StrangerService } from "../stranger/service.js";
 import type { Server, Socket } from "socket.io";
@@ -310,15 +310,10 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       const state = createGame(host.childName, STRANGER_RELATIONSHIP);
       games.set(state.id, state);
       await repo.saveGame(state);
-      // Both seats reserved now, each with its own token, for the two matched
-      // accounts only. Saved to the players table when each actually arrives.
-      const seat = (slot: PlayerSlot, displayName: string): Player => ({
-        slot, connectionId: "", displayName, ready: false, connected: false, token: randomUUID(),
-      });
-      const p1 = seat("parent1", host.displayName);
-      const p2 = seat("parent2", partner.displayName);
-      sessions.set(state.id, { gameId: state.id, players: [p1, p2] });
-      return { gameId: state.id, tokens: { parent1: p1.token, parent2: p2.token } };
+      // Both seats RESERVED (a token each, held by the matching), not taken:
+      // a seat enters the session — and counts as a human for the paywall —
+      // only when its verified adult actually arrives (JOIN_GAME below).
+      return { gameId: state.id, tokens: { parent1: randomUUID(), parent2: randomUUID() } };
     },
     discardGame: (gameId) => {
       games.delete(gameId);
@@ -838,6 +833,26 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     // The partner payment, on every later step: once a child exists, an
     // event that would generate for it waits on paidOrFree. With the paywall
     // off this passes straight through, synchronously, as before.
+    // A stranger seat stays bound to a verified adult for the whole game: a
+    // later minor result, ban or suspension ends it at their next action.
+    let strangerSeat: { gameId: string; mxid: string; subject: string } | null = null;
+    socket.use((packet, next) => {
+      const seat = strangerSeat;
+      if (!seat || seat.gameId !== data.gameId || !stranger || !GENERATING_EVENTS.has(String(packet[0]))) return next();
+      Promise.all([stranger.age.adultForPool(seat.mxid), stranger.store.isSuspended(seat.subject)]).then(
+        ([pool, suspended]) => {
+          if (pool.ok && !suspended && !stranger.off()) return next();
+          logger.warn("stranger_seat_closed", { gameId: seat.gameId });
+          socket.emit(E.ERROR, { error: STRANGER_PRIVATE });
+          socket.disconnect(true);
+        },
+        (err) => {
+          logger.error("stranger_seat_check_failed", { error: err instanceof Error ? err.message : String(err) });
+          socket.emit(E.ERROR, { error: "couldn't check this seat. try again." });
+        },
+      );
+    });
+
     socket.use((packet, next) => {
       const gameId = data.gameId;
       if (!payments?.active() || !gameId || !GENERATING_EVENTS.has(String(packet[0]))) return next();
@@ -1024,13 +1039,38 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       // the verified adult the seat was matched to (re-checked every time).
       // Recognised from state already in hand (or this process's own run
       // table): an ordinary game takes no extra await here.
+      let strandedNoShow = false;
       if (stranger?.matching && (state.relationshipType === STRANGER_RELATIONSHIP || stranger.matching.isRun(gameId))) {
-        const seats = await stranger.matching.runFor(gameId);
+        const matching = stranger.matching;
+        const seats = await matching.runFor(gameId);
         if (seats) {
-          const seat = !handoff && typeof payload.playerToken === "string" ? getPlayerByToken(session, payload.playerToken) : undefined;
-          if (!seat || !(await stranger.seatHolderOk(seats, seat.slot, payload.strangerPass))) return fail(STRANGER_PRIVATE);
-          stranger.matching.markArrived(gameId, seat.slot);
-          await repo.savePlayer(gameId, seat.slot, seat.displayName, seat.token);
+          const token = typeof payload.playerToken === "string" ? payload.playerToken : "";
+          if (seats.discarded || handoff || !token) return fail(STRANGER_PRIVATE);
+          // A seat already taken (by this token), or one still reserved for it.
+          const slot = (getPlayerByToken(session, token)?.slot as StrangerSlot | undefined) ?? matching.reservedSlot(gameId, token);
+          if (!slot) return fail(STRANGER_PRIVATE);
+          const holder = await stranger.seatHolderOk(seats, slot, payload.strangerPass);
+          if (!holder) return fail(STRANGER_PRIVATE);
+          // Re-read after the awaits: never write back a stale session (the
+          // window may have lapsed, or the game been discarded, meanwhile).
+          session = sessions.get(gameId) ?? session;
+          if (!getPlayerByToken(session, token)) {
+            if (matching.reservedSlot(gameId, token) !== slot) return fail(STRANGER_PRIVATE);
+            const seat: Player = { slot, connectionId: "", displayName: matching.reservedName(gameId, slot), ready: false, connected: false, token };
+            session = { ...session, players: [...session.players.filter((p) => p.slot !== slot), seat] };
+            sessions.set(gameId, session);
+            await repo.savePlayer(gameId, slot, seat.displayName, token);
+            session = sessions.get(gameId) ?? session;
+          } else if (!matching.isPending(gameId) && session.players.length < 2) {
+            // Restarted mid-window: the other reservation died with the process.
+            strandedNoShow = true;
+          }
+          strangerSeat = { gameId, mxid: holder, subject: seats[slot] };
+          matching.markArrived(gameId, slot);
+          if (strandedNoShow) {
+            const me = getPlayerByToken(session, token);
+            if (me) matching.adoptStranded(seats, slot, { mxid: holder, displayName: me.displayName, childName: state.childName });
+          }
         }
       }
 
@@ -1120,6 +1160,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
             E.STATE,
             view(state, reconnected.player.slot, generatingGames.has(gameId))
           );
+          if (strandedNoShow) socket.emit(E.STRANGER_NO_SHOW, {});
           return;
         }
       }

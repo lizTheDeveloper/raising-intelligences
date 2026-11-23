@@ -55,6 +55,8 @@ describe.skipIf(!process.env.DATABASE_URL)("stranger store on Postgres", () => {
     await store.createRun({ gameId: g, meetupCode: "tea-party", parent1: "s1", parent2: "s2" });
     expect(await store.getRun(g)).toEqual({ gameId: g, meetupCode: "tea-party", parent1: "s1", parent2: "s2" });
     expect(await store.getRun(randomUUID())).toBeNull();
+    await store.discardRun(g);
+    expect((await store.getRun(g))?.discarded).toBe(true);
     const a = `a-${randomUUID()}`, b = `b-${randomUUID()}`;
     await store.addBlock(b, a);
     expect(await store.isBlocked(a, b)).toBe(true);

@@ -40,10 +40,16 @@ describe("stranger matching", () => {
 
   beforeEach(async () => {
     process.env.DISABLE_PORTRAITS = "1";
-    cfg = strangerConfig({ joinWindowMs: 400 });
+    cfg = strangerConfig({ joinWindowMs: 60_000 });
     repo = new InMemoryGameRepository();
-    const mock = new MockLLMClient();
+    mock = new MockLLMClient();
     mock.events = [event(1), event(2)];
+    await boot();
+  });
+
+  let mock: MockLLMClient;
+  /** (Re)start the server on the same repository — a restart loses everything in memory. */
+  async function boot() {
     stranger = new StrangerService({
       config: () => cfg,
       passes: new StrangerPasses(),
@@ -63,7 +69,7 @@ describe("stranger matching", () => {
     });
     await new Promise<void>((r) => built.httpServer.listen(0, "127.0.0.1", () => r()));
     origin = `http://127.0.0.1:${(built.httpServer.address() as AddressInfo).port}`;
-  });
+  }
 
   afterEach(async () => {
     for (const c of clients.splice(0)) c.close();
@@ -197,6 +203,7 @@ describe("stranger matching", () => {
   });
 
   it("a no-show: the one who came is told, can requeue at their old place, and nobody is charged", async () => {
+    cfg = strangerConfig({ joinWindowMs: 400 });
     const a = await adult(ALICE);
     const b = await adult(BOB);
     await queue(a);
@@ -221,6 +228,7 @@ describe("stranger matching", () => {
   });
 
   it("nobody came: the game is discarded", async () => {
+    cfg = strangerConfig({ joinWindowMs: 400 });
     const a = await adult(ALICE);
     const b = await adult(BOB);
     await queue(a);
@@ -253,5 +261,100 @@ describe("stranger matching", () => {
     const a = await adult(ALICE);
     cfg = strangerConfig({ mode: "off" });
     expect((await queue(a)).status).not.toBe(200);
+  });
+
+  it("once both have arrived the match is released: later, each can queue again", async () => {
+    const a = await adult(ALICE);
+    const b = await adult(BOB);
+    await queue(a);
+    await queue(b);
+    const ma = (await poll(a)).body;
+    const mb = (await poll(b)).body;
+    await sit(a, ma);
+    await sit(b, mb);
+    expect((await poll(a)).body).toMatchObject({ status: "none" });
+    await queue(a);
+    expect((await poll(a)).body).toMatchObject({ status: "waiting", count: 1 });
+  });
+
+  it("a reserved seat is no seat until its adult arrives; REST can't act in a stranger game", async () => {
+    const a = await adult(ALICE);
+    const b = await adult(BOB);
+    await queue(a);
+    await queue(b);
+    const ma = (await poll(a)).body;
+    const mb = (await poll(b)).body;
+    expect(built.sessions.get(ma.gameId as string)?.players ?? []).toHaveLength(0);
+    await sit(a, ma);
+    expect(built.sessions.get(ma.gameId as string)?.players).toHaveLength(1);
+    // Bob's reserved token, by REST, without ever joining.
+    const r = await post(`/game/${ma.gameId}/personality`, { ocean: OCEAN_P2, confessional1: "x", slot: "parent2", playerToken: mb.playerToken });
+    expect(r.status).toBe(403);
+    expect((await post(`/game/${ma.gameId}/next-event`, {})).status).toBe(403);
+    expect(await repo.partnerPayments.get(ma.gameId as string)).toBeNull();
+  });
+
+  it("a discarded game stays shut, even to its own host", async () => {
+    cfg = strangerConfig({ joinWindowMs: 400 });
+    const a = await adult(ALICE);
+    const b = await adult(BOB);
+    await queue(a);
+    await queue(b);
+    const ma = (await poll(a)).body;
+    const A = await sit(a, ma);
+    await A.c.once(E.STRANGER_NO_SHOW);
+    expect((await post("/stranger/queue/requeue", { pass: a, gameId: ma.gameId })).status).toBe(200);
+    expect(await refusedJoin({ gameId: ma.gameId, playerToken: ma.playerToken, strangerPass: a })).toMatch(/private/);
+  });
+
+  it("after a restart, a host whose match never arrived is told, and can requeue", async () => {
+    const a = await adult(ALICE);
+    const b = await adult(BOB);
+    await queue(a);
+    await queue(b);
+    const ma = (await poll(a)).body;
+    const A = await sit(a, ma);
+    A.c.close();
+    clients.splice(0);
+    await built.close();
+    await boot();
+    const a2 = stranger.passes.issue(ALICE, "tea-party");
+    const c = await client();
+    const told = c.once(E.STRANGER_NO_SHOW);
+    c.emit(E.JOIN_GAME, { gameId: ma.gameId, playerToken: ma.playerToken, strangerPass: a2 });
+    await told;
+    expect((await post("/stranger/queue/requeue", { pass: a2, gameId: ma.gameId })).status).toBe(200);
+    expect((await poll(a2)).body).toMatchObject({ status: "waiting" });
+  });
+
+  it("queueing twice at once is still one place in the queue", async () => {
+    const a = await adult(ALICE);
+    await Promise.all([queue(a), queue(a), queue(a)]);
+    expect((await poll(a)).body).toMatchObject({ status: "waiting", count: 1 });
+  });
+
+  it("someone who stops polling leaves the queue (a closed tab is never matched)", async () => {
+    cfg = strangerConfig({ joinWindowMs: 400, queueIdleMs: 150 });
+    const a = await adult(ALICE);
+    const b = await adult(BOB);
+    await queue(a);
+    await wait(250);
+    await queue(b);
+    expect((await poll(b)).body).toMatchObject({ status: "waiting", count: 1 });
+  });
+
+  it("a seated stranger later found to be a minor is put out at their next action", async () => {
+    const a = await adult(ALICE);
+    const b = await adult(BOB);
+    await queue(a);
+    await queue(b);
+    const ma = (await poll(a)).body;
+    const mb = (await poll(b)).body;
+    const A = await sit(a, ma);
+    await sit(b, mb);
+    await adult(ALICE, "minor");
+    const gone = new Promise<void>((r) => A.c.socket.once("disconnect", () => r()));
+    A.c.emit(E.READY, { ready: true });
+    await gone;
   });
 });
