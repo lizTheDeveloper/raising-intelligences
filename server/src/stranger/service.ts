@@ -71,22 +71,23 @@ export class StrangerService {
   }
 
   /**
-   * May the holder of this pass sit in this seat of this stranger game? Only
-   * the account the seat was matched to, still an eligible adult, still on
-   * a visible meetup.
+   * Is the holder of this pass the account this seat was matched to, still an
+   * eligible adult, on a visible meetup? Their Matrix id, else null. Says
+   * nothing about suspension: see seatSuspended — the join decides what a
+   * suspended holder sees, and it must never be a different refusal.
    */
-  /** The seat holder's Matrix id when they may sit in this seat, else null. */
   async seatHolderOk(seats: StrangerRunSeats, slot: StrangerSlot, pass: unknown): Promise<string | null> {
     if (this.off()) return null;
     const p = await this.resolveLive(pass);
     if (!p || p === "hidden") return null;
     if ((await this.age.subjectHash(p.subject)) !== seats[slot]) return null;
     if (!(await this.age.adultForPool(p.subject)).ok) return null;
-    // A suspended account takes no seat, reserved or its own. The refusal is
-    // the same one every unavailable seat gets: it never says why. (The game
-    // a report was filed in ends for both seats anyway: see report().)
-    if (await this.store.isSuspended(seats[slot])) return null;
     return p.subject;
+  }
+
+  /** Is the account matched to this seat suspended? */
+  seatSuspended(seats: StrangerRunSeats, slot: StrangerSlot): Promise<boolean> {
+    return this.store.isSuspended(seats[slot]);
   }
 
   // ---- The handle exchange (after the report card) and reports ----

@@ -1080,6 +1080,21 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           if (!slot) return fail(STRANGER_PRIVATE);
           const holder = await stranger.seatHolderOk(seats, slot, payload.strangerPass);
           if (!holder) return fail(STRANGER_PRIVATE);
+          // A suspended account takes no new seat and returns to no game but
+          // the one it was reported in — and nothing it sees may differ from
+          // what any other player sees. Back in its own seat of a reported
+          // game: an ordinary reconnect (the gate drops every action it
+          // sends), with the ending when, and only when, it reaches the
+          // reporter too. Anywhere else: that same neutral ending, no seat —
+          // never an error.
+          if (await stranger.seatSuspended(seats, slot)) {
+            const ownSeat = !!getPlayerByToken(sessions.get(gameId) ?? session, token);
+            if (!ownSeat || !(await stranger.gameStopped(gameId))) {
+              logger.info("stranger_seat_suspended", { gameId });
+              socket.emit(E.STRANGER_GAME_ENDED, {});
+              return;
+            }
+          }
           // Re-read after the awaits: never write back a stale session (the
           // window may have lapsed, or the game been discarded, meanwhile).
           session = sessions.get(gameId) ?? session;

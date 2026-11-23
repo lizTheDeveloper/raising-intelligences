@@ -571,13 +571,17 @@ describe("stranger handle exchange and reports", () => {
     back.emit(E.READY, { ready: true });
     await wait(80);
     expect(readyFlag(gameId, "parent1")).toBeFalsy();
-    // Bob is suspended now, so his seat is simply unavailable.
-    expect(await (async () => {
-      const c = await client();
-      const err = c.once<{ error: string }>(E.ERROR);
-      c.emit(E.JOIN_GAME, { gameId, playerToken: mb.playerToken, strangerPass: b });
-      return (await err).error;
-    })()).toMatch(/private/);
+    // Bob (reported, so suspended) reconnecting to this game: let in, and given
+    // exactly what the reporter got — the ending — never an error.
+    const bob = await client();
+    const seenBob = record(bob);
+    const bobEnded = bob.once(E.STRANGER_GAME_ENDED);
+    bob.emit(E.JOIN_GAME, { gameId, playerToken: mb.playerToken, strangerPass: b });
+    await bobEnded;
+    bob.emit(E.READY, { ready: true });
+    await wait(80);
+    expect(readyFlag(gameId, "parent2")).toBeFalsy();
+    expect(seenBob.some(([ev]) => ev === E.ERROR)).toBe(false);
   });
 
   it("a suspended subject can't take a seat (reserved or their own) and is told nothing about why", async () => {
@@ -591,10 +595,13 @@ describe("stranger handle exchange and reports", () => {
     await repo.stranger.suspend(await stranger.age.subjectHash(BOB), "report upheld");
     const c = await client();
     const seen = record(c);
-    const err = c.once<{ error: string }>(E.ERROR);
+    const ended = c.once(E.STRANGER_GAME_ENDED);
     c.emit(E.JOIN_GAME, { gameId: mb.gameId, playerToken: mb.playerToken, strangerPass: b });
-    expect((await err).error).toMatch(/private/);
-    expect(JSON.stringify(seen)).not.toMatch(/report|suspend/i);
+    await ended;
+    await wait(50);
+    // No seat, no error: the game simply ended.
+    expect(seen.map(([ev]) => ev)).toEqual([E.STRANGER_GAME_ENDED]);
+    expect(built.sessions.get(mb.gameId as string)?.players.some((p) => p.token === mb.playerToken)).toBe(false);
     void ma;
   });
 
@@ -628,5 +635,62 @@ describe("stranger handle exchange and reports", () => {
     await post("/stranger/queue/join", { pass: c, childName: "Y" });
     expect((await post("/stranger/queue/poll", { pass: b })).body).toMatchObject({ status: "waiting" });
     expect((await post("/stranger/queue/poll", { pass: c })).body).toMatchObject({ status: "waiting" });
+  });
+
+  it("a suspended account rejoining a game with NO report in it (suspended elsewhere) gets the neutral ending, no seat", async () => {
+    const { B, b, mb, gameId } = await pair();
+    B.close();
+    await wait(50);
+    await repo.stranger.suspend(await stranger.age.subjectHash(BOB), "report upheld");
+    const c = await client();
+    const seen = record(c);
+    const ended = c.once(E.STRANGER_GAME_ENDED);
+    c.emit(E.JOIN_GAME, { gameId, playerToken: mb.playerToken, strangerPass: b });
+    await ended;
+    await wait(50);
+    expect(seen.map(([ev]) => ev)).toEqual([E.STRANGER_GAME_ENDED]);
+  });
+
+  it("a reported player reconnecting during the delay sees what any reconnecting player sees, then the ending, at the same moment as the reporter", async () => {
+    cfg.handleEndingMinMs = 250;
+    cfg.handleEndingMaxMs = 260;
+    /** Reconnect B's seat and record what it gets for 150ms. */
+    const reconnect = async (gameId: string, token: unknown, pass: string) => {
+      const c = await client();
+      const seen = record(c);
+      const j = c.once(E.JOINED);
+      c.emit(E.JOIN_GAME, { gameId, playerToken: token, strangerPass: pass });
+      await j;
+      await wait(150);
+      return { c, seen };
+    };
+    // Control: an ordinary game, nothing reported. B drops and reconnects.
+    const control = await pair();
+    control.B.close();
+    await wait(30);
+    const plain = await reconnect(control.gameId, control.mb.playerToken, control.b);
+    for (const c of clients.splice(0)) c.close();
+    await built.close();
+    repo = new InMemoryGameRepository();
+    await bootAgain();
+    // Reported: A reports B; B drops and reconnects during the delay.
+    const { A, B, b, mb, gameId } = await pair();
+    const t0 = Date.now();
+    let aEndedAt = 0;
+    A.socket.on(E.STRANGER_GAME_ENDED, () => { aEndedAt = Date.now(); });
+    const reported = A.once(E.STRANGER_REPORTED);
+    A.emit(E.STRANGER_REPORT, { reason: "x" });
+    await reported;
+    B.close();
+    await wait(30);
+    const after = await reconnect(gameId, mb.playerToken, b);
+    // Same sequence of events as the control, nothing more (no error, no ending yet).
+    expect(after.seen.map(([ev]) => ev)).toEqual(plain.seen.map(([ev]) => ev));
+    const bEnded = after.c.once(E.STRANGER_GAME_ENDED);
+    await bEnded;
+    const bEndedAt = Date.now();
+    expect(bEndedAt - t0).toBeGreaterThanOrEqual(250);
+    await wait(20);
+    expect(Math.abs(bEndedAt - aEndedAt)).toBeLessThan(30);
   });
 });
