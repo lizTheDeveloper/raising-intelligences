@@ -351,7 +351,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     repo,
     llm,
     gameLocks,
-    payments,
+    payments, stranger,
   });
 
   let evictionTimer: NodeJS.Timeout | undefined;

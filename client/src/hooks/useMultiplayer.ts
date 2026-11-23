@@ -21,6 +21,8 @@ const E = {
   /** Re-run the opening from answers the server already holds (after the
    * host pays, or a retry from a guardian screen that holds no answers). */
   RETRY_OPENING: "retry_opening",
+  /** Stranger mode: your match didn't arrive in time. */
+  STRANGER_NO_SHOW: "stranger_no_show",
   PERSONALITY_SUBMITTED: "personality_submitted",
   PERSONALITY_SEED_READY: "personality_seed_ready",
   /** "let me keep playing from my phone" — see HANDOFF_CODE. */
@@ -247,12 +249,28 @@ interface ViewerState {
   /** The $20 per-child partner payment, for this seat; null/absent when
    * nothing is due. `youPay` is true on the host's view only. */
   payment?: PartnerPayment | null;
+  /** A stranger-mode game: no invite link, seats bound to the matched adults. */
+  strangerRun?: boolean;
 }
 
 export interface PartnerPayment {
   status: "due" | "paid" | "refunded";
   youPay: boolean;
   amountCents: number;
+}
+
+/**
+ * Stranger mode: the pass that proves this player is the verified adult a
+ * stranger game's seat belongs to. Sent with every seat-token join; ignored by
+ * the server for any other game.
+ */
+function strangerPass(): { strangerPass?: string } {
+  try {
+    const p = sessionStorage.getItem("ri_stranger_pass");
+    return p ? { strangerPass: p } : {};
+  } catch {
+    return {};
+  }
 }
 
 export function useMultiplayer() {
@@ -268,6 +286,7 @@ export function useMultiplayer() {
   const [epilogue, setEpilogue] = useState("");
   const [reportCard, setReportCard] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [strangerNoShow, setStrangerNoShow] = useState(false);
   const [inLobby, setInLobby] = useState(false);
   const [seedReady, setSeedReady] = useState(false);
   const [sceneEnding, setSceneEnding] = useState(false);
@@ -520,7 +539,7 @@ export function useMultiplayer() {
       const reclaim = pendingReclaimRef.current;
       if (reclaim) {
         pendingReclaimRef.current = null;
-        socket.emit(E.JOIN_GAME, reclaim);
+        socket.emit(E.JOIN_GAME, { ...reclaim, ...strangerPass() });
         return;
       }
       // Don't crawl back into a game another device has taken over. Purely a
@@ -537,6 +556,7 @@ export function useMultiplayer() {
           gameId: resume.gameId,
           playerToken: resume.playerToken,
           campusIdentity: campusIdentity(),
+          ...strangerPass(),
         });
       }
     });
@@ -684,6 +704,8 @@ export function useMultiplayer() {
       // URL for display and never stored, tracked, or sent anywhere else.
       setHandoff({ url: buildHandoffUrl(gameIdRef.current ?? "", d.code), expiresAt: d.expiresAt });
     });
+    socket.on(E.STRANGER_NO_SHOW, () => setStrangerNoShow(true));
+
     socket.on(E.SUPERSEDED, () => {
       supersededRef.current = true;
       setSuperseded(true);
@@ -799,7 +821,7 @@ export function useMultiplayer() {
     const socket = ensureSocket();
     if (socket.connected) {
       pendingReclaimRef.current = null;
-      socket.emit(E.JOIN_GAME, { gameId, playerToken });
+      socket.emit(E.JOIN_GAME, { gameId, playerToken, ...strangerPass() });
     } else {
       // Dropped, or exhausted its reconnection attempts while the player was
       // away. Nudge it; the connect handler spends the intent above.
@@ -988,6 +1010,7 @@ export function useMultiplayer() {
     submitPersonality,
     retryOpening,
     playerToken,
+    strangerNoShow,
     clearError,
     startSidebar,
     endSidebar,

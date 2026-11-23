@@ -52,7 +52,19 @@ export interface StrangerStore {
    * to another account.
    */
   bindDocument(docHash: string, subject: string, at: number): Promise<boolean>;
+  /** A stranger game's seats: which account (subject) each seat belongs to. */
+  createRun(row: { gameId: string; meetupCode: string | null; parent1: string; parent2: string }): Promise<void>;
+  getRun(gameId: string): Promise<{ gameId: string; meetupCode: string | null; parent1: string; parent2: string } | null>;
+  /** Two accounts that must never be matched again (either reported the other). Order doesn't matter. */
+  addBlock(a: string, b: string): Promise<void>;
+  isBlocked(a: string, b: string): Promise<boolean>;
+  /** Kept out of the pool pending review of a report. */
+  suspend(subject: string, reason: string): Promise<void>;
+  isSuspended(subject: string): Promise<boolean>;
+  lift(subject: string): Promise<void>;
 }
+
+const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
 export class InMemoryStrangerStore implements StrangerStore {
   consents = new Map<string, ConsentRow>();
@@ -92,6 +104,31 @@ export class InMemoryStrangerStore implements StrangerStore {
     if (existing?.outcome === "minor") return { ...existing };
     this.verifications.set(row.subject, { ...row });
     return { ...row };
+  }
+  runs = new Map<string, { gameId: string; meetupCode: string | null; parent1: string; parent2: string }>();
+  blocks = new Set<string>();
+  suspended = new Map<string, string>();
+  async createRun(row: { gameId: string; meetupCode: string | null; parent1: string; parent2: string }): Promise<void> {
+    this.runs.set(row.gameId, { ...row });
+  }
+  async getRun(gameId: string) {
+    const r = this.runs.get(gameId);
+    return r ? { ...r } : null;
+  }
+  async addBlock(a: string, b: string): Promise<void> {
+    this.blocks.add(pairKey(a, b));
+  }
+  async isBlocked(a: string, b: string): Promise<boolean> {
+    return this.blocks.has(pairKey(a, b));
+  }
+  async suspend(subject: string, reason: string): Promise<void> {
+    this.suspended.set(subject, reason);
+  }
+  async isSuspended(subject: string): Promise<boolean> {
+    return this.suspended.has(subject);
+  }
+  async lift(subject: string): Promise<void> {
+    this.suspended.delete(subject);
   }
   slots = new Set<string>();
   documents = new Map<string, string>();
@@ -210,5 +247,41 @@ export class PgStrangerStore implements StrangerStore {
     );
     const r = await this.db.query(`SELECT subject FROM stranger_documents WHERE doc_hash = $1`, [docHash]);
     return r.rows[0]?.subject === subject;
+  }
+
+  async createRun(row: { gameId: string; meetupCode: string | null; parent1: string; parent2: string }): Promise<void> {
+    await this.db.query(
+      `INSERT INTO stranger_runs (game_id, meetup_code, parent1_subject, parent2_subject, created_at) VALUES ($1, $2, $3, $4, now())
+       ON CONFLICT (game_id) DO NOTHING`,
+      [row.gameId, row.meetupCode, row.parent1, row.parent2],
+    );
+  }
+  async getRun(gameId: string) {
+    const r = await this.db.query(`SELECT game_id, meetup_code, parent1_subject, parent2_subject FROM stranger_runs WHERE game_id = $1`, [gameId]);
+    const x = r.rows[0];
+    return x ? { gameId: x.game_id, meetupCode: x.meetup_code, parent1: x.parent1_subject, parent2: x.parent2_subject } : null;
+  }
+  async addBlock(a: string, b: string): Promise<void> {
+    const [lo, hi] = a < b ? [a, b] : [b, a];
+    await this.db.query(`INSERT INTO stranger_blocks (subject_a, subject_b, created_at) VALUES ($1, $2, now()) ON CONFLICT DO NOTHING`, [lo, hi]);
+  }
+  async isBlocked(a: string, b: string): Promise<boolean> {
+    const [lo, hi] = a < b ? [a, b] : [b, a];
+    const r = await this.db.query(`SELECT 1 FROM stranger_blocks WHERE subject_a = $1 AND subject_b = $2`, [lo, hi]);
+    return r.rows.length > 0;
+  }
+  async suspend(subject: string, reason: string): Promise<void> {
+    await this.db.query(
+      `INSERT INTO stranger_suspensions (subject, reason, created_at) VALUES ($1, $2, now())
+       ON CONFLICT (subject) DO UPDATE SET reason = EXCLUDED.reason`,
+      [subject, reason],
+    );
+  }
+  async isSuspended(subject: string): Promise<boolean> {
+    const r = await this.db.query(`SELECT 1 FROM stranger_suspensions WHERE subject = $1`, [subject]);
+    return r.rows.length > 0;
+  }
+  async lift(subject: string): Promise<void> {
+    await this.db.query(`DELETE FROM stranger_suspensions WHERE subject = $1`, [subject]);
   }
 }

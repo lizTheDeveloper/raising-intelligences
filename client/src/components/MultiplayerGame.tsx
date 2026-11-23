@@ -16,6 +16,7 @@ import { ProcessingScreen } from "./ProcessingScreen";
 import { ChildPortrait } from "./ChildPortrait";
 import { FamilyAlbum } from "./FamilyAlbum";
 import { PartnerPaymentGate } from "./PartnerPaymentGate";
+import { StrangerNoShow } from "./StrangerQueue";
 
 const API = import.meta.env.BASE_URL + "api";
 
@@ -497,6 +498,15 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     );
   }
 
+  // ---- Stranger mode: the match didn't arrive in time ----
+  if (mp.strangerNoShow && mp.gameId) {
+    return (
+      <div className="app fade-in">
+        <StrangerNoShow gameId={mp.gameId} onLeave={mp.leaveGame} />
+      </div>
+    );
+  }
+
   // ---- The $20 per-child step: the partner has joined (at the opening, or
   // mid-story in a game played solo until now) and nothing more is generated
   // until the host pays. ----
@@ -529,6 +539,7 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
           childName={state?.childName ?? childInput}
           error={mp.error}
           generating={mp.generating}
+          strangerRun={!!state?.strangerRun}
           onReady={mp.ready}
           onLeave={mp.leaveGame}
         />

@@ -8,11 +8,13 @@ interface Props {
   error: string | null;
   /** Server is building the first scenario after both players readied. */
   generating?: boolean;
+  /** Stranger mode: the co-parent was matched, not invited — no link to share. */
+  strangerRun?: boolean;
   onReady: (ready: boolean) => void;
   onLeave: () => void;
 }
 
-export function Lobby({ gameId, slot, players, childName, error, generating, onReady, onLeave }: Props) {
+export function Lobby({ gameId, slot, players, childName, error, generating, strangerRun, onReady, onLeave }: Props) {
   const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   const link = `${window.location.origin}${base}/?game=${gameId}`;
   const me = players.find((p) => p.slot === slot);
@@ -48,7 +50,13 @@ export function Lobby({ gameId, slot, players, childName, error, generating, onR
         })}
       </div>
 
-      {(!both || coParentDisconnected) && (
+      {strangerRun && (!both || coParentDisconnected) && (
+        <p className="dim lobby-invite">
+          {coParentDisconnected ? "your co-parent dropped out. they can come back on their own." : "your co-parent is on their way…"}
+        </p>
+      )}
+
+      {!strangerRun && (!both || coParentDisconnected) && (
         <div className="lobby-invite">
           <p className="dim">
             {coParentDisconnected

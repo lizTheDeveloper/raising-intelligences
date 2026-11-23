@@ -80,6 +80,46 @@ export function createStrangerRoutes(stranger: StrangerService, limit: RequestHa
     res.json(await stranger.me(p.subject));
   });
 
+  // ---- The queue ----
+  const clean = (v: unknown, max: number): string =>
+    typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f<>]/g, "").trim().slice(0, max) : "";
+
+  router.post("/stranger/queue/join", limit, async (req: Request, res: Response, next: NextFunction) => {
+    const p = await withPass(req, res, next);
+    if (!p) return;
+    const m = stranger.matching;
+    if (!m) return void res.status(503).json({ error: "Matching isn't running." });
+    const body = req.body as { childName?: unknown; displayName?: unknown };
+    const childName = clean(body.childName, 40);
+    if (!childName) return void res.status(400).json({ error: "Name the child you'd like to raise." });
+    const displayName = clean(body.displayName, 30) || "a parent";
+    const r = await m.join(p.subject, p.meetupCode, displayName, childName);
+    if (!r.ok) return void res.status(r.status).json({ error: r.error });
+    res.json(m.poll(p.subject));
+  });
+
+  router.post("/stranger/queue/poll", limit, async (req: Request, res: Response, next: NextFunction) => {
+    const p = await withPass(req, res, next);
+    if (!p) return;
+    res.json(stranger.matching?.poll(p.subject) ?? { status: "none" });
+  });
+
+  router.post("/stranger/queue/leave", limit, async (req: Request, res: Response, next: NextFunction) => {
+    const p = await withPass(req, res, next);
+    if (!p) return;
+    stranger.matching?.leave(p.subject);
+    res.json({ status: "none" });
+  });
+
+  router.post("/stranger/queue/requeue", limit, async (req: Request, res: Response, next: NextFunction) => {
+    const p = await withPass(req, res, next);
+    if (!p) return;
+    const gameId = (req.body as { gameId?: unknown }).gameId;
+    const ok = typeof gameId === "string" && (await stranger.matching?.requeue(p.subject, gameId));
+    if (!ok) return void res.status(409).json({ error: "Nothing to requeue from." });
+    res.json(stranger.matching!.poll(p.subject));
+  });
+
   return router;
 }
 

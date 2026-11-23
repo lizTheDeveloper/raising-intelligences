@@ -4,6 +4,7 @@ import { readStrangerConfig, strangerVisible, normalizeMeetupCode, pepperProblem
 import { AgeVerification, type CheckOutcome, type PoolRefusal } from "./identity.js";
 import { StrangerPasses, verifyOpenIdToken } from "./matrix-identity.js";
 import type { StrangerStore } from "./store.js";
+import { StrangerMatching, type MatchingHooks, type StrangerRunSeats, type StrangerSlot } from "./matching.js";
 
 /**
  * Everything stranger mode needs, in one place, so the routes and the socket
@@ -15,6 +16,7 @@ export interface StrangerServiceDeps {
   age: AgeVerification;
   /** OpenID token → Matrix id, or null. Synapse userinfo by default. */
   verifyMatrix: (openIdToken: unknown) => Promise<string | null>;
+  store: StrangerStore;
 }
 
 export class StrangerService {
@@ -22,12 +24,35 @@ export class StrangerService {
   readonly passes: StrangerPasses;
   readonly age: AgeVerification;
   readonly verifyMatrix: (openIdToken: unknown) => Promise<string | null>;
+  readonly store: StrangerStore;
+  /** Set by the socket layer, which owns games and seats (registerSocketHandlers). */
+  matching: StrangerMatching | null = null;
 
   constructor(deps: StrangerServiceDeps) {
     this.config = deps.config;
     this.passes = deps.passes;
     this.age = deps.age;
     this.verifyMatrix = deps.verifyMatrix;
+    this.store = deps.store;
+  }
+
+  attachMatching(hooks: MatchingHooks): StrangerMatching {
+    this.matching = new StrangerMatching({ age: this.age, store: this.store, config: this.config, hooks });
+    return this.matching;
+  }
+
+  /**
+   * May the holder of this pass sit in this seat of this stranger game? Only
+   * the account the seat was matched to, still an eligible adult, still on
+   * a visible meetup.
+   */
+  async seatHolderOk(seats: StrangerRunSeats, slot: StrangerSlot, pass: unknown): Promise<boolean> {
+    if (this.off()) return false;
+    const p = await this.resolveLive(pass);
+    if (!p || p === "hidden") return false;
+    if ((await this.age.subjectHash(p.subject)) !== seats[slot]) return false;
+    if (!(await this.age.adultForPool(p.subject)).ok) return false;
+    return !(await this.store.isSuspended(seats[slot]));
   }
 
   static fromEnv(store: StrangerStore, childSafety: ChildSafetyStore, env: NodeJS.ProcessEnv = process.env): StrangerService {
@@ -47,6 +72,7 @@ export class StrangerService {
       passes: new StrangerPasses(),
       age: new AgeVerification({ store, config: () => cfg, childSafety, pepper }),
       verifyMatrix: (t) => verifyOpenIdToken(t, cfg.matrixUserinfoUrl),
+      store,
     });
   }
 

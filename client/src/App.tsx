@@ -8,6 +8,7 @@ import { track } from "./analytics";
 import { useMatrixAuth } from "./hooks/useMatrixAuth";
 import { Credits } from "./components/Credits";
 import { StrangerMode } from "./components/StrangerMode";
+import { StrangerQueue } from "./components/StrangerQueue";
 
 const TAGLINES = [
   // funny
@@ -195,7 +196,7 @@ export function App() {
   // (RI_STRANGER_MODE, and in meetup mode a listed ?meetup= code). Coming
   // back from the Stripe ID check (?stranger=identity) reopens it.
   const meetup = params.get("meetup");
-  const backFromIdCheck = params.get("stranger") === "identity";
+  const backFromIdCheck = params.get("stranger") === "identity" || params.get("stranger") === "queue";
   const [mode, setMode] = useState<Mode>(
     isSoloResume ? "solo" : joinGameId ? "multiplayer" : backFromIdCheck ? "stranger" : "choose",
   );
@@ -262,7 +263,12 @@ export function App() {
     }
     return (
       <div className="app fade-in">
-        <StrangerMode meetup={meetup} consentVersion={stranger.consentVersion} onBack={() => setMode("choose")} />
+        <StrangerMode
+          meetup={meetup}
+          consentVersion={stranger.consentVersion}
+          onBack={() => setMode("choose")}
+          renderEligible={(pass) => <StrangerQueue pass={pass} meetup={meetup} onBack={() => setMode("choose")} />}
+        />
       </div>
     );
   }

@@ -25,6 +25,8 @@ export interface JoinGamePayload {
   userId?: string;
   /** Web cabinets: identity token from POST /api/campus-pass (verified server-side). */
   campusIdentity?: string;
+  /** Stranger mode: the player's stranger pass. A stranger game seats only the verified adult each seat was matched to. */
+  strangerPass?: string;
   /**
    * A single-use device-handoff code (see REQUEST_HANDOFF). Redeeming it binds
    * this socket to the slot the code was minted for and issues the normal
@@ -151,6 +153,8 @@ export interface ViewerState {
    * `youPay` is true on the host's (parent1's) view only.
    */
   payment: { status: "due" | "paid" | "refunded"; youPay: boolean; amountCents: number } | null;
+  /** A stranger-mode game: no invite link, no handoff, seats bound to their matched adults. */
+  strangerRun?: boolean;
 }
 
 /** Server → room co-presence broadcast, emitted to the *other* player only. */
@@ -214,6 +218,8 @@ export const SOCKET_EVENTS = {
    * the opening has run, and nothing while the child is still unpaid.
    */
   RETRY_OPENING: "retry_opening",
+  /** Stranger mode: your match didn't arrive in time (server → the one who came). */
+  STRANGER_NO_SHOW: "stranger_no_show",
   /**
    * "I want to continue this on another device." Mints a short-lived,
    * single-use code bound to the requesting socket's {gameId, slot}, answered

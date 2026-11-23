@@ -49,4 +49,19 @@ describe.skipIf(!process.env.DATABASE_URL)("stranger store on Postgres", () => {
     const winner = a ? "subject-a" : "subject-b";
     expect(await store.bindDocument(doc, winner, Date.now())).toBe(true);
   });
+
+  it("runs, blocks (either order) and suspensions round-trip", async () => {
+    const g = randomUUID();
+    await store.createRun({ gameId: g, meetupCode: "tea-party", parent1: "s1", parent2: "s2" });
+    expect(await store.getRun(g)).toEqual({ gameId: g, meetupCode: "tea-party", parent1: "s1", parent2: "s2" });
+    expect(await store.getRun(randomUUID())).toBeNull();
+    const a = `a-${randomUUID()}`, b = `b-${randomUUID()}`;
+    await store.addBlock(b, a);
+    expect(await store.isBlocked(a, b)).toBe(true);
+    expect(await store.isBlocked(b, a)).toBe(true);
+    await store.suspend(a, "report");
+    expect(await store.isSuspended(a)).toBe(true);
+    await store.lift(a);
+    expect(await store.isSuspended(a)).toBe(false);
+  });
 });
