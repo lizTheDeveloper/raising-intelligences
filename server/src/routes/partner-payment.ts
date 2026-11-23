@@ -14,6 +14,24 @@ export const STRIPE_WEBHOOK_PATH = "/api/stripe/webhook";
 
 const SESSION_ID_RE = /^cs_(test|live)_[A-Za-z0-9]{10,200}$/;
 
+/** The no-op default for a route's requirePaid when no gate is wired (tests, tools). */
+export const passThrough: RequestHandler = (_req, _res, next) => next();
+
+/**
+ * The partner-payment gate as route middleware: 402 for a two-human child
+ * whose host hasn't paid. Mounted on each generating route itself.
+ */
+export function createRequirePaid(partnerGate: (gameId: string) => Promise<boolean>): RequestHandler {
+  return async (req, res, next) => {
+    const gameId = String(req.params.id ?? "");
+    if (gameId && (await partnerGate(gameId))) {
+      res.status(402).json({ error: "This child's partner play isn't paid for yet." });
+      return;
+    }
+    next();
+  };
+}
+
 export function safeEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a);
   const bb = Buffer.from(b);

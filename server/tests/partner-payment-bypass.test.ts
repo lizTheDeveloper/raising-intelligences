@@ -173,6 +173,31 @@ describe("partner payment cannot be bypassed", () => {
     expect(built.games.get(gameId)?.phase).toBe("event_intro");
   });
 
+  it("every generating REST route refuses an unpaid two-human child, however the path is spelled", async () => {
+    const { p1, gameId } = await host();
+    const { p2 } = await join(gameId);
+    const due = p1.waitFor<ViewerState>(E.STATE, (s) => s.payment?.status === "due");
+    p1.emit(E.SUBMIT_PERSONALITY, { ocean: OCEAN_P1, confessional1: "a", confessional2: "" });
+    p2.emit(E.SUBMIT_PERSONALITY, { ocean: OCEAN_P2, confessional1: "b", confessional2: "" });
+    await due;
+    const routes = [
+      "next-event", "message", "end-chat", "end-debrief", "repair", "end-consult", "end-therapy",
+      "end-cps", "therapy-message", "portraits/next", "epilogue", "adult-chat", "report-card",
+    ];
+    const spellings = (r: string) => [r, r.toUpperCase(), r[0].toUpperCase() + r.slice(1), `${r}/`, `${r.toUpperCase()}/`];
+    for (const r of routes) {
+      for (const path of spellings(r)) {
+        const res = await post(`/api/game/${gameId}/${path}`, { content: "hi", message: "hi" });
+        expect({ path, status: res.status }).toEqual({ path, status: 402 });
+      }
+      // The game id itself in another case is just another (unknown) game — never generated for.
+      const upper = await post(`/api/GAME/${gameId}/${r}`, { content: "hi" });
+      expect([402, 404]).toContain(upper.status);
+    }
+    await settle();
+    expect(mock.generated()).toBe(0);
+  });
+
   it("the REST gate counts saved seats, not just the ones live in memory", async () => {
     const { p1, gameId } = await host();
     const { p2 } = await join(gameId);

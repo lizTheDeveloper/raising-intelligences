@@ -15,7 +15,7 @@ import { createResearchRoutes } from "./routes/research.js";
 import { createSupportRoutes } from "./routes/support.js";
 import { createCampusRoutes } from "./routes/campus.js";
 import { createChildSafetyAdminRoutes, createChildSafetyIngestRoutes, INGEST_PATH } from "./routes/child-safety.js";
-import { createPartnerPaymentRoutes, createStripeWebhookRoute, STRIPE_WEBHOOK_PATH, safeEqual } from "./routes/partner-payment.js";
+import { createPartnerPaymentRoutes, createStripeWebhookRoute, STRIPE_WEBHOOK_PATH, safeEqual, createRequirePaid } from "./routes/partner-payment.js";
 import { PartnerPayments } from "./payments/partner-payments.js";
 import type { AdminQueries } from "./db/admin-queries.js";
 import { ConversationEngine } from "./game/conversation-engine.js";
@@ -237,19 +237,10 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   };
   const paymentLimit = rateLimit({ windowMs: 60_000, max: 20, standardHeaders: true, legacyHeaders: false });
 
-  // Every REST route that generates for (or advances) a child refuses an
-  // unpaid two-human child, not just the two the client could reach first.
-  // Reports, reads and safety routes are not on this list and never are.
-  const PARTNER_GATED = /^\/game\/([^/]+)\/(next-event|message|end-chat|end-debrief|repair|end-consult|end-therapy|end-cps|therapy-message|portraits\/next|epilogue|adult-chat|report-card)\/?$/;
-  app.use("/api", async (req, res, next) => {
-    const m = req.method === "POST" ? PARTNER_GATED.exec(req.path) : null;
-    if (!m || !payments.active()) return next();
-    if (await partnerGate(decodeURIComponent(m[1]))) {
-      res.status(402).json({ error: "This child's partner play isn't paid for yet." });
-      return;
-    }
-    next();
-  });
+  // The partner payment on every REST route that generates for (or advances)
+  // a child: attached to each route itself (routes/game.ts, routes/endgame.ts),
+  // so a path spelled differently can't route around it.
+  const requirePaid = createRequirePaid(partnerGate);
   /**
    * The seat a REST caller holds, by its player token. A game with any seat
    * is a multiplayer game: its answers come from a seat, never from an
@@ -264,8 +255,8 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     const mine = all.find((p) => safeEqual(p.token, token));
     return { seated: true, slot: mine?.slot ?? null };
   };
-  app.use("/api", createGameRoutes(conversationEngine, endgameEngine, games, repo, { llmRateLimit, gameCreateLimit, gameLocks, llm, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0, partnerGate, seatOf }));
-  app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit, gameLocks }));
+  app.use("/api", createGameRoutes(conversationEngine, endgameEngine, games, repo, { llmRateLimit, gameCreateLimit, gameLocks, llm, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0, partnerGate, seatOf, requirePaid }));
+  app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit, gameLocks, requirePaid }));
   app.use("/api", createResearchRoutes(games, repo, { gameLocks, llm, followupLimit, answerLimit, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0 }));
   app.use("/api", createCampusRoutes(repo, { limit: campusPassLimit }));
   app.use("/api", createUserRoutes());

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
+import { passThrough } from "./partner-payment.js";
 import { EndgameEngine } from "../game/endgame-engine.js";
 import type { GameRepository } from "../db/repository.js";
 import type { GameState } from "../types.js";
@@ -11,6 +12,8 @@ import { resolveGame } from "../lib/resolve-game.js";
 
 interface EndgameRouteOptions {
   llmRateLimit?: RequestHandler;
+  /** Partner payment gate, attached per route (see routes/game.ts). */
+  requirePaid?: RequestHandler;
   /** Shared lock map — pass the same instance used by game routes and socket
    * handlers so all operations on the same game are serialized. */
   gameLocks?: Map<string, Promise<void>>;
@@ -27,13 +30,13 @@ export function createEndgameRoutes(
   repo: GameRepository,
   options: EndgameRouteOptions = {}
 ): Router {
-  const { llmRateLimit, gameLocks = new Map<string, Promise<void>>() } = options;
+  const { llmRateLimit, gameLocks = new Map<string, Promise<void>>(), requirePaid = passThrough } = options;
   const router = Router();
 
   const lock = <T>(gameId: string, fn: () => Promise<T>) => withGameLock(gameLocks, gameId, fn);
   const resolve = (id: string) => resolveGame(id, games, repo);
 
-  router.post("/game/:id/epilogue", ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
+  router.post("/game/:id/epilogue", requirePaid, ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
     if (!(await resolve(req.params.id as string))) {
       res.status(404).json({ error: "Game not found" });
       return;
@@ -61,7 +64,7 @@ export function createEndgameRoutes(
     }
   });
 
-  router.post("/game/:id/adult-chat", async (req: Request, res: Response) => {
+  router.post("/game/:id/adult-chat", requirePaid, async (req: Request, res: Response) => {
     const state = games.get(req.params.id as string);
     if (!state) {
       res.status(404).json({ error: "Game not found" });
@@ -86,7 +89,7 @@ export function createEndgameRoutes(
     }
   });
 
-  router.post("/game/:id/report-card", ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
+  router.post("/game/:id/report-card", requirePaid, ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
     if (!(await resolve(req.params.id as string))) {
       res.status(404).json({ error: "Game not found" });
       return;
