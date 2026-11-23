@@ -401,6 +401,22 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
     );
   }
 
+  // ---- Stranger mode: a seat the server ended before letting us in ----
+  // (the same neutral ending as below; it arrives with no JOINED, so no state)
+  if (!mp.gameId && mp.strangerEnded) {
+    return (
+      <div className="app fade-in">
+        <StrangerGameEnded
+          reported={false}
+          onLeave={() => {
+            mp.leaveGame();
+            window.location.assign(import.meta.env.BASE_URL);
+          }}
+        />
+      </div>
+    );
+  }
+
   // ---- Setup: create or join ----
   if (!mp.gameId) {
     return (
