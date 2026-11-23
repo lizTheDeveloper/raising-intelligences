@@ -32,6 +32,7 @@ describe("stranger mode routes", () => {
       passes: new StrangerPasses(),
       age: new AgeVerification({ store, api: identity, config: () => cfg, childSafety: repo.childSafety, pepper: "p".repeat(64) }),
       verifyMatrix: async (t) => tokens.get(String(t)) ?? null,
+      store,
     });
     built = buildServer({
       llm: new MockLLMClient(),

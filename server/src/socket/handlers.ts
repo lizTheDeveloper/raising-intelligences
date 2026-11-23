@@ -1,3 +1,6 @@
+import { STRANGER_RELATIONSHIP, type StrangerSlot } from "../stranger/matching.js";
+import { randomUUID } from "node:crypto";
+import type { StrangerService } from "../stranger/service.js";
 import type { Server, Socket } from "socket.io";
 import type { GameState, GameEvent, Sender, ParentPersonality } from "../types.js";
 import { ConversationEngine } from "../game/conversation-engine.js";
@@ -69,6 +72,8 @@ import { loadParentContext } from "../research/parent-context.js";
 import type { PartnerPayments } from "../payments/partner-payments.js";
 
 export interface SocketDeps {
+  /** Stranger mode (Tier 4): matching, seat binding. Absent in most tests. */
+  stranger?: StrangerService;
   io: Server;
   games: Map<string, GameState>;
   sessions: Map<string, Session>;
@@ -289,12 +294,39 @@ function lobbyState(session: Session): LobbyState {
 export function registerSocketHandlers(deps: SocketDeps): void {
   const { io, games, sessions, conversationEngine, endgameEngine, repo, llm,
           gameLocks = new Map<string, Promise<void>>(),
-          handoffTtlMs = HANDOFF_TTL_MS, payments } = deps;
+          handoffTtlMs = HANDOFF_TTL_MS, payments, stranger } = deps;
 
   /** viewerState plus the per-seat payment step, which lives outside GameState. */
   const view = (state: GameState, slot: Sender, generating: boolean): ViewerState => ({
     ...viewerState(state, slot, generating),
     payment: payments?.view(state.id, slot) ?? null,
+    ...(stranger?.matching?.isRun(state.id) ? { strangerRun: true } : {}),
+  });
+
+  // ---- Stranger mode: matching creates games here, where games and seats live ----
+  const STRANGER_PRIVATE = "This game is private.";
+  stranger?.attachMatching({
+    createGame: async (host, partner) => {
+      const state = createGame(host.childName, STRANGER_RELATIONSHIP);
+      games.set(state.id, state);
+      await repo.saveGame(state);
+      // Both seats RESERVED (a token each, held by the matching), not taken:
+      // a seat enters the session — and counts as a human for the paywall —
+      // only when its verified adult actually arrives (JOIN_GAME below).
+      return { gameId: state.id, tokens: { parent1: randomUUID(), parent2: randomUUID() } };
+    },
+    discardGame: (gameId) => {
+      games.delete(gameId);
+      sessions.delete(gameId);
+    },
+    removeSeat: (gameId, slot) => {
+      const s = sessions.get(gameId);
+      if (s) sessions.set(gameId, { ...s, players: s.players.filter((p) => p.slot !== slot) });
+      broadcastLobby(gameId);
+    },
+    notifyNoShow: (gameId, slot) => {
+      io.to(slotRoom(gameId, slot)).emit(E.STRANGER_NO_SHOW, {});
+    },
   });
 
   const lock = <T>(gameId: string, fn: () => Promise<T>) => withGameLock(gameLocks, gameId, fn);
@@ -801,6 +833,26 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     // The partner payment, on every later step: once a child exists, an
     // event that would generate for it waits on paidOrFree. With the paywall
     // off this passes straight through, synchronously, as before.
+    // A stranger seat stays bound to a verified adult for the whole game: a
+    // later minor result, ban or suspension ends it at their next action.
+    let strangerSeat: { gameId: string; mxid: string; subject: string } | null = null;
+    socket.use((packet, next) => {
+      const seat = strangerSeat;
+      if (!seat || seat.gameId !== data.gameId || !stranger || !GENERATING_EVENTS.has(String(packet[0]))) return next();
+      Promise.all([stranger.age.adultForPool(seat.mxid), stranger.store.isSuspended(seat.subject)]).then(
+        ([pool, suspended]) => {
+          if (pool.ok && !suspended && !stranger.off()) return next();
+          logger.warn("stranger_seat_closed", { gameId: seat.gameId });
+          socket.emit(E.ERROR, { error: STRANGER_PRIVATE });
+          socket.disconnect(true);
+        },
+        (err) => {
+          logger.error("stranger_seat_check_failed", { error: err instanceof Error ? err.message : String(err) });
+          socket.emit(E.ERROR, { error: "couldn't check this seat. try again." });
+        },
+      );
+    });
+
     socket.use((packet, next) => {
       const gameId = data.gameId;
       if (!payments?.active() || !gameId || !GENERATING_EVENTS.has(String(packet[0]))) return next();
@@ -981,6 +1033,47 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         sessions.set(gameId, session);
       }
 
+      // ---- Stranger mode: only the matched adult may sit in each seat ----
+      // No new seats, no reclaim of a dropped seat by anyone else, no handoff
+      // code: only this seat's own token, presented with the stranger pass of
+      // the verified adult the seat was matched to (re-checked every time).
+      // Recognised from state already in hand (or this process's own run
+      // table): an ordinary game takes no extra await here.
+      let strandedNoShow = false;
+      if (stranger?.matching && (state.relationshipType === STRANGER_RELATIONSHIP || stranger.matching.isRun(gameId))) {
+        const matching = stranger.matching;
+        const seats = await matching.runFor(gameId);
+        if (seats) {
+          const token = typeof payload.playerToken === "string" ? payload.playerToken : "";
+          if (seats.discarded || handoff || !token) return fail(STRANGER_PRIVATE);
+          // A seat already taken (by this token), or one still reserved for it.
+          const slot = (getPlayerByToken(session, token)?.slot as StrangerSlot | undefined) ?? matching.reservedSlot(gameId, token);
+          if (!slot) return fail(STRANGER_PRIVATE);
+          const holder = await stranger.seatHolderOk(seats, slot, payload.strangerPass);
+          if (!holder) return fail(STRANGER_PRIVATE);
+          // Re-read after the awaits: never write back a stale session (the
+          // window may have lapsed, or the game been discarded, meanwhile).
+          session = sessions.get(gameId) ?? session;
+          if (!getPlayerByToken(session, token)) {
+            if (matching.reservedSlot(gameId, token) !== slot) return fail(STRANGER_PRIVATE);
+            const seat: Player = { slot, connectionId: "", displayName: matching.reservedName(gameId, slot), ready: false, connected: false, token };
+            session = { ...session, players: [...session.players.filter((p) => p.slot !== slot), seat] };
+            sessions.set(gameId, session);
+            await repo.savePlayer(gameId, slot, seat.displayName, token);
+            session = sessions.get(gameId) ?? session;
+          } else if (!matching.isPending(gameId) && session.players.length < 2) {
+            // Restarted mid-window: the other reservation died with the process.
+            strandedNoShow = true;
+          }
+          strangerSeat = { gameId, mxid: holder, subject: seats[slot] };
+          matching.markArrived(gameId, slot);
+          if (strandedNoShow) {
+            const me = getPlayerByToken(session, token);
+            if (me) matching.adoptStranded(seats, slot, { mxid: holder, displayName: me.displayName, childName: state.childName });
+          }
+        }
+      }
+
       // ---- Device handoff: this socket takes over the slot the code was
       // minted for. Deliberately routed through the very same reconnect path a
       // returning player uses — the handoff's only job is to establish *which*
@@ -1067,6 +1160,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
             E.STATE,
             view(state, reconnected.player.slot, generatingGames.has(gameId))
           );
+          if (strandedNoShow) socket.emit(E.STRANGER_NO_SHOW, {});
           return;
         }
       }
@@ -1130,6 +1224,11 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       const gameId = data.gameId;
       const slot = data.slot;
       if (!gameId || !slot || slot === "kid") return fail("Not in a game");
+      // A stranger game's seat is bound to a verified adult: it can't be
+      // passed to another device by code (JOIN refuses the code anyway).
+      if (stranger?.matching?.isRun(gameId) || games.get(gameId)?.relationshipType === STRANGER_RELATIONSHIP) {
+        return fail("Handoff isn't available in stranger games.");
+      }
       const minted = mintHandoffCode(gameId, slot);
       socket.emit(E.HANDOFF_CODE, { code: minted.code, expiresAt: minted.expiresAt });
     });

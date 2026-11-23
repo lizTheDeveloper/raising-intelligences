@@ -83,6 +83,7 @@ export function strangerConfig(overrides: Partial<StrangerConfig> = {}): Strange
     matrixUserinfoUrl: "https://matrix.example/_matrix/federation/v1/openid/userinfo",
     publicBaseUrl: "http://localhost:5173",
     joinWindowMs: 180_000,
+    queueIdleMs: 90_000,
     takeoverGraceMs: 90_000,
     ...overrides,
   };

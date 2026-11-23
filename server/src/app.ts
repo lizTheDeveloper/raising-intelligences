@@ -1,3 +1,4 @@
+import { STRANGER_RELATIONSHIP } from "./stranger/matching.js";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -261,6 +262,21 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     const mine = all.find((p) => safeEqual(p.token, token));
     return { seated: true, slot: mine?.slot ?? null };
   };
+  // A stranger game is played over the socket only, where every seat is bound
+  // to its verified adult. REST writes name no seat holder, so none are
+  // accepted for one (reads stay open: the game id reaches only the pair).
+  app.use("/api/game/:id", async (req, res, next) => {
+    if (req.method === "GET" || !stranger.matching) return next();
+    const id = String(req.params.id ?? "");
+    const rel = games.get(id)?.relationshipType;
+    if (rel !== undefined && rel !== STRANGER_RELATIONSHIP) return next();
+    try {
+      if (await stranger.matching.runFor(id)) return void res.status(403).json({ error: "Stranger games are played in the app." });
+      next();
+    } catch (err) {
+      next(err);
+    }
+  });
   app.use("/api", createGameRoutes(conversationEngine, endgameEngine, games, repo, { llmRateLimit, gameCreateLimit, gameLocks, llm, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0, partnerGate, seatOf, requirePaid }));
   app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit, gameLocks, requirePaid }));
   app.use("/api", createResearchRoutes(games, repo, { gameLocks, llm, followupLimit, answerLimit, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0 }));
@@ -351,7 +367,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     repo,
     llm,
     gameLocks,
-    payments,
+    payments, stranger,
   });
 
   let evictionTimer: NodeJS.Timeout | undefined;
