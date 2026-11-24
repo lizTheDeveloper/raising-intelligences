@@ -142,20 +142,29 @@ export class HostHarness {
 
   async card(code: string) { return this.get(`/events/card?meetup=${encodeURIComponent(code)}`); }
 
+  /** Each player browses from their own address, as at a real meetup (the routes are rate-limited per IP). */
+  private ips = new Map<string, string>();
+  ipFor(key: string): Record<string, string> {
+    if (!this.ips.has(key)) this.ips.set(key, `10.9.${Math.floor(this.ips.size / 250)}.${(this.ips.size % 250) + 1}`);
+    return { "X-Forwarded-For": this.ips.get(key)! };
+  }
+
   /** Card → continue → sign in. Returns the stranger pass. */
   async arrive(mxid: string, code: string, opts: { verify?: boolean } = {}): Promise<string> {
     if (opts.verify !== false) await this.verify(mxid);
-    const c = await this.card(code);
+    const ip = this.ipFor(mxid);
+    const c = await this.get(`/events/card?meetup=${encodeURIComponent(code)}`, ip);
     if (c.status !== 200) throw new Error(`card: ${c.status}`);
-    const ack = await this.post("/events/ack", { meetup: code, cardVersion: c.body.card.version });
+    const ack = await this.post("/events/ack", { meetup: code, cardVersion: c.body.card.version }, ip);
     if (ack.status !== 200) throw new Error(`ack: ${ack.status} ${ack.text}`);
-    const p = await this.post("/stranger/pass", { openIdToken: `tok:${mxid}`, meetup: code, ackToken: ack.body.ackToken });
+    const p = await this.post("/stranger/pass", { openIdToken: `tok:${mxid}`, meetup: code, ackToken: ack.body.ackToken }, ip);
     if (p.status !== 200) throw new Error(`pass: ${p.status} ${p.text}`);
+    this.ips.set(p.body.pass as string, ip["X-Forwarded-For"]);
     return p.body.pass as string;
   }
 
   queue(pass: string, childName = "Wren", displayName = "Sam") {
-    return this.post("/stranger/queue/join", { pass, childName, displayName });
+    return this.post("/stranger/queue/join", { pass, childName, displayName }, this.ipFor(pass));
   }
 
   async client(): Promise<TestClient> {
@@ -178,8 +187,8 @@ export class HostHarness {
     const pb = await this.arrive(b, code);
     await this.queue(pa, "Wren", "Ash");
     await this.queue(pb, "Juniper", "Bea");
-    const ma = (await this.post("/stranger/queue/poll", { pass: pa })).body;
-    const mb = (await this.post("/stranger/queue/poll", { pass: pb })).body;
+    const ma = (await this.post("/stranger/queue/poll", { pass: pa }, this.ipFor(pa))).body;
+    const mb = (await this.post("/stranger/queue/poll", { pass: pb }, this.ipFor(pb))).body;
     if (ma.status !== "matched" || mb.status !== "matched") throw new Error(`not matched: ${JSON.stringify([ma, mb])}`);
     const A = await this.sit(pa, ma);
     const B = await this.sit(pb, mb);

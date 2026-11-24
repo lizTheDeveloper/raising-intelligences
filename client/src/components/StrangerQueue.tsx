@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { track } from "../analytics";
 import { saveResume } from "../localStore";
+import { asCard, type MeetupCard } from "../meetupCard";
 
 const API = import.meta.env.BASE_URL + "api";
 const MEETUP_KEY = "ri_stranger_meetup";
@@ -36,7 +37,13 @@ function enterGame(gameId: string, playerToken: string): void {
  * Waiting to be paired. No profiles, no photos, no "match" screen: you give a
  * first name and a name for the child, wait, and go straight into the game.
  */
-export function StrangerQueue({ pass, meetup, onBack }: { pass: string; meetup: string | null; onBack: () => void }) {
+export function StrangerQueue({ pass, meetup, onBack, onCardChanged }: {
+  pass: string;
+  meetup: string | null;
+  onBack: () => void;
+  /** A 409 with the meetup's current card: read it again, then `retry` joins with the same names. */
+  onCardChanged?: (card: MeetupCard, retry: () => void) => void;
+}) {
   const [childName, setChildName] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [poll, setPoll] = useState<Poll>({ status: "none" });
@@ -67,13 +74,18 @@ export function StrangerQueue({ pass, meetup, onBack }: { pass: string; meetup: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [poll.status, pass]);
 
-  const join = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const tryJoin = async (): Promise<void> => {
     setError(null);
-    const r = await call<Poll & { error?: string }>("/stranger/queue/join", { pass, childName, displayName });
+    const r = await call<Poll & { error?: string; card?: unknown }>("/stranger/queue/join", { pass, childName, displayName });
+    const card = r.status === 409 ? asCard(r.body.card) : null;
+    if (card && onCardChanged) return onCardChanged(card, () => void tryJoin());
     if (r.status !== 200) return setError(r.body.error ?? "that didn't work. try again.");
     track("stranger_queued");
     apply(r.body);
+  };
+  const join = (e: React.FormEvent) => {
+    e.preventDefault();
+    void tryJoin();
   };
 
   const leave = async () => {

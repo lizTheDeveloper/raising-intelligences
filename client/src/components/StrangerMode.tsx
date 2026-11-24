@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { track } from "../analytics";
+import { asCard, loadAck, type MeetupCard } from "../meetupCard";
 
 const API = import.meta.env.BASE_URL + "api";
 const PASS_KEY = "ri_stranger_pass";
@@ -36,13 +37,17 @@ interface Props {
   onBack: () => void;
   /** Rendered once this player is a verified adult: the queue (Phase 4). */
   renderEligible?: (pass: string) => React.ReactNode;
+  /** Meetup "get ready early": stop after the age check instead of opening the queue. */
+  prepareOnly?: boolean;
+  /** The server wants the meetup card read again (a 409 with the current card); `retry` signs in again after. */
+  onCardChanged?: (card: MeetupCard, retry: () => void) => void;
 }
 
 /**
  * Stranger mode's front door: Matrix sign-in, the ID-check consent, and the
  * Stripe Identity check. Nobody gets past it without passing as an adult.
  */
-export function StrangerMode({ meetup, consentVersion, onBack, renderEligible }: Props) {
+export function StrangerMode({ meetup, consentVersion, onBack, renderEligible, prepareOnly, onCardChanged }: Props) {
   const [pass, setPass] = useState<string | null>(() => loadPass());
   const [step, setStep] = useState<Step>("signin");
   const [busy, setBusy] = useState(false);
@@ -81,8 +86,16 @@ export function StrangerMode({ meetup, consentVersion, onBack, renderEligible }:
     setBusy(true);
     try {
       const tok = await ma.getOpenIdToken();
-      const r = await call<{ pass?: string; error?: string }>("/stranger/pass", { openIdToken: tok.access_token, meetup });
+      // The meetup card's acknowledgement (host tools). It lives in sessionStorage,
+      // so it is still here after the round trip to Stripe Identity.
+      const ack = loadAck();
+      const r = await call<{ pass?: string; error?: string; card?: unknown }>(
+        "/stranger/pass",
+        { openIdToken: tok.access_token, meetup, ...(ack ? { ackToken: ack.ackToken } : {}) },
+      );
       if (r.status === 404) return setStep("closed");
+      const card = r.status === 409 ? asCard(r.body.card) : null;
+      if (card && onCardChanged) return onCardChanged(card, () => void signIn());
       if (!r.body.pass) return setError(r.body.error ?? "that didn't work. try again.");
       savePass(r.body.pass);
       setPass(r.body.pass);
@@ -142,6 +155,15 @@ export function StrangerMode({ meetup, consentVersion, onBack, renderEligible }:
         <h1>this one is for adults</h1>
         <p className="dim">raising a child with someone you haven't met is only for people 18 and over.</p>
         <p className="dim">you can still raise a child on your own, or with a co-parent you invite. both are free.</p>
+        {back}
+      </div>
+    );
+  }
+
+  if (step === "eligible" && pass && prepareOnly) {
+    return (
+      <div className="lobby stranger-mode" role="status">
+        <p>you're ready. when the meetup opens, come back to the same link.</p>
         {back}
       </div>
     );
