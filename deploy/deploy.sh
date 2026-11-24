@@ -52,7 +52,50 @@ DOCKER_BUILDKIT=1 docker build -f "$REPO_DIR/Dockerfile" \
 
 echo "[deploy] stopping old container..."
 docker stop raising-intelligences 2>/dev/null || true
-docker rm raising-intelligences 2>/dev/null || true
+# Keep every byte of the old container's log: `docker rm` deletes it, and RI's
+# logs are never to be lost (Liz, 2026-11-24). The log is gzipped into
+# /var/log/raising-intelligences on the host first. If that fails, the old
+# container is renamed rather than removed, so its log is still on disk.
+#
+# This script runs inside the ri-webhook container, which cannot see the host's
+# /var/lib/docker or /var/log, so the copy runs in a throwaway container started
+# through the host's docker socket: its -v paths are host paths. It also works
+# when the script is run on the host by hand.
+RI_LOG_ARCHIVE=/var/log/raising-intelligences
+keep_old_container() {
+  echo "[deploy] WARNING: $1; keeping the old container as raising-intelligences-$STAMP" >&2
+  if ! docker rename raising-intelligences "raising-intelligences-$STAMP"; then
+    # Neither archived nor renamed: put the old container back and stop here,
+    # rather than lose its log or leave the site down.
+    echo "[deploy] ERROR: could not rename the old container either; restarting it and aborting this deploy" >&2
+    docker start raising-intelligences >/dev/null || true
+    exit 1
+  fi
+}
+if docker inspect raising-intelligences >/dev/null 2>&1; then
+  STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+  ARCHIVE="container-$STAMP.json.log.gz"
+  OLD_LOG="$(docker inspect --format '{{.LogPath}}' raising-intelligences 2>/dev/null || true)"
+  # RI logs hold player text: the folder is root-only (0700) and each archive is
+  # 0600. The archive is written as .part, gzip-tested, its unpacked size checked
+  # against the log's, and only then renamed into place.
+  if [ -n "$OLD_LOG" ] && docker run --rm --user 0:0 --network none --entrypoint sh \
+       -v "$(dirname "$OLD_LOG"):/in:ro" -v "$RI_LOG_ARCHIVE:/out" \
+       raising-intelligences:latest -c '
+         set -e
+         chmod 0700 /out
+         umask 077
+         test -f "/in/$1"
+         gzip -c "/in/$1" > "/out/$2.part"
+         gzip -t "/out/$2.part"
+         test "$(gzip -dc "/out/$2.part" | wc -c)" -eq "$(wc -c < "/in/$1")"
+         mv "/out/$2.part" "/out/$2"' sh "$(basename "$OLD_LOG")" "$ARCHIVE"; then
+    echo "[deploy] archived old container log to $RI_LOG_ARCHIVE/$ARCHIVE"
+    docker rm raising-intelligences >/dev/null || keep_old_container "could not remove the old container"
+  else
+    keep_old_container "could not archive the old log"
+  fi
+fi
 
 echo "[deploy] starting new container..."
 docker run -d \
