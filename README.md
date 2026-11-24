@@ -64,6 +64,8 @@ Copy `.env.example` to `.env`. The required keys:
 - `CAMPUS_PASS_PUBLIC_KEY` — optional; overrides the pinned campus launch-pass public key (see "Campus cabinet")
 - `RI_RESEARCH_ENABLED` — optional, default off; only the exact value `true` enables the research features. Leave off until the copy and the consent and age handling are reviewed
 - `RI_PARTNER_PAYWALL` — optional, default off; `on` charges the host $20 once per child raised with a second human, at the moment the partner has joined (both parents' answers in), before anything is generated for the child. Needs `RI_STRIPE_SECRET_KEY` (test mode) and `RI_STRIPE_WEBHOOK_SECRET`; a live key is refused unless `RI_STRIPE_LIVE_PAYMENTS=true`. See "Partner play payment" below
+- `RI_LEGACY_CLAIM_UNTIL` — optional ISO timestamp, default `2026-12-24T00:00:00Z`. Until then, a seatless game made before per-game secrets (pre-2.2.0) can be claimed once through `POST /api/game/:id/claim` for a **read-only** credential: it reads that game's state and nothing else (no delete, no research writes, no cross-device link). Every claim is logged. A past or unparseable value closes the path
+- `RI_MATRIX_USERINFO_URL` — optional; the Synapse OpenID userinfo endpoint used to verify a Matrix sign-in (kids, album, reading your own game from another device). Defaults to matrix.multiversegames.ai
 
 The server works without any of these, but LLM calls will fail without an API key.
 
