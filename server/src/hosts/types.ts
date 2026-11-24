@@ -50,6 +50,8 @@ export interface HostEvent {
   opensAt: number;
   closesAt: number;
   paused: boolean;
+  /** Who paused it: a studio pause is never lifted by the host. */
+  pausedBy: "admin" | "host" | null;
   closedAt: number | null;
   cardVersion: number;
   frozenTerms: FrozenTerms | null;

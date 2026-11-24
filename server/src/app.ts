@@ -21,6 +21,7 @@ import { StrangerService } from "./stranger/service.js";
 import { HostTools } from "./hosts/service.js";
 import { devMatrixVerifier, readDevHarness } from "./dev/harness.js";
 import { createHostToolsRoutes, createHostToolsAdminRoutes } from "./hosts/routes.js";
+import { HostPortal, createHostPortalRoutes, createHostPortalAdminRoutes } from "./hosts/portal.js";
 import { readStrangerConfig } from "./stranger/config.js";
 import { verifyOpenIdToken } from "./stranger/matrix-identity.js";
 import { cachedMatrixVerifier, type MatrixVerifier } from "./security/game-read-access.js";
@@ -325,6 +326,9 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   if (hostTools) {
     app.use("/api", createHostToolsRoutes(hostTools, rateLimit({ windowMs: 60_000, max: 30, standardHeaders: true, legacyHeaders: false })));
     app.use("/api", createHostToolsAdminRoutes(hostTools));
+    const portal = new HostPortal(hostTools);
+    app.use("/api", createHostPortalRoutes(hostTools, portal, rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false })));
+    app.use("/api", createHostPortalAdminRoutes(hostTools, portal));
   }
   app.use("/api", createPartnerPaymentRoutes({ payments, repo, sessions, gameLocks, limit: paymentLimit }));
   // Child safety: evidence ingestion (own token) must be mounted before the

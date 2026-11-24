@@ -1718,3 +1718,26 @@ button.stranger-report { align-self: flex-end; font-size: 0.85em; }
   width: 100%; box-sizing: border-box; background: transparent; color: var(--fg);
   border: 1px solid var(--fg-dim); font-family: var(--font); font-size: 14px; padding: 8px; resize: vertical;
 }
+
+/* Host portal and the discussion deck (host tools §4, §B.6) */
+.host-event { border-top: 1px solid var(--fg-dim); padding-top: 12px; }
+.host-event h2 strong { font-weight: 500; }
+.host-event-actions { justify-content: flex-start; margin-top: 4px; }
+.host-codes { border-top: 1px solid var(--fg-dim); padding-top: 12px; }
+.deck-questions { width: 100%; text-align: left; padding-left: 24px; }
+.deck-questions li { margin-bottom: 10px; }
+
+/* The deck prints as plain questions on white: no buttons, theme or grain. Only pages showing the deck. */
+@media print {
+  body:has(.deck) { background: #fff; color: #000; }
+  body:has(.deck)::after,
+  body:has(.deck) .start-glow,
+  body:has(.deck) button,
+  body:has(.deck) .btn,
+  body:has(.deck) .btn-link,
+  .no-print { display: none !important; }
+  body:has(.deck) .app { min-height: 0; padding: 0; max-width: none; }
+  .deck { min-height: 0; padding: 0; }
+  .deck, .deck * { color: #000 !important; }
+  .deck-questions li { break-inside: avoid; }
+}

@@ -4,7 +4,7 @@ import { normalizeMeetupCode, readStrangerConfig } from "../stranger/config.js";
 import type { StrangerService, StrangerHostTools } from "../stranger/service.js";
 import type { PartnerPayments } from "../payments/partner-payments.js";
 import { buildCard, liveTerms, reconcileTerms, termsFor, type CardPayload, type LiveSettings } from "./card.js";
-import { ackTokenHash, eventCodeHash, newAckToken, newEventCode } from "./codes.js";
+import { ackTokenHash, eventCodeHash, newAckToken, newEventCode, opaqueRef } from "./codes.js";
 import { MAX_EVENT_MS, readHostToolsConfig, type HostToolsConfig } from "./config.js";
 import type { HostStore } from "./store.js";
 import type { EventStatus, HostEvent, HostPerson, Level } from "./types.js";
@@ -168,7 +168,7 @@ export class HostTools implements StrangerHostTools {
         id: randomUUID(), codeHash: hash, source: "env", name: ENV_EVENT_NAME, kind: "studio", hostPersonId: null, guestReaderId: null,
         sensitive: false, authority: false, eventsBusiness: false, level: 0, shareCodes: false, studioLearning: false, handleExchange: true,
         welcomeText: "", lengthText: null, conductUrl: null, capacity: 500, joinWindowMs: this.stranger.config().joinWindowMs,
-        opensAt: now, closesAt: now + MAX_EVENT_MS, paused: false, closedAt: null, cardVersion: 1, frozenTerms: null, firstAckAt: null,
+        opensAt: now, closesAt: now + MAX_EVENT_MS, paused: false, pausedBy: null, closedAt: null, cardVersion: 1, frozenTerms: null, firstAckAt: null,
         publishedFunnel: null, publishedAt: null, createdAt: now,
       };
       await this.store.createEvent(e);
@@ -207,6 +207,16 @@ export class HostTools implements StrangerHostTools {
     const c = normalizeMeetupCode(code);
     if (!c) return null;
     return this.byHash.get(eventCodeHash(this.pepper, c)) ?? null;
+  }
+
+  /** A per-viewer opaque reference (H11): never a raw id in a host or account response. */
+  ref(kind: "game" | "code" | "event", viewer: string, id: string): string {
+    return opaqueRef(this.pepper, kind, viewer, id);
+  }
+
+  /** Re-reads an event into the registry after a direct store write (the funnel's one publication). */
+  refresh(e: HostEvent): void {
+    this.remember(e);
   }
 
   eventById(id: string | null | undefined): HostEvent | null {
@@ -483,7 +493,7 @@ export class HostTools implements StrangerHostTools {
       handleExchange: input.handleExchange === undefined ? !bool(input.eventsBusiness) : bool(input.handleExchange),
       welcomeText: (str(input.welcomeText) ?? "").trim(), lengthText: str(input.lengthText)?.trim() || null, conductUrl: str(input.conductUrl)?.trim() || null,
       capacity: num(input.capacity, 100), joinWindowMs: num(input.joinWindowMs, this.stranger.config().joinWindowMs),
-      opensAt: num(input.opensAt, now), closesAt: num(input.closesAt, NaN), paused: false, closedAt: null, cardVersion: 1,
+      opensAt: num(input.opensAt, now), closesAt: num(input.closesAt, NaN), paused: false, pausedBy: null, closedAt: null, cardVersion: 1,
       frozenTerms: null, firstAckAt: null, publishedFunnel: null, publishedAt: null, createdAt: now,
     };
     const problem = this.validate(e, await this.peopleMap());
@@ -503,15 +513,25 @@ export class HostTools implements StrangerHostTools {
    * Before the first acknowledgement anything can change. After it (H17),
    * only pause, close, and lowering the level (which bumps the card version).
    */
-  async patchEvent(id: string, patch: Record<string, unknown>): Promise<AdminResult<HostEvent>> {
+  async patchEvent(id: string, patch: Record<string, unknown>, actor: "admin" | "host" = "admin"): Promise<AdminResult<HostEvent>> {
     const e = this.byId.get(id) ?? (await this.store.getEvent(id));
     if (!e) return { ok: false, status: 404, error: "No such event" };
     const keys = Object.keys(patch);
+    if (actor === "host") {
+      // A host only pauses, resumes, closes or lowers, never on a closed event,
+      // and never lifts a pause the studio made.
+      if (keys.some((k) => !["paused", "closed", "level"].includes(k))) return { ok: false, status: 403, error: "not allowed" };
+      if (this.status(e) === "closed" || e.closedAt !== null) return { ok: false, status: 409, error: "this meetup is closed." };
+      if (patch.paused === false && e.paused && e.pausedBy !== "host") {
+        return { ok: false, status: 403, error: "the studio paused this meetup. it stays paused until the studio resumes it." };
+      }
+      if (patch.paused === true && e.paused && e.pausedBy !== "host") return { ok: true, value: e };
+    }
     const frozen = e.firstAckAt !== null;
     const update: Partial<HostEvent> = {};
     for (const k of keys) {
       const v = patch[k];
-      if (k === "paused") { update.paused = v === true; continue; }
+      if (k === "paused") { update.paused = v === true; update.pausedBy = v === true ? actor : null; continue; }
       if (k === "closed") { if (v === true && e.closedAt === null) update.closedAt = this.now(); continue; }
       if (k === "level") {
         const lv = Number(v);
