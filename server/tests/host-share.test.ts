@@ -126,6 +126,45 @@ describe("share codes", () => {
     });
   }
 
+  describe("after a restart (no Matrix id in memory for the seats)", () => {
+    const restart = () => (h.stranger as any).exchanges.clear();
+
+    it("a seat banned before the restart: no code, and the share step looks like any code-less game", async () => {
+      const clean = await finished();
+      const banned = await finished();
+      await h.repo.childSafety.banIdentifier({ kind: "matrix", value: `@b${n}:multiversegames.ai` }, "t", null);
+      restart();
+      const replies: unknown[][] = [[], []];
+      for (const [i, g] of [clean, banned].entries()) replies[i].push(await decide(g.A, "yes"), await decide(g.B, "yes"));
+      expect(replies[0]).toEqual(replies[1]);
+      h.clock!.now += 11 * MIN;
+      expect(await h.repo.hosts.codeByGame(banned.gameId)).toBeNull();
+      expect(await h.repo.hosts.codeByGame(clean.gameId)).not.toBeNull();
+    });
+
+    it("a ban list that can't be read: fail closed, no code", async () => {
+      const g = await finished();
+      restart();
+      (h.repo.childSafety as any).bannedValues = async () => { throw new Error("db down"); };
+      expect(await decide(g.A, "yes")).toEqual({ view: { state: "waiting" } });
+      expect(await decide(g.B, "yes")).toEqual({ view: { state: "waiting" } });
+      h.clock!.now += 11 * MIN;
+      expect(await h.repo.hosts.codeByGame(g.gameId)).toBeNull();
+    });
+
+    it("a seat banned after the code was made: it stops opening, even with nobody seated", async () => {
+      const g = await finished();
+      await decide(g.A, "yes"); await decide(g.B, "yes");
+      h.clock!.now += 11 * MIN;
+      const words = (await account(`@a${n}:multiversegames.ai`)).games[0].share.words;
+      const pass = await hostPass();
+      const { codeRef } = (await h.post("/host/codes/redeem", { pass, words })).body;
+      restart();
+      await h.repo.childSafety.banIdentifier({ kind: "matrix", value: `@a${n}:multiversegames.ai` }, "t", null);
+      expect((await h.post("/host/codes/view", { pass, codeRef })).status).toBe(404);
+    });
+  });
+
   it("B2: a phrase from a private talk never reaches a code, nor do the Voices and Quotes sections or the players' names (H5, H9)", async () => {
     const g = await finished({ private: `between us: ${SENTINEL}, ok?` });
     await decide(g.A, "yes"); await decide(g.B, "yes");

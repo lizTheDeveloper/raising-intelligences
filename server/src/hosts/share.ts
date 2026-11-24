@@ -164,8 +164,11 @@ export class ShareService {
   private async seatStillAdult(gameId: string, slot: Slot, subject: string): Promise<boolean> {
     const stranger = this.hosts.stranger;
     if (await stranger.store.isSuspended(subject)) return false;
+    // The subject-level check always runs: it covers the ban list even when no
+    // Matrix id is in memory (after a restart), and fails closed.
+    if (!(await stranger.age.adultBySubject(subject))) return false;
     const mxid = stranger.seatHolder(gameId, slot);
-    if (!mxid) return stranger.age.adultBySubject(subject); // after a restart: the subject-level check
+    if (!mxid) return true;
     if ((await stranger.age.subjectHash(mxid)) !== subject) return false;
     return (await stranger.age.adultForPool(mxid)).ok;
   }

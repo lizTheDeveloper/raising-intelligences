@@ -309,18 +309,29 @@ export class AgeVerification {
    */
   /**
    * The adult check by subject alone, for when the Matrix id isn't in memory
-   * (after a restart): the stored outcome and its mode. The ban list is keyed
-   * by Matrix id, so it is only checked by adultForPool.
+   * (after a restart): the stored outcome, its mode, and the ban list. The
+   * ban list is keyed by Matrix id, so each banned id is hashed and compared.
+   * Anything that can't be read fails closed (false).
    */
   async adultBySubject(subject: string): Promise<boolean> {
     try {
+      if (await this.subjectBanned(subject)) return false;
       const row = await this.store.getVerification(subject);
       if (!row || row.outcome !== "adult") return false;
       const cfg = this.config();
       return row.livemode || (!cfg.production && cfg.allowTestIdentity);
-    } catch {
+    } catch (err) {
+      logger.error("stranger_subject_check_failed", { error: err instanceof Error ? err.message : String(err) });
       return false;
     }
+  }
+
+  /** Is any banned Matrix id this subject? Throws if the list can't be read (callers fail closed). */
+  async subjectBanned(subject: string): Promise<boolean> {
+    for (const mxid of await this.childSafety.bannedValues("matrix")) {
+      if ((await this.subjectHash(mxid)) === subject) return true;
+    }
+    return false;
   }
 
   async adultForPool(matrixId: string): Promise<{ ok: boolean; reason?: PoolRefusal }> {

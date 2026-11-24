@@ -148,6 +148,8 @@ export interface ChildSafetyStore {
   purge(nowMs: number, ipLogCutoffMs: number): Promise<{ purgedCaseIds: string[]; ipRowsDeleted: number }>;
   banIdentifier(id: Identifier, reason: string, caseId: string | null): Promise<void>;
   isIdentifierBanned(id: Identifier): Promise<boolean>;
+  /** Every banned value of one kind (the list is short: confirmed cases only). */
+  bannedValues(kind: Identifier["kind"]): Promise<string[]>;
   /** Does any case, in any state, name this game? */
   hasCaseForGame(gameRef: string): Promise<boolean>;
 }
@@ -226,6 +228,9 @@ export class InMemoryChildSafetyStore implements ChildSafetyStore {
   }
   async hasCaseForGame(gameRef: string): Promise<boolean> {
     return [...this.cases.values()].some((c) => c.gameRef === gameRef);
+  }
+  async bannedValues(kind: Identifier["kind"]): Promise<string[]> {
+    return [...this.bans.keys()].filter((k) => k.startsWith(`${kind}:`)).map((k) => k.slice(kind.length + 1));
   }
 }
 
@@ -435,6 +440,11 @@ export class PgChildSafetyStore implements ChildSafetyStore {
        ON CONFLICT (kind, value) DO UPDATE SET reason = EXCLUDED.reason, case_id = COALESCE(EXCLUDED.case_id, child_safety.banned_identifiers.case_id)`,
       [id.kind, id.value, reason, caseId],
     );
+  }
+
+  async bannedValues(kind: Identifier["kind"]): Promise<string[]> {
+    const { rows } = await this.db.query(`SELECT value FROM child_safety.banned_identifiers WHERE kind = $1`, [kind]);
+    return rows.map((r) => String(r.value));
   }
 
   async hasCaseForGame(gameRef: string): Promise<boolean> {

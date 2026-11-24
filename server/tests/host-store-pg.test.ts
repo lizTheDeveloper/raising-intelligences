@@ -144,5 +144,9 @@ describe.skipIf(!process.env.DATABASE_URL)("host tools store on Postgres", () =>
       [randomUUID(), state.id],
     ).catch(async (err) => { throw new Error(`insert case: ${err.message}`); });
     expect(await childSafety.hasCaseForGame(state.id)).toBe(true);
+    const banned = `@banned-${randomUUID()}:x`;
+    expect(await childSafety.bannedValues("matrix")).not.toContain(banned);
+    await childSafety.banIdentifier({ kind: "matrix", value: banned }, "t", null);
+    expect(await childSafety.bannedValues("matrix")).toContain(banned);
   });
 });
