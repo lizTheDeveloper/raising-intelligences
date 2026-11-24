@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { logger } from "../logger.js";
 import type { IdentityApi, VerificationSession } from "../stranger/identity.js";
 import type { StripeParams } from "../payments/stripe.js";
@@ -88,10 +89,10 @@ export function devMatrixVerifier(
  */
 export class DevIdentity implements IdentityApi {
   private sessions = new Map<string, VerificationSession>();
-  private n = 0;
 
   async createVerificationSession(params: StripeParams): Promise<VerificationSession> {
-    const id = `vs_dev${String(++this.n).padStart(8, "0")}`;
+    // Random, not a counter: a counter restarts with the process and collides with sessions a persistent database already holds.
+    const id = `vs_dev_${randomUUID().replace(/-/g, "")}`;
     const s: VerificationSession = {
       id,
       status: "verified",

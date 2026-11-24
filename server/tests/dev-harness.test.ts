@@ -42,3 +42,13 @@ describe("the local test harness", () => {
     for (let i = 0; i < 5000; i++) expect(await m.completeJson("", "")).toBeTruthy();
   });
 });
+
+describe("DevIdentity session ids", () => {
+  it("never repeat across restarts (a persistent database keeps the old ones)", async () => {
+    const { DevIdentity } = await import("../src/dev/harness.js");
+    const params = { return_url: "http://x/", "metadata[ri_subject]": "s" } as never;
+    const a = await new DevIdentity().createVerificationSession(params);
+    const b = await new DevIdentity().createVerificationSession(params);
+    expect(a.id).not.toBe(b.id);
+  });
+});
