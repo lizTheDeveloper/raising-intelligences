@@ -172,7 +172,7 @@ describe("host tools: studio learning, unlink, purge", () => {
       return h.post("/stranger/account/unlink", { pass, gameRef: ref });
     };
 
-    it("a request voids the code at once, silently: the co-parent's row doesn't change", async () => {
+    it("a request voids the code at once; the co-parent's row says only that it no longer opens", async () => {
       const g = await withCode();
       const before = (await account(g.b)).games[0];
       expect(before.share.state).toBe("code");
@@ -181,7 +181,7 @@ describe("host tools: studio learning, unlink, purge", () => {
       expect(r.status).toBe(200);
       expect(r.body).toEqual({ ok: true });
       expect((await account(g.a)).games[0].unlink).toBe("requested");
-      expect((await account(g.b)).games[0]).toEqual(before);
+      expect((await account(g.b)).games[0]).toEqual({ ...before, share: { state: "ended" } });
       const redeem = await h.post("/host/codes/redeem", { pass: hostPass, words: before.share.words });
       expect(redeem.status).toBe(404);
       // A second request is the same request.

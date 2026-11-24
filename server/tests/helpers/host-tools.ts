@@ -96,6 +96,8 @@ export class HostHarness {
       stranger: this.stranger,
       payments,
       hostTools: this.hosts,
+      // The same stand-in sign-in for the account's own routes (/user/:id/kids).
+      verifyMatrix: async (t) => (typeof t === "string" && t.startsWith("tok:") ? t.slice(4) : null),
     });
     await this.hosts.ready;
     await new Promise<void>((r) => this.built.httpServer.listen(0, "127.0.0.1", () => r()));

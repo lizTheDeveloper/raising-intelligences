@@ -143,6 +143,8 @@ export interface GameRepository {
   listUserKids(userId: string): Promise<Array<{ gameId: string; childName: string; createdAt: number }>>;
   /** Was this user's row for this game written with proof of access? */
   isProvenUserGame(userId: string, gameId: string): Promise<boolean>;
+  /** Takes one game off one user's kid list (host tools unlink, spec §6). The game itself stays. */
+  deleteUserGame(userId: string, gameId: string): Promise<void>;
 
   // Album methods
   saveAlbumPartner(partner: { userId: string; partnerName: string; partnerType: string; relationshipSummary: string }): Promise<string>;
@@ -631,6 +633,10 @@ export class PgGameRepository implements GameRepository {
       [userId]
     );
     return rows.map((r) => ({ gameId: r.game_id, childName: r.child_name, createdAt: new Date(r.created_at).getTime() }));
+  }
+
+  async deleteUserGame(userId: string, gameId: string): Promise<void> {
+    await this.db.query("DELETE FROM user_games WHERE user_id = $1 AND game_id = $2", [userId, gameId]);
   }
 
   async isProvenUserGame(userId: string, gameId: string): Promise<boolean> {
@@ -1489,6 +1495,10 @@ export class InMemoryGameRepository implements GameRepository {
 
   async isProvenUserGame(userId: string, gameId: string): Promise<boolean> {
     return this.userGames.get(`${userId}:${gameId}`)?.proven === true;
+  }
+
+  async deleteUserGame(userId: string, gameId: string): Promise<void> {
+    this.userGames.delete(`${userId}:${gameId}`);
   }
 
   async loadGame(gameId: string): Promise<GameState | null> {

@@ -104,8 +104,14 @@ export class HostPortal {
     return Math.min(e.closedAt ?? Infinity, e.closesAt) + PUBLISH_AFTER_MS;
   }
 
+  /** Only an outside host at level 1 or above is ever shown numbers (§4.1, §4.3); studio events and level 0 never have a funnel. */
+  static hasFunnel(e: HostEvent): boolean {
+    return e.kind === "outside" && e.level >= 1;
+  }
+
   /** Publishes once, at least 24 hours after close; never recomputed. Returns what's published (or null). */
   async publishIfDue(e: HostEvent): Promise<PublishedFunnel | null> {
+    if (!HostPortal.hasFunnel(e)) return null;
     if (e.publishedFunnel) return e.publishedFunnel;
     if (this.hosts.now() < this.publishableAt(e)) return null;
     const funnel = publishFunnel(await this.counts(e));
@@ -217,6 +223,7 @@ export function createHostPortalAdminRoutes(hosts: HostTools, portal: HostPortal
     await hosts.ready;
     const e = hosts.eventById(String(req.params.id));
     if (!e) return void res.status(404).json({ error: "No such event" });
+    if (!HostPortal.hasFunnel(e)) return void res.status(409).json({ error: "this meetup has no published numbers (studio events and level 0 never do)" });
     if (e.publishedFunnel) return void res.status(409).json({ error: "already published", funnel: e.publishedFunnel });
     const f = await portal.publishIfDue(e);
     if (!f) return void res.status(409).json({ error: "the funnel publishes 24 hours after the event closes", publishableAt: portal.publishableAt(e) });

@@ -200,14 +200,23 @@ describe("share codes", () => {
     const g = await finished();
     const bHeard: unknown[] = [];
     g.B.socket.on(E.SHARE_STATE, (p: unknown) => bHeard.push(p));
-    expect(await decide(g.A, "no")).toEqual({ view: { state: "no" } });
-    expect(await decide(g.A, "yes")).toEqual({ view: { state: "no" } }); // final
+    const no = await decide(g.A, "no");
+    expect(no).toEqual({ view: { state: "no", until: expect.any(Number) } });
+    expect(await decide(g.A, "later")).toEqual(no); // a no only ever becomes a yes
     await new Promise((r) => setTimeout(r, 100));
     expect(bHeard).toEqual([]);
     expect(await decide(g.B, "status")).toEqual({ view: { state: "ask" } });
     expect(await decide(g.B, "yes")).toEqual({ view: { state: "waiting" } });
     h.clock!.now += 11 * MIN;
     expect(await h.repo.hosts.codeByGame(g.gameId)).toBeNull();
+    // A changes the no to yes inside the window: a code, made exactly as after a "later".
+    const bLater: unknown[] = [];
+    g.B.socket.on(E.SHARE_STATE, (p: unknown) => bLater.push(p));
+    expect(await decide(g.A, "yes")).toEqual({ view: { state: "waiting" } });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(bLater).toEqual([]);
+    h.clock!.now += 11 * MIN;
+    expect(await h.repo.hosts.codeByGame(g.gameId)).not.toBeNull();
   });
 
   it("decide later on the account page; the second yes there makes the code", async () => {
@@ -278,16 +287,16 @@ describe("share codes", () => {
       expect((await h.post("/host/codes/view", { pass: await hostPass(), codeRef: r.body.codeRef })).status).toBe(404);
     });
 
-    it("a stop is silent to the co-parent, and the host can't open it again", async () => {
+    it("a stop shows on both rows (the co-parent's says only that it no longer opens), and the host can't open it again", async () => {
       const { words } = await code();
       const pass = await hostPass();
       const { codeRef } = (await h.post("/host/codes/redeem", { pass, words })).body;
       const a = await accountPass(`@a${n}:multiversegames.ai`);
       const ref = (await h.post("/stranger/account", { pass: a })).body.games[0].ref;
-      const bBefore = (await account(`@b${n}:multiversegames.ai`)).games[0].share;
+      expect((await account(`@b${n}:multiversegames.ai`)).games[0].share.state).toBe("code");
       const stopped = await h.post("/stranger/account/stop", { pass: a, gameRef: ref });
       expect(stopped.body.share).toEqual({ state: "stopped", at: h.now() });
-      expect((await account(`@b${n}:multiversegames.ai`)).games[0].share).toEqual(bBefore);
+      expect((await account(`@b${n}:multiversegames.ai`)).games[0].share).toEqual({ state: "ended" });
       expect((await h.post("/host/codes/view", { pass, codeRef })).status).toBe(404);
     });
 

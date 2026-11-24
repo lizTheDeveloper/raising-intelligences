@@ -12,6 +12,10 @@ import {
   LEARNING_QUESTION,
   UNLINK_REQUESTED,
   UNLINK_WARNING,
+  LEARNING_WITHDRAW,
+  forgetWarning,
+  gameRowTitle,
+  codeOpeningsLine,
   accountRouteOn,
   asAccountPage,
   asLearningMessage,
@@ -116,7 +120,10 @@ test("asShareMessage: views, previews and errors; nothing else", () => {
 test("shareViewLine: the §5.1 lines, exactly", () => {
   assert.equal(shareViewLine({ state: "ask" }), null);
   assert.equal(shareViewLine({ state: "waiting" }), "if your co-parent says yes too, a code will appear on your account page.");
-  assert.equal(shareViewLine({ state: "no" }), "okay, nothing will be made.");
+  assert.equal(
+    shareViewLine({ state: "no", until: DEC4 }, "UTC"),
+    "okay, nothing will be made. if you change your mind, you can say yes on your account page until december 4, 2026.",
+  );
   assert.equal(shareViewLine({ state: "later", until: DEC4 }, "UTC"), "you can decide on your account page until december 4, 2026.");
 });
 
@@ -125,7 +132,7 @@ test("handlesAfterShare: the handle exchange waits for an answer, never for a re
   assert.equal(handlesAfterShare(true, null), false);
   assert.equal(handlesAfterShare(true, { view: { state: "ask" } }), false);
   assert.equal(handlesAfterShare(true, { preview: null }), false);
-  for (const v of [{ state: "waiting" }, { state: "no" }, { state: "later", until: DEC4 }] as const) {
+  for (const v of [{ state: "waiting" }, { state: "no", until: DEC4 }, { state: "later", until: DEC4 }] as const) {
     assert.equal(handlesAfterShare(true, { view: v }), true);
   }
   assert.equal(handlesAfterShare(true, { error: "Not available in this game." }), true);
@@ -137,7 +144,7 @@ test("studio learning copy: §B.5, exactly", () => {
   assert.equal(LEARNING_QUESTION, "can the studio learn from your game?");
   assert.equal(
     LEARNING_EXPLAINS,
-    "the studio would read your game, including private talks, to improve stranger mode. it's never published, never in a blog post and never used to train AI. it only happens if you both say yes, and RI won't tell your co-parent what you chose.",
+    "the studio would read your game, including private talks, to improve stranger mode. it's never published, never in a blog post and never used to train AI. it only happens if you both say yes, and RI won't tell your co-parent what you chose. a yes isn't final: you can change it to no on your account page at any time.",
   );
   assert.equal(LEARNING_NOTED, "thanks. that's noted.");
 });
@@ -163,7 +170,7 @@ test("asLearningMessage: answered views and errors; nothing else", () => {
 
 test("endSteps: share step → studio learning → handle exchange, each waiting for the one before", () => {
   const ask = { view: { state: "ask" as const } };
-  const said = { view: { state: "no" as const } };
+  const said = { view: { state: "no" as const, until: DEC4 } };
   const open = { view: { answered: false } };
   const done = { view: { answered: true } };
   const refused = { error: "Not available in this game." };
@@ -247,7 +254,7 @@ test("asAccountPage: learning and unlink, with unknown values as null", () => {
 });
 
 test("learningLine: the player's own answer; nothing when it wasn't offered", () => {
-  assert.equal(learningLine("yes"), "studio learning: you said yes.");
+  assert.equal(learningLine("yes"), "studio learning: you said yes. you can change it to no.");
   assert.equal(learningLine("no"), "studio learning: you said no.");
   assert.equal(learningLine("unanswered"), "studio learning: you didn't answer.");
   assert.equal(learningLine(null), null);
@@ -256,9 +263,20 @@ test("learningLine: the player's own answer; nothing when it wasn't offered", ()
 test("unlink copy: §6 and the requested line, exactly", () => {
   assert.equal(
     UNLINK_WARNING,
-    "the studio will take this game off your account and cancel any code. your co-parent keeps their copy of the game, which includes what you wrote, without your name.",
+    "any share code stops now, and the game leaves your list of kids now. once the studio has done the rest, the game leaves this page, your old link to it stops working, and your co-parent's copy shows \"Parent 1\" or \"Parent 2\" where your name was. your co-parent keeps their copy, with everything you wrote in it. this doesn't delete the game, or the studio's technical record of it.",
   );
-  assert.equal(UNLINK_REQUESTED, "you asked the studio to take this game off your account. it will disappear from this page when that's done.");
+  assert.equal(
+    UNLINK_REQUESTED,
+    "you asked the studio to take this game off your account. it's off your list of kids and any code has stopped. it will leave this page when the studio has done the rest.",
+  );
+  assert.equal(
+    LEARNING_WITHDRAW,
+    "from now on the studio won't read this game to learn from it. it can't unread what it has already read. RI won't tell your co-parent.",
+  );
+  assert.equal(
+    forgetWarning("tea"),
+    "this deletes the studio's record that your account came to tea, and the card you agreed to leaves this page. games you played there stay below until you take them off.",
+  );
 });
 
 test("formatDates: one per day, joined with commas and 'and'", () => {
@@ -277,13 +295,21 @@ test("shareRowLines: the §B.5 account lines, exactly", () => {
   assert.equal(later.action, "decide");
   assert.equal(text(shareRowLines({ state: "none" }).runs), "no code was made for this game.");
   assert.equal(text(shareRowLines({ state: "stopped", at: NOV21 }, "UTC").runs), "you stopped this code on november 21, 2026.");
+  // Stopped by the co-parent, lapsed, or the game can't share any more: never which.
+  const ended = shareRowLines({ state: "ended" });
+  assert.equal(text(ended.runs), "this code no longer opens.");
+  assert.equal(ended.action, undefined);
+  // A no can still become a yes while the window is open.
+  const no = shareRowLines({ state: "no", until: DEC4 }, "UTC");
+  assert.equal(text(no.runs), "you said no, so nothing will be made. you can change it to yes until december 4, 2026.");
+  assert.equal(no.action, "decide");
 });
 
 test("shareRowLines: a code's words are the one bold run, with its access log", () => {
-  const unopened = shareRowLines({ state: "code", words: "apple brick cloud dune", host: "Sam", until: DEC4, opened: [] }, "UTC");
+  const unopened = shareRowLines({ state: "code", words: "apple brick cloud dune", host: "Sam", until: DEC4 + 30 * 86_400_000, openBy: DEC4, opened: [] }, "UTC");
   assert.equal(
     text(unopened.runs),
-    "share code for Sam: apple brick cloud dune. give it to Sam when and if you want to. it works for Sam only, until december 4, 2026.",
+    "share code for Sam: apple brick cloud dune. give it to Sam when and if you want to. it works for Sam only. Sam can open it until december 4, 2026, then read it for 30 days after opening it: no later than january 3, 2027.",
   );
   assert.deepEqual(unopened.runs.filter((r) => r.bold).map((r) => r.text), ["apple brick cloud dune"]);
   assert.equal(unopened.access, "Sam hasn't opened it.");
@@ -292,6 +318,10 @@ test("shareRowLines: a code's words are the one bold run, with its access log", 
   const opened = shareRowLines({ state: "code", words: "a b c d", host: "**Sam**", until: DEC4, opened: [NOV20, NOV21] }, "UTC");
   assert.deepEqual(opened.runs.filter((r) => r.bold).map((r) => r.text), ["a b c d"]);
   assert.equal(opened.access, "**Sam** opened it on november 20, 2026 and november 21, 2026.");
+  assert.equal(
+    text(opened.runs),
+    "share code for **Sam**: a b c d. give it to **Sam** when and if you want to. it works for **Sam** only, and **Sam** can read it until december 4, 2026.",
+  );
 });
 
 test("stopWarning: the §B.5 warning", () => {
@@ -301,15 +331,25 @@ test("stopWarning: the §B.5 warning", () => {
   );
 });
 
-test("panelLine: published bands, too small, pending, nothing", () => {
-  assert.equal(panelLine({ kind: "pending" }), PANEL_PENDING);
-  assert.equal(PANEL_PENDING, "nothing yet. numbers, if there are any, appear a day after the meetup closes.");
-  assert.equal(panelLine({ kind: "nothing" }), PANEL_NOTHING);
-  assert.equal(panelLine({ kind: "funnel", funnel: { tooSmall: true } }), TOO_SMALL);
+test("panelLine: exactly what each role saw (studio, guest reader, outside host)", () => {
+  // A studio event: no funnel, ever, with or without a guest reader.
+  assert.equal(panelLine({ kind: "nothing", who: "nobody" }), "no host or guest saw anything: the studio ran this meetup alone.");
   assert.equal(
-    panelLine({ kind: "funnel", funnel: { tooSmall: false, joined: "10–19", started: "5–9", finished: "more than half", swapped: null } }),
-    "joined the queue: 10–19 · games started: 5–9 · games finished: more than half",
+    panelLine({ kind: "nothing", who: "guest", reader: "Sister Jensen" }),
+    "Sister Jensen saw nothing about this meetup: not who came, who played, or how many. only what's in a share code, if you both made one and gave it to Sister Jensen.",
   );
+  // An outside level-0 host: only the meetup's status.
+  assert.equal(panelLine({ kind: "status", host: "Kit" }), "Kit saw only whether the meetup was open, full, paused or closed.");
+  // An outside level-1+ host.
+  assert.equal(panelLine({ kind: "pending", host: "Kit" }), "nothing yet. a day after the meetup closes, Kit sees rough totals for the whole meetup, or only that it was too small if fewer than 5 games started.");
+  assert.equal(panelLine({ kind: "funnel", host: "Kit", funnel: { tooSmall: true } }), `Kit saw: ${TOO_SMALL}`);
+  assert.equal(
+    panelLine({ kind: "funnel", host: "Kit", funnel: { tooSmall: false, joined: "10–19", started: "5–9", finished: "more than half", swapped: null } }),
+    "Kit saw: joined the queue: 10–19 · games started: 5–9 · games finished: more than half",
+  );
+  // An older server's bare panels still read plainly.
+  assert.equal(panelLine({ kind: "pending" }), PANEL_PENDING);
+  assert.equal(panelLine({ kind: "nothing" }), PANEL_NOTHING);
 });
 
 const meetup = (name: string, hostName: string | null): AccountMeetup => ({
@@ -369,4 +409,46 @@ test("isAccountRoute and accountRouteOn", () => {
   assert.equal(accountRouteOn(404, false), false);
   assert.equal(accountRouteOn(200, false), false);
   assert.equal(accountRouteOn(500, true), false);
+});
+
+test("asAccountPage: the new rows and panels (no, ended, open-by, who saw what, finished date)", () => {
+  const page = asAccountPage({
+    meetups: [],
+    games: [
+      { ref: "g1", childName: "Ada", eventName: "tea", share: { state: "no", until: DEC4 }, finishedAt: NOV20 },
+      { ref: "g2", childName: "Bo", eventName: "tea", share: { state: "ended" } },
+      { ref: "g3", childName: "Cy", eventName: "tea", share: { state: "code", words: "a b c d", host: "Kit", until: DEC4, openBy: NOV21, opened: [] } },
+      { ref: "g4", childName: "Di", eventName: "tea", share: { state: "no" } },
+    ],
+    hostSaw: [
+      { name: "a", panel: { kind: "nothing", who: "nobody" } },
+      { name: "b", panel: { kind: "nothing", who: "guest", reader: "Robin" } },
+      { name: "c", panel: { kind: "status", host: "Kit" } },
+      { name: "d", panel: { kind: "funnel", host: "Kit", funnel: { tooSmall: true } } },
+      { name: "e", panel: { kind: "nothing", who: "guest" } },
+    ],
+  });
+  assert.ok(page);
+  assert.deepEqual(page.games.map((g) => g.share), [
+    { state: "no", until: DEC4 },
+    { state: "ended" },
+    { state: "code", words: "a b c d", host: "Kit", until: DEC4, openBy: NOV21, opened: [] },
+  ]);
+  assert.deepEqual(page.games.map((g) => g.finishedAt), [NOV20, null, null]);
+  assert.deepEqual(page.hostSaw.map((h) => h.panel), [
+    { kind: "nothing", who: "nobody" },
+    { kind: "nothing", who: "guest", reader: "Robin" },
+    { kind: "status", host: "Kit" },
+    { kind: "funnel", host: "Kit", funnel: { tooSmall: true } },
+  ]);
+});
+
+test("gameRowTitle: child, meetup and the day it finished", () => {
+  assert.equal(gameRowTitle({ childName: "Ada", eventName: "tea", finishedAt: NOV20 }, "UTC"), "Ada · tea · finished november 20, 2026");
+  assert.equal(gameRowTitle({ childName: "Ada", eventName: "tea", finishedAt: null }, "UTC"), "Ada · tea");
+});
+
+test("codeOpeningsLine: only on a page with share codes", () => {
+  assert.equal(codeOpeningsLine(false), null);
+  assert.equal(codeOpeningsLine(true), "and, if you gave them a share code, what's in it: its openings are listed with the game above. nothing else.");
 });

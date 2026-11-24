@@ -48,6 +48,17 @@ export class LearningService {
     return { answered: !!mine };
   }
 
+  /**
+   * From the account page: this seat's answer becomes "no", whatever it was,
+   * at any time. The allow-list is read from the answers, so the game leaves
+   * it at once. Nothing reaches the co-parent. Null: not offered in this game.
+   */
+  async withdraw(gameId: string, slot: Slot): Promise<"no" | null> {
+    if (!(await this.context(gameId))) return null;
+    await this.hosts.store.withdrawLearning(gameId, slot, this.hosts.now());
+    return "no";
+  }
+
   /** This seat's own answer, for its account page. Null: not offered in this game. */
   async own(gameId: string, slot: Slot): Promise<LearningAnswer | "unanswered" | null> {
     if (!(await this.context(gameId))) return null;

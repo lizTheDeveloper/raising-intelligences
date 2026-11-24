@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { STRANGER_RELATIONSHIP } from "./stranger/matching.js";
 import express from "express";
 import cors from "cors";
@@ -318,7 +319,9 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit, gameLocks, requirePaid, seatOf, verifyMatrix }));
   app.use("/api", createResearchRoutes(games, repo, { gameLocks, llm, followupLimit, answerLimit, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0 }));
   app.use("/api", createCampusRoutes(repo, { limit: campusPassLimit }));
-  app.use("/api", createUserRoutes(repo, { verifyMatrix, seatOf }));
+  // Host tools unlink (spec §6): set below when host tools are on and active.
+  let mayListKid: ((userId: string, gameId: string) => Promise<boolean>) | null = null;
+  app.use("/api", createUserRoutes(repo, { verifyMatrix, seatOf, mayList: async (u, g) => (mayListKid ? mayListKid(u, g) : true) }));
   app.use("/api", createAlbumRoutes(repo, { verifyMatrix }));
   // The limiter is scoped to the /support/checkout route itself, not mounted
   // as blanket middleware at the /api prefix — app.use("/api", mw, router)
@@ -343,11 +346,23 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
       names: (id) => Object.fromEntries((sessions.get(id)?.players ?? []).map((p) => [p.slot, p.displayName])),
     });
     learning = new LearningService(hostTools, share);
-    const unlink = new UnlinkService(hostTools, share);
+    // An unlinked seat: the placeholder name everywhere the co-parent sees it (live and saved), and a new token,
+    // so the old resume credential reads nothing. The co-parent's seat is untouched.
+    const retireSeat = async (gameId: string, slot: "parent1" | "parent2", placeholder: string) => {
+      const token = randomUUID();
+      const live = sessions.get(gameId);
+      if (live) {
+        sessions.set(gameId, { ...live, players: live.players.map((p) => (p.slot === slot ? { ...p, displayName: placeholder, token } : p)) });
+      }
+      const saved = (await repo.loadPlayers(gameId)).some((p) => p.slot === slot);
+      if (saved || live?.players.some((p) => p.slot === slot)) await repo.savePlayer(gameId, slot, placeholder, token);
+    };
+    const unlink = new UnlinkService(hostTools, share, retireSeat);
     stranger.resolveUnlinked = (placeholder) => unlink.originalSubject(placeholder);
+    mayListKid = (userId, gameId) => (hostTools.active() ? unlink.mayList(userId, gameId) : Promise.resolve(true));
     const account = new AccountService(hostTools, share, portal, games, repo, learning, unlink);
     app.use("/api", createHostPortalRoutes(hostTools, portal, rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false }), share));
-    app.use("/api", createAccountRoutes(hostTools, account, share, unlink, rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false })));
+    app.use("/api", createAccountRoutes(hostTools, account, share, unlink, learning, rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false })));
     app.use("/api", createHostPortalAdminRoutes(hostTools, portal));
     app.use("/api", createHostToolsReviewRoutes(hostTools, learning, unlink));
   }

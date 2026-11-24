@@ -59,6 +59,8 @@ export interface HostStore {
   getLearning(gameId: string): Promise<Array<{ slot: Slot; answer: "yes" | "no" }>>;
   learningGames(): Promise<string[]>;
   deleteLearning(gameId: string, slot: Slot): Promise<void>;
+  /** A seat takes back its yes (or says no late): the answer becomes "no", whatever it was. */
+  withdrawLearning(gameId: string, slot: Slot, at: number): Promise<void>;
 
   addHostReport(r: HostReport): Promise<void>;
   listHostReports(): Promise<HostReport[]>;
@@ -206,6 +208,7 @@ export class InMemoryHostStore implements HostStore {
   }
   async learningGames() { return [...new Set([...this.learning.values()].map((l) => l.gameId))]; }
   async deleteLearning(gameId: string, slot: Slot) { this.learning.delete(`${gameId}|${slot}`); }
+  async withdrawLearning(gameId: string, slot: Slot, at: number) { this.learning.set(`${gameId}|${slot}`, { gameId, slot, answer: "no", at }); }
 
   async addHostReport(r: HostReport) { this.reports.set(r.id, clone(r)); }
   async listHostReports() { return [...this.reports.values()].map(clone).sort((a, b) => a.at - b.at); }
@@ -511,6 +514,13 @@ export class PgHostStore implements HostStore {
   }
   async deleteLearning(gameId: string, slot: Slot) {
     await this.db.query(`DELETE FROM studio_learning_choices WHERE game_id = $1 AND slot = $2`, [gameId, slot]);
+  }
+  async withdrawLearning(gameId: string, slot: Slot, at: number) {
+    await this.db.query(
+      `INSERT INTO studio_learning_choices (game_id, slot, answer, at) VALUES ($1,$2,'no',$3)
+       ON CONFLICT (game_id, slot) DO UPDATE SET answer = 'no', at = EXCLUDED.at`,
+      [gameId, slot, at],
+    );
   }
 
   async addHostReport(r: HostReport) {
