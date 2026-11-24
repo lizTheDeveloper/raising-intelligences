@@ -8,6 +8,8 @@ import { ShareService } from "./share.js";
 import type { HostTools } from "./service.js";
 import type { HostEvent, Slot } from "./types.js";
 import type { HostPortal } from "./portal.js";
+import type { LearningService } from "./learning.js";
+import type { UnlinkService } from "./unlink.js";
 
 const NOT_SIGNED_IN = "Not signed in.";
 const NOT_FOUND = "Not found";
@@ -32,6 +34,8 @@ export class AccountService {
     private readonly portal: HostPortal,
     private readonly games: Map<string, GameState>,
     private readonly repo: GameRepository,
+    private readonly learning: LearningService,
+    private readonly unlink: UnlinkService,
   ) {
     this.passes = new StrangerPasses(() => hosts.now());
     hosts.stranger.passes.onRevoke((mxid) => this.passes.revokeSubject(mxid));
@@ -142,6 +146,10 @@ export class AccountService {
       games.push({
         ref: this.hosts.ref("game", subject, run.gameId), childName: await this.childName(run.gameId), eventName: event.name,
         share: await this.shareRow(run, slot, event),
+        // Studio learning: this seat's own answer only (null: not offered here).
+        learning: await this.learning.own(run.gameId, slot),
+        // "take this game off my account": asked, waiting for the studio.
+        unlink: (await this.unlink.pending(subject, run.gameId)) ? "requested" : null,
       });
     }
     return { meetups, games, hostSaw: [...panels.values()] };
@@ -159,7 +167,7 @@ export class AccountService {
   }
 }
 
-export function createAccountRoutes(hosts: HostTools, account: AccountService, share: ShareService, limit: RequestHandler): Router {
+export function createAccountRoutes(hosts: HostTools, account: AccountService, share: ShareService, unlink: UnlinkService, limit: RequestHandler): Router {
   const router = Router();
   router.use(["/stranger/account", "/stranger/share"], (_req: Request, res: Response, next: NextFunction) => {
     if (!hosts.active()) return next("router");
@@ -203,6 +211,14 @@ export function createAccountRoutes(hosts: HostTools, account: AccountService, s
 
   router.post("/stranger/account/forget-meetup", limit, withSubject(async (subject, b, res) => {
     if (!(await account.forgetMeetup(subject, b.eventRef))) return void res.status(404).json({ error: NOT_FOUND });
+    res.json({ ok: true });
+  }));
+
+  // "take this game off my account" (spec §6): the code is voided now; the studio does the rest.
+  router.post("/stranger/account/unlink", limit, withSubject(async (subject, b, res) => {
+    const seat = await account.seatFor(subject, b.gameRef);
+    if (!seat) return void res.status(404).json({ error: NOT_FOUND });
+    await unlink.request(subject, seat);
     res.json({ ok: true });
   }));
 

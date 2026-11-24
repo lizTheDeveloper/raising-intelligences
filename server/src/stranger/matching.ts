@@ -1,3 +1,4 @@
+import { markGameHosted } from "../observability/hosted-analysis.js";
 import { logger } from "../logger.js";
 import type { StrangerConfig } from "./config.js";
 import type { AgeVerification } from "./identity.js";
@@ -336,6 +337,7 @@ export class StrangerMatching {
   }
 
   private cacheSeats(gameId: string, row: StrangerRunSeats | null): void {
+    if (row?.eventId) markGameHosted(gameId);
     this.seatCache.delete(gameId);
     this.seatCache.set(gameId, row);
     if (this.seatCache.size > SEAT_CACHE_MAX) this.seatCache.delete(this.seatCache.keys().next().value as string);
@@ -436,6 +438,8 @@ export class StrangerMatching {
     try {
       ({ gameId, tokens } = await this.deps.hooks.createGame(host, partner));
       await this.deps.store.createRun({ gameId, meetupCode: storedCode, parent1: host.subject, parent2: partner.subject, eventId });
+      // Tagged before any model call is made for it (host tools H18).
+      if (eventId) markGameHosted(gameId);
     } catch (err) {
       logger.error("stranger_match_create_failed", { error: err instanceof Error ? err.message : String(err) });
       return false;
@@ -512,6 +516,11 @@ export class StrangerMatching {
     this.cacheSeats(gameId, {
       gameId, meetupCode: run.eventId ? null : run.meetupCode, parent1: run.entries.parent1.subject, parent2: run.entries.parent2.subject, eventId: run.eventId,
     });
+  }
+
+  /** Forget what this process knows of a game's seats (an unlink changed them): the next read goes to the store. */
+  forgetSeats(gameId: string): void {
+    this.seatCache.delete(gameId);
   }
 
   /** The event a stranger game was matched at, as far as this process knows (no I/O). */

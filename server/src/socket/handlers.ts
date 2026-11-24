@@ -72,6 +72,7 @@ import { loadParentContext } from "../research/parent-context.js";
 import type { PartnerPayments } from "../payments/partner-payments.js";
 import type { HostTools } from "../hosts/service.js";
 import type { ShareService } from "../hosts/share.js";
+import type { LearningService } from "../hosts/learning.js";
 
 export interface SocketDeps {
   /** Stranger mode (Tier 4): matching, seat binding. Absent in most tests. */
@@ -80,6 +81,8 @@ export interface SocketDeps {
   hostTools?: HostTools | null;
   /** Host tools share codes (§5): the share step after the report card. */
   share?: ShareService | null;
+  /** Host tools studio learning (STUDIO_LEARNING). */
+  learning?: LearningService | null;
   io: Server;
   games: Map<string, GameState>;
   sessions: Map<string, Session>;
@@ -300,7 +303,7 @@ function lobbyState(session: Session): LobbyState {
 export function registerSocketHandlers(deps: SocketDeps): void {
   const { io, games, sessions, conversationEngine, endgameEngine, repo, llm,
           gameLocks = new Map<string, Promise<void>>(),
-          handoffTtlMs = HANDOFF_TTL_MS, payments, stranger, hostTools, share } = deps;
+          handoffTtlMs = HANDOFF_TTL_MS, payments, stranger, hostTools, share, learning } = deps;
   const hostsOn = () => (hostTools?.active() ? hostTools : null);
   /** The end screens of a stranger game at a meetup (no I/O: STATE is synchronous). */
   const meetupEnd = (gameId: string): { handles: boolean; share: boolean; learning: boolean; host?: string } | null => {
@@ -324,6 +327,8 @@ export function registerSocketHandlers(deps: SocketDeps): void {
   const STRANGER_PRIVATE = "This game is private.";
   if (stranger) {
     stranger.onHandleState = (gameId, slot, st) => io.to(slotRoom(gameId, slot)).emit(E.HANDLE_STATE, st);
+    // Host tools unlink: the seat's own sockets go (it can't sit down again). The co-parent sees a disconnect, nothing more.
+    stranger.onSeatUnlinked = (gameId, slot) => io.in(slotRoom(gameId, slot)).disconnectSockets(true);
     stranger.onGameEnded = (gameId) => {
       for (const s of ["parent1", "parent2"] as const) io.to(slotRoom(gameId, s)).emit(E.STRANGER_GAME_ENDED, {});
     };
@@ -2025,6 +2030,24 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         io.to(slotRoom(gameId, slot)).except(socket.id).emit(E.SHARE_STATE, { view });
       } catch (err) {
         logger.error("share_decision_failed", { gameId, error: err instanceof Error ? err.message : String(err) });
+        refuse("Something went wrong. Nothing was recorded.");
+      }
+    });
+
+    socket.on(E.STUDIO_LEARNING, async (payload: { answer?: unknown } | undefined) => {
+      const gameId = data.gameId;
+      const slot = data.slot;
+      const refuse = (error: string) => socket.emit(E.STUDIO_LEARNING_STATE, { error });
+      try {
+        if (!gameId || (slot !== "parent1" && slot !== "parent2") || !hostsOn() || !learning) return refuse("Not available in this game.");
+        if (games.get(gameId)?.phase !== "report_card") return refuse("This comes after the report card.");
+        const view = await learning.answer(gameId, slot, payload?.answer);
+        if (!view) return refuse("Not available in this game.");
+        // This seat's own sockets only. The co-parent is never told.
+        socket.emit(E.STUDIO_LEARNING_STATE, { view });
+        io.to(slotRoom(gameId, slot)).except(socket.id).emit(E.STUDIO_LEARNING_STATE, { view });
+      } catch (err) {
+        logger.error("studio_learning_failed", { gameId, error: err instanceof Error ? err.message : String(err) });
         refuse("Something went wrong. Nothing was recorded.");
       }
     });

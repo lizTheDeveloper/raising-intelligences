@@ -149,4 +149,49 @@ describe.skipIf(!process.env.DATABASE_URL)("host tools store on Postgres", () =>
     await childSafety.banIdentifier({ kind: "matrix", value: banned }, "t", null);
     expect(await childSafety.bannedValues("matrix")).toContain(banned);
   });
+  it("learning, unlink and the purge round-trip (PR 4)", async () => {
+    const e = event({ kind: "studio", studioLearning: true, closesAt: 1_000, opensAt: 0 });
+    await store.createEvent(e);
+    const gameId = randomUUID();
+    // Learning: the first answer stands, one per seat; deleted per seat.
+    await store.setLearning(gameId, "parent1", "yes", 1);
+    await store.setLearning(gameId, "parent1", "no", 2);
+    await store.setLearning(gameId, "parent2", "yes", 3);
+    expect((await store.getLearning(gameId)).sort((a, b) => a.slot.localeCompare(b.slot))).toEqual([
+      { slot: "parent1", answer: "yes" }, { slot: "parent2", answer: "yes" },
+    ]);
+    expect(await store.learningGames()).toContain(gameId);
+    await store.deleteLearning(gameId, "parent1");
+    expect(await store.getLearning(gameId)).toEqual([{ slot: "parent2", answer: "yes" }]);
+
+    // Decisions and acknowledgements go per seat / per subject.
+    await store.setDecision({ gameId, slot: "parent1", answer: "later", at: 1, windowEndsAt: 50 });
+    await store.setDecision({ gameId, slot: "parent2", answer: "yes", at: 1, windowEndsAt: 50 });
+    await store.deleteDecisions(gameId, "parent1");
+    expect((await store.getDecisions(gameId)).map((d) => d.slot)).toEqual(["parent2"]);
+    const sub = `subj-${randomUUID()}`;
+    await store.addAck({ id: randomUUID(), eventId: e.id, cardVersion: 1, preTokenHash: `t-${randomUUID()}`, subject: sub, at: 1, boundAt: 1, queuedAt: null, unlistedAt: null });
+    await store.deleteAcks(sub, e.id);
+    expect(await store.acksForSubject(sub)).toEqual([]);
+
+    // Unlink requests: done once; the run's seat is replaced.
+    const u = { id: randomUUID(), gameId, subject: sub, at: 5, doneAt: null };
+    await store.addUnlink(u);
+    expect(await store.getUnlink(u.id)).toEqual(u);
+    expect((await store.listUnlinks()).some((x) => x.id === u.id)).toBe(true);
+    expect(await store.markUnlinkDone(u.id, 6)).toBe(true);
+    expect(await store.markUnlinkDone(u.id, 7)).toBe(false);
+    expect((await store.getUnlink(u.id))?.doneAt).toBe(6);
+    await runs.createRun({ gameId, parent1: sub, parent2: "other", meetupCode: null, eventId: e.id });
+    await runs.unlinkRunSeat(gameId, "parent1", `unlinked:${u.id}`);
+    expect((await runs.getRun(gameId))?.parent1).toBe(`unlinked:${u.id}`);
+    expect((await runs.runsForSubject(sub)).some((r) => r.gameId === gameId)).toBe(false);
+
+    // The purge: counts only, per table; the done unlink goes after its period.
+    const counts = await store.purge(10_000, { ackAfterCloseMs: 1, eventRecordsAfterCloseMs: 1, codeAfterLiveMs: 1, unlinkDoneMs: 1 });
+    for (const v of Object.values(counts)) expect(typeof v).toBe("number");
+    expect(counts.share_decisions).toBeGreaterThanOrEqual(1);
+    expect(counts.unlink_requests).toBeGreaterThanOrEqual(1);
+    expect(await store.getUnlink(u.id)).toBeNull();
+  });
 });

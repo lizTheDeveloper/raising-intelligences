@@ -1,3 +1,4 @@
+import { PRESSURE_POINT_HEADER, PRESSURE_POINT_OPEN, PRESSURE_POINT_CLOSE } from "./pressure-point.js";
 import { kidParentContext } from "../research/parent-context.js";
 import { formatRepairBlock, MAX_REPAIR_LENGTH } from "../research/repair.js";
 import { cleanUntrustedText } from "../research/sanitize.js";
@@ -531,13 +532,13 @@ export function buildLandmineSection(state: GameState): string {
 
   const who = isSolo(state.relationshipType) ? "The parent" : "One of the parents";
 
-  return `## A pressure point
+  return `${PRESSURE_POINT_HEADER}
 
-${who} told us something about themselves before the story started. Read it once — it is for you, not for the page.
+${who} told us something about themselves before the story started. ${PRESSURE_POINT_OPEN}
 
 ${landmine.label}: ${landmine.text}
 
-This scene should sit near that and never on it. Build an ordinary situation with the same shape of pressure arriving through a completely different door: different people, different objects, different room, a different decade of their life. It rhymes. It does not repeat.
+${PRESSURE_POINT_CLOSE} Build an ordinary situation with the same shape of pressure arriving through a completely different door: different people, different objects, different room, a different decade of their life. It rhymes. It does not repeat.
 
 What they told us must not appear in what you write. Whatever it names — the people in it, the place, the objects, the phrasing — is now off limits to you, and so is any near-synonym for it. If a player could hold their confession beside your scene and point at the overlap, you have written the wrong scene.
 

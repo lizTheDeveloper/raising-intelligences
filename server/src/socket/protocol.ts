@@ -242,6 +242,14 @@ export const SOCKET_EVENTS = {
    */
   SHARE_DECISION: "share_decision",
   SHARE_STATE: "share_state",
+  /**
+   * Host tools studio learning, after the report card (and the share step) at
+   * studio events that offer it: client → server `{ answer: "yes" | "no" | "status" }`.
+   * Server → that seat only: STUDIO_LEARNING_STATE `{ view?: { answered }, error? }`,
+   * the same whatever the answer. The first answer stands.
+   */
+  STUDIO_LEARNING: "studio_learning",
+  STUDIO_LEARNING_STATE: "studio_learning_state",
   /** Stranger mode, any time: client → server `{ reason }`. Suspends the reported player, blocks the pair, closes the exchange. */
   STRANGER_REPORT: "stranger_report",
   STRANGER_REPORTED: "stranger_reported",

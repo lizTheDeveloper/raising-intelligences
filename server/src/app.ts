@@ -24,6 +24,8 @@ import { createHostToolsRoutes, createHostToolsAdminRoutes } from "./hosts/route
 import { HostPortal, createHostPortalRoutes, createHostPortalAdminRoutes } from "./hosts/portal.js";
 import { ShareService } from "./hosts/share.js";
 import { AccountService, createAccountRoutes } from "./hosts/account.js";
+import { LearningService } from "./hosts/learning.js";
+import { UnlinkService, createHostToolsReviewRoutes } from "./hosts/unlink.js";
 import { readStrangerConfig } from "./stranger/config.js";
 import { verifyOpenIdToken } from "./stranger/matrix-identity.js";
 import { cachedMatrixVerifier, type MatrixVerifier } from "./security/game-read-access.js";
@@ -327,6 +329,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   app.use("/api", createIdentityWebhookRoute(stranger));
   app.use("/api", createStrangerRoutes(stranger, rateLimit({ windowMs: 60_000, max: 30, standardHeaders: true, legacyHeaders: false })));
   let share: ShareService | null = null;
+  let learning: LearningService | null = null;
   if (hostTools) {
     app.use("/api", createHostToolsRoutes(hostTools, rateLimit({ windowMs: 60_000, max: 30, standardHeaders: true, legacyHeaders: false })));
     app.use("/api", createHostToolsAdminRoutes(hostTools));
@@ -335,10 +338,14 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
       hosts: hostTools, repo, games,
       names: (id) => Object.fromEntries((sessions.get(id)?.players ?? []).map((p) => [p.slot, p.displayName])),
     });
-    const account = new AccountService(hostTools, share, portal, games, repo);
+    learning = new LearningService(hostTools, share);
+    const unlink = new UnlinkService(hostTools, share);
+    stranger.resolveUnlinked = (placeholder) => unlink.originalSubject(placeholder);
+    const account = new AccountService(hostTools, share, portal, games, repo, learning, unlink);
     app.use("/api", createHostPortalRoutes(hostTools, portal, rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false }), share));
-    app.use("/api", createAccountRoutes(hostTools, account, share, rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false })));
+    app.use("/api", createAccountRoutes(hostTools, account, share, unlink, rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false })));
     app.use("/api", createHostPortalAdminRoutes(hostTools, portal));
+    app.use("/api", createHostToolsReviewRoutes(hostTools, learning, unlink));
   }
   app.use("/api", createPartnerPaymentRoutes({ payments, repo, sessions, gameLocks, limit: paymentLimit }));
   // Child safety: evidence ingestion (own token) must be mounted before the
@@ -413,7 +420,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     repo,
     llm,
     gameLocks,
-    payments, stranger, hostTools, share,
+    payments, stranger, hostTools, share, learning,
   });
 
   let evictionTimer: NodeJS.Timeout | undefined;

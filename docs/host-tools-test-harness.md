@@ -94,14 +94,37 @@ To check the host side: a host who joins their own event's queue gets "stranger 
 6. **A game that can't make a code** behaves exactly the same for its players, except that no code ever appears. Examples: the safety ladder fired, there is a child-safety case or hold, a seat is now a minor, banned or suspended, or the pair is blocked. After 14 days the account page says "no code was made for this game."
 7. **Stopping:** "stop this code" on the account page. The host's next attempt to open it says "this code isn't available." The co-parent's row doesn't change.
 
+## 3d. Studio learning, unlinking and the purge
+
+- **Studio learning:** create a studio event with `"studioLearning":true` (a level-3 studio event also needs a guest reader for share codes). After the report card, and after the share step if there is one, each seat is asked "can the studio learn from your game?". Either answer gets "thanks. that's noted." The co-parent sees nothing, and the first answer stands. Each player's account page shows their own answer.
+- **What the studio may read:** `curl -H "$AUTH" $BASE/api/admin/host-tools/analysis-allowlist` → `{"games":[...]}`. A game is listed only when it's at a studio event, both seats said yes, and nothing excludes it (the same exclusions as share codes). Every Langfuse trace of a game at any event is tagged `hosted_no_analysis`. `scripts/model-search.ts` and the ri-devlog skill drop those traces unless the game is on this list. The script reads the list with `RI_ADMIN_URL` and `ADMIN_TOKEN`; without them it drops every hosted trace.
+- **Take this game off my account:** on the account page, a player chooses "take this game off my account" for a game, then confirms. Their code stops opening at once, and the co-parent's row doesn't change. The request then waits for the studio:
+  ```bash
+  curl -s -H "$AUTH" $BASE/api/admin/host-tools/unlink-requests            # id, when, event name: no player ids
+  curl -s -X POST -H "$AUTH" $BASE/api/admin/host-tools/unlink-requests/<id>/done
+  ```
+  "done" deletes the player's acknowledgements, share decision and learning choice for that game. It replaces their subject in the game's run with a placeholder, disconnects their seat, and stops the seat being taken again. The game disappears from their account page, and the co-parent keeps it. A report the co-parent files later still reaches the original account, through the request row, which is kept for a year.
+- **Purge (weekly, from Liz's checklist):** `curl -s -X POST -H "$AUTH" $BASE/api/admin/host-tools/purge` → `{"deleted":{"host_event_acks":0,...}}`, counts only. What it deletes, and when:
+
+  | What | When |
+  |---|---|
+  | Acknowledgements, frozen terms and the published funnel | 1 year after the event closes |
+  | Share decisions | when the window closes (and as soon as a code is made) |
+  | A code's snapshot | cleared when the code stops opening |
+  | The code's row and access log | 30 days after it stops opening |
+  | Done unlink requests | after 1 year |
+
+  Learning choices stay as long as the game's traces: until the studio deletes them, while `RI_HOSTED_TRACE_RETENTION_DAYS` is unset.
+- The admin screen (`/admin`, host tools tab) has all three: the unlink queue, the purge button and the allow-list.
+
 ## 4. Run the tests
 
 On the Mac, run only the host tests; send the full suite to the vast box.
 
 ```bash
 cd server
-npx vitest run tests/host-card.test.ts tests/host-frozen-terms.test.ts tests/host-admin-and-entry.test.ts tests/dev-harness.test.ts
-DATABASE_URL=postgres://… npx vitest run --no-file-parallelism tests/*pg*.test.ts   # Postgres store and migration 034
+npx vitest run tests/host-*.test.ts tests/langfuse-hosted-and-landmine.test.ts tests/dev-harness.test.ts
+DATABASE_URL=postgres://… npx vitest run --no-file-parallelism tests/*pg*.test.ts   # Postgres store, migrations 034–035
 ```
 
 `tests/helpers/host-tools.ts` (`HostHarness`) boots the whole app with stranger mode, a fake ID check, a switchable paywall and host tools. It drives players through the real routes: `h.event()`, `h.arrive()`, `h.queue()`, and `h.pair()`, which matches two adults and seats them both.
