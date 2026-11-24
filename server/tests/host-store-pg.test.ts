@@ -35,7 +35,7 @@ describe.skipIf(!process.env.DATABASE_URL)("host tools store on Postgres", () =>
   const event = (over: Partial<HostEvent> = {}): HostEvent => {
     const t = Date.now();
     return {
-      id: randomUUID(), codeHash: `h-${randomUUID()}`, source: "admin", name: "tuesday tea", kind: "studio", hostPersonId: null, guestReaderId: null, promoterIds: [],
+      id: randomUUID(), codeHash: `h-${randomUUID()}`, source: "admin", name: "tuesday tea", kind: "studio", hostPersonId: null, guestReaderId: null, promoterIds: [], codeSeq: 0,
       sensitive: false, authority: false, eventsBusiness: false, level: 0, shareCodes: false, studioLearning: false, handleExchange: true,
       welcomeText: "", lengthText: null, conductUrl: null, capacity: 100, joinWindowMs: 180_000, opensAt: t, closesAt: t + 86_400_000,
       paused: false, pausedBy: null, closedAt: null, cardVersion: 1, frozenTerms: null, firstAckAt: null, publishedFunnel: null, publishedAt: null, createdAt: t, ...over,
@@ -215,5 +215,15 @@ describe.skipIf(!process.env.DATABASE_URL)("host tools store on Postgres", () =>
     expect((await store.getEvent(e.id))?.promoterIds).toEqual([p.id]);
     await store.updateEvent(e.id, { promoterIds: [] });
     expect((await store.getEvent(e.id))?.promoterIds).toEqual([]);
+  });
+
+  it("migration 037: an event's code count round-trips; a row from before it reads as null (no derivable code)", async () => {
+    const e = event({ codeSeq: 0 });
+    await store.createEvent(e);
+    expect((await store.getEvent(e.id))?.codeSeq).toBe(0);
+    await store.updateEvent(e.id, { codeSeq: 3, codeHash: `h-${randomUUID()}` });
+    expect((await store.getEvent(e.id))?.codeSeq).toBe(3);
+    await query(`UPDATE host_events SET code_seq = NULL WHERE id = $1`, [e.id]);
+    expect((await store.getEvent(e.id))?.codeSeq).toBeNull();
   });
 });

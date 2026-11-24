@@ -208,6 +208,33 @@ export function createHostPortalRoutes(hosts: HostTools, portal: HostPortal, lim
     res.json({ snapshot: v.snapshot, until: v.until, watermark: { reader: v.reader, openedAt: v.openedAt } });
   }));
 
+  // The host's own meetup (persona tests, Kofi): the link to hand out, the card
+  // players are shown, and a new link. The event's host only, never a guest
+  // reader or a promoter.
+  const hostEvent = (person: HostPerson, ref: string) =>
+    hosts.listCached().find((x) => x.source === "admin" && x.hostPersonId === person.id && hosts.ref("event", person.id, x.id) === ref) ?? null;
+
+  router.post("/host/events/:ref/link", limit, withPerson(async (person, req, res) => {
+    const e = hostEvent(person, String(req.params.ref));
+    if (!e) return void res.status(404).json({ error: "Not found" });
+    if (hosts.status(e) === "closed") return void res.status(409).json({ error: "this meetup is closed." });
+    res.json(hosts.codeFor(e) ?? { link: null, code: null });
+  }));
+
+  router.post("/host/events/:ref/card", limit, withPerson(async (person, req, res) => {
+    const e = hostEvent(person, String(req.params.ref));
+    if (!e) return void res.status(404).json({ error: "Not found" });
+    res.json({ card: await hosts.cardFor(e) });
+  }));
+
+  router.post("/host/events/:ref/new-link", limit, withPerson(async (person, req, res) => {
+    const e = hostEvent(person, String(req.params.ref));
+    if (!e) return void res.status(404).json({ error: "Not found" });
+    const r = await hosts.newCode(e.id);
+    if (!r.ok) return void res.status(r.status).json({ error: r.error });
+    res.json(r.value);
+  }));
+
   // Pause, close, lower: the host of that event only (never a guest reader), at any time.
   for (const action of ["pause", "resume", "close", "lower"] as const) {
     router.post(`/host/events/:ref/${action}`, limit, withPerson(async (person, req, res) => {

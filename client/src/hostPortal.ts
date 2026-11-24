@@ -132,6 +132,27 @@ export const NUMBERS_LATER =
   "while your meetup is open you'll only see whether it's open, paused, closed or full. numbers, if there are any, appear a day after it closes.";
 export const TOO_SMALL = "this meetup was too small to show numbers.";
 
+/** Under each meetup: what numbers to expect. Nothing once numbers are published. */
+export function numbersNote(status: HostEventStatus, published: boolean): string | null {
+  if (published) return null;
+  if (status === "closed") return "this meetup is closed. numbers, if there are any, appear a day after it closed.";
+  return NUMBERS_LATER;
+}
+
+/** The host's meetup link (persona tests, Kofi). Both null: a meetup from before links could be shown again. */
+export interface HostLink { link: string | null; code: string | null }
+
+export function asHostLink(v: unknown): HostLink | null {
+  if (!v || typeof v !== "object") return null;
+  const r = v as Record<string, unknown>;
+  const ok = (x: unknown) => x === null || typeof x === "string";
+  if (!ok(r.link) || !ok(r.code)) return null;
+  return { link: (r.link as string | null) ?? null, code: (r.code as string | null) ?? null };
+}
+
+export const NEW_LINK_WARNING =
+  "the old link stops working at once: anyone still reading the card with it will need the new one. people already waiting or playing carry on.";
+
 /**
  * The published numbers as one line, or null when there is nothing published
  * to show (no numbers at this level, or not published yet).

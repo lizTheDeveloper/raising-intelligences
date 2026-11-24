@@ -3,8 +3,10 @@ import { lowerLevel } from "../../meetupCard";
 
 /**
  * Meetup host tools, prototype admin (spec build plan B.3). People (hosts and
- * guest readers), events, and reports about hosts. An event's code is shown
- * once, when it is created, and never again: the server keeps only its hash.
+ * guest readers), events, and reports about hosts. An event's code is derived
+ * from the server's pepper and the event id, so it can be shown again ("link")
+ * and replaced ("new link", the old one stops at once); only its hash is
+ * stored. Events from before 2.17.0 have no derivable code until replaced.
  * Server errors are shown as the server words them.
  */
 
@@ -260,14 +262,14 @@ export function HostTools({ token }: { token: string }) {
 
       {created && (
         <div className="detail-section" style={{ border: "2px solid #e8b96a", padding: 16, margin: "16px 0" }} role="status">
-          <h3>Event created: {created.name}</h3>
+          <h3>Meetup link: {created.name}</h3>
           <p style={{ fontSize: 28, letterSpacing: 2, margin: "8px 0", wordBreak: "break-all" }}><code>{created.code}</code></p>
           <p style={{ wordBreak: "break-all" }}>
             <a href={created.link} target="_blank" rel="noopener noreferrer">{created.link}</a>{" "}
             <button onClick={() => void navigator.clipboard?.writeText(created.link)}>copy link</button>
           </p>
-          <p><strong>This code won't be shown again.</strong> Copy it now; the server keeps only a hash of it.</p>
-          <button onClick={() => setCreated(null)}>I've saved it</button>
+          <p>The server keeps only a hash of this code. You (and the event's host, in their portal) can see it again with "link"; "new link" replaces it.</p>
+          <button onClick={() => setCreated(null)}>done</button>
         </div>
       )}
 
@@ -354,6 +356,22 @@ export function HostTools({ token }: { token: string }) {
                     )}
                     {!closed && (
                       <button disabled={busy} onClick={() => { if (window.confirm(`Close "${e.name}" now? This can't be undone.`)) void patchEvent(e.id, { closed: true }); }}>close</button>
+                    )}
+                    {!closed && (
+                      <button disabled={busy} onClick={() => void act(async () => {
+                        const r = await api<{ code: string | null }>(`/events/${e.id}/link`);
+                        if (!r.code) throw new Error(`"${e.name}" was made before links could be shown again. Use "new link" to get one.`);
+                        setCreated({ name: e.name, code: r.code, link: `${location.origin}${import.meta.env.BASE_URL}?meetup=${encodeURIComponent(r.code)}` });
+                      })}>link</button>
+                    )}
+                    {!closed && (
+                      <button disabled={busy} onClick={() => {
+                        if (!window.confirm(`New link for "${e.name}"? The old link stops working at once; anyone still reading the card needs the new one. People already waiting or playing carry on.`)) return;
+                        void act(async () => {
+                          const r = await api<{ code: string }>(`/events/${e.id}/new-link`, "POST", {});
+                          setCreated({ name: e.name, code: r.code, link: `${location.origin}${import.meta.env.BASE_URL}?meetup=${encodeURIComponent(r.code)}` });
+                        });
+                      }}>new link</button>
                     )}
                   </td>
                 </tr>

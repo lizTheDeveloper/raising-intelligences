@@ -58,6 +58,14 @@ export class StrangerPasses {
     return { subject: p.subject, meetupCode: p.meetupCode };
   }
 
+  /**
+   * A meetup's code was replaced: every live pass made at the old code now
+   * carries the new one, so people already past the card carry on.
+   */
+  moveMeetup(wasOld: (meetupCode: string) => boolean, newCode: string): void {
+    for (const p of this.passes.values()) if (p.meetupCode !== null && wasOld(p.meetupCode)) p.meetupCode = newCode;
+  }
+
   /** Drop every pass for an account (a suspension, or a minor result). */
   revokeSubject(subject: string): void {
     this.drop(subject);

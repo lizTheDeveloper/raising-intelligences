@@ -48,6 +48,13 @@ export interface HostEvent {
   guestReaderId: string | null;
   /** People who promote this event: refused at the queue and at JOIN_GAME like the host (H12). */
   promoterIds: string[];
+  /**
+   * How many times this event's code was replaced. The code is derived from
+   * the pepper, the id and this count (never stored in the clear), so the
+   * host can see it again. Null: a random code from before migration 037,
+   * which nobody kept.
+   */
+  codeSeq: number | null;
   sensitive: boolean;
   authority: boolean;
   eventsBusiness: boolean;

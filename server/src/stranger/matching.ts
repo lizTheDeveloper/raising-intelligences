@@ -272,6 +272,19 @@ export class StrangerMatching {
     return { status: "waiting", others: seen.length > 1 };
   }
 
+  /**
+   * A meetup's code was replaced (the host's "get a new link"). The queue is
+   * bucketed by code, so everyone waiting or held under the old code, and the
+   * runs made there, move to the new one and are matched with whoever comes
+   * by the new link.
+   */
+  moveMeetup(wasOld: (meetupCode: string) => boolean, newCode: string): void {
+    const move = (e: { meetupCode: string | null }) => { if (e.meetupCode !== null && wasOld(e.meetupCode)) e.meetupCode = newCode; };
+    for (const e of this.queue) move(e);
+    for (const e of this.held.values()) move(e);
+    for (const r of this.runs.values()) { move(r); move(r.entries.parent1); move(r.entries.parent2); }
+  }
+
   /** Everyone who looks like they're waiting at a meetup: the queue plus the held, in arrival order. */
   private visibleQueue(meetupCode: string | null): QueueEntry[] {
     return [...this.queue, ...this.held.values()]
