@@ -52,7 +52,22 @@ DOCKER_BUILDKIT=1 docker build -f "$REPO_DIR/Dockerfile" \
 
 echo "[deploy] stopping old container..."
 docker stop raising-intelligences 2>/dev/null || true
-docker rm raising-intelligences 2>/dev/null || true
+# Keep every byte of the old container's log: `docker rm` deletes it, and RI's
+# logs are never to be lost (Liz, 2026-11-24). If archiving fails, the old
+# container is renamed rather than removed, so its log is still on disk.
+RI_LOG_ARCHIVE=/var/log/raising-intelligences
+OLD_LOG="$(docker inspect --format '{{.LogPath}}' raising-intelligences 2>/dev/null || true)"
+if [ -n "$OLD_LOG" ]; then
+  STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+  if [ -f "$OLD_LOG" ] && mkdir -p "$RI_LOG_ARCHIVE" && gzip -c "$OLD_LOG" > "$RI_LOG_ARCHIVE/container-$STAMP.json.log.gz.part" \
+     && mv "$RI_LOG_ARCHIVE/container-$STAMP.json.log.gz.part" "$RI_LOG_ARCHIVE/container-$STAMP.json.log.gz"; then
+    echo "[deploy] archived old container log to $RI_LOG_ARCHIVE/container-$STAMP.json.log.gz"
+    docker rm raising-intelligences 2>/dev/null || true
+  else
+    echo "[deploy] WARNING: could not archive the old log; keeping the old container as raising-intelligences-$STAMP"
+    docker rename raising-intelligences "raising-intelligences-$STAMP"
+  fi
+fi
 
 echo "[deploy] starting new container..."
 docker run -d \
