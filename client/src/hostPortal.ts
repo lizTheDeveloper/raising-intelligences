@@ -8,6 +8,8 @@
  * never turns any of them into a number.
  */
 
+import { asTerms, type HostTerms } from "./hostInvite";
+
 export type HostEventStatus = "open" | "paused" | "closed" | "full" | "not_open_yet";
 
 export type PublishedFunnel =
@@ -40,6 +42,8 @@ export type PortalEvent = HostEv | GuestEv;
 export interface PortalEvents {
   displayName: string;
   events: PortalEvent[];
+  /** Set when the person hasn't agreed to the host terms yet: the terms to agree to. */
+  needsAgreement?: HostTerms;
 }
 
 export interface Deck {
@@ -95,7 +99,8 @@ export function asPortalEvents(v: unknown): PortalEvents | null {
     const ev = asEvent(e);
     if (ev) events.push(ev);
   }
-  return { displayName: isStr(v.displayName) ? v.displayName : "", events };
+  const terms = v.needsAgreement === true ? asTerms(v.terms) : null;
+  return { displayName: isStr(v.displayName) ? v.displayName : "", events, ...(terms ? { needsAgreement: terms } : {}) };
 }
 
 /** The /events/deck body's deck, or null (host tools are off, or it isn't one). */

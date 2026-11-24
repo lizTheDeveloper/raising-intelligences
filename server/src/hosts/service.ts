@@ -448,7 +448,7 @@ export class HostTools implements StrangerHostTools {
 
   // ---- Admin ----
 
-  async createPerson(input: { matrixId?: unknown; displayName?: unknown; roleText?: unknown; roleChecked?: unknown; agreementVersion?: unknown; hostType?: unknown; organisation?: unknown }): Promise<AdminResult<HostPerson>> {
+  async createPerson(input: { matrixId?: unknown; displayName?: unknown; roleText?: unknown; roleChecked?: unknown; agreementVersion?: unknown; agreementSigned?: unknown; hostType?: unknown; organisation?: unknown }): Promise<AdminResult<HostPerson>> {
     const mxid = typeof input.matrixId === "string" ? input.matrixId.trim() : "";
     if (!/^@[^:\s]+:[^\s]+$/.test(mxid)) return { ok: false, status: 400, error: "matrixId must look like @name:server" };
     const displayName = typeof input.displayName === "string" ? input.displayName.trim() : "";
@@ -459,14 +459,18 @@ export class HostTools implements StrangerHostTools {
     if (!hostType) return { ok: false, status: 400, error: HOST_TYPE_REQUIRED };
     const organisation = typeof input.organisation === "string" && input.organisation.trim() ? input.organisation.trim().slice(0, 60) : null;
     if (!(await this.stranger.age.adultForPool(mxid)).ok) {
-      return { ok: false, status: 409, error: "This account hasn't passed the 18+ check. They can do it from any meetup link with \"get ready early\"." };
+      return { ok: false, status: 409, error: "This account hasn't passed the 18+ check. Send them an invite instead (Invites, below): it takes them through sign-in, the 18+ check and the host terms." };
     }
     const now = this.now();
     const p: HostPerson = {
       id: randomUUID(), subject: await this.stranger.age.subjectHash(mxid), displayName, roleText, roleChecked,
       roleCheckedAt: roleText && roleChecked ? now : null,
-      agreementVersion: typeof input.agreementVersion === "string" && input.agreementVersion.trim() ? input.agreementVersion.trim().slice(0, 40) : this.config().agreementVersion,
-      agreementAt: now, status: "approved", createdAt: now, hostType, organisation,
+      // An agreement is on record only when the admin says one was signed (S2-5);
+      // otherwise the portal asks the person to agree before it opens.
+      ...(input.agreementSigned === true
+        ? { agreementVersion: typeof input.agreementVersion === "string" && input.agreementVersion.trim() ? input.agreementVersion.trim().slice(0, 40) : this.config().agreementVersion, agreementAt: now }
+        : { agreementVersion: null, agreementAt: null }),
+      status: "approved", createdAt: now, hostType, organisation,
     };
     if (!(await this.store.createPerson(p))) return { ok: false, status: 409, error: "This account is already a host or guest reader." };
     this.names.set(p.id, p.displayName);
@@ -479,6 +483,25 @@ export class HostTools implements StrangerHostTools {
    * here; after that it changes only while they're on no event that is still
    * running, so no live event's ceiling shifts under it.
    */
+  /** A person from an accepted invite: adult checked, terms agreed just now. */
+  async createInvitedPerson(mxid: string, invite: { displayName: string; hostType: HostType; organisation: string | null }, termsVersion: string): Promise<HostPerson | null> {
+    const now = this.now();
+    const p: HostPerson = {
+      id: randomUUID(), subject: await this.stranger.age.subjectHash(mxid), displayName: invite.displayName, roleText: null, roleChecked: null,
+      roleCheckedAt: null, agreementVersion: termsVersion, agreementAt: now, status: "approved", createdAt: now,
+      hostType: invite.hostType, organisation: invite.organisation,
+    };
+    if (!(await this.store.createPerson(p))) return null;
+    this.names.set(p.id, p.displayName);
+    logger.info("host_person_created", { id: p.id, via: "invite" });
+    return p;
+  }
+
+  /** The person agrees to the current terms in the portal. */
+  async agree(person: HostPerson, version: string): Promise<void> {
+    await this.store.updatePerson(person.id, { agreementVersion: version, agreementAt: this.now() });
+  }
+
   async setPersonType(id: string, input: { hostType?: unknown; organisation?: unknown }): Promise<AdminResult<HostPerson>> {
     const hostType = parseHostType(input.hostType);
     if (!hostType) return { ok: false, status: 400, error: HOST_TYPE_REQUIRED };
@@ -629,6 +652,11 @@ export class HostTools implements StrangerHostTools {
     return { ok: true, value: { event: e, code } };
   }
 
+  /** The key invite tokens are hashed with (invites.ts). */
+  pepperForInvites(): string {
+    return this.pepper;
+  }
+
   // ---- The event's link (persona tests, Kofi) ----
 
   /** The meetup link for a code: where the game lives, with ?meetup=. */
@@ -752,9 +780,9 @@ export class HostTools implements StrangerHostTools {
   }
 }
 
-const HOST_TYPE_REQUIRED = `host type: one of ${HOST_TYPES.join(", ")} (club: no authority over attendees, not a business, not a sensitive community)`;
+export const HOST_TYPE_REQUIRED = `host type: one of ${HOST_TYPES.join(", ")} (club: no authority over attendees, not a business, not a sensitive community)`;
 
-function parseHostType(v: unknown): HostType | null {
+export function parseHostType(v: unknown): HostType | null {
   return typeof v === "string" && (HOST_TYPES as readonly string[]).includes(v) ? (v as HostType) : null;
 }
 

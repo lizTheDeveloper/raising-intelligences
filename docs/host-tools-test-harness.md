@@ -41,8 +41,17 @@ BASE=http://localhost:5173; AUTH="Authorization: Bearer $ADMIN_TOKEN"
 # Is it on? (active, share-code secret present, trace settings, paywall)
 curl -s -H "$AUTH" $BASE/api/admin/host-tools/status
 
-# A host, guest reader or promoter. They must already have passed the 18+ check: they do it
-# from any meetup link with "get ready early". Locally that's one click.
+# The usual way: an invite. It takes them through sign-in, the 18+ check (host copy) and the host terms,
+# and only then makes the person, with that agreement recorded. The link is shown once (14 days, once).
+curl -s -X POST -H "$AUTH" -H 'Content-Type: application/json' $BASE/api/admin/host-tools/invites \
+  -d '{"displayName":"Sister Jensen","hostType":"sensitive","organisation":"Riverside Ward"}'
+# → {"invite":{...},"token":"…","link":"http://localhost:5173/?hostinvite=…"}
+# Open the link with &devmxid=@jensen:local appended. List: GET …/invites (open/used/expired/revoked);
+# revoke: POST …/invites/<id>/revoke.
+
+# Or directly: a host, guest reader or promoter who has already passed the 18+ check (from any
+# meetup link with "get ready early"; locally that's one click). Without "agreementSigned":true
+# (optionally "agreementVersion":"paper-2026-11") their portal asks them to agree to the host terms first.
 # Only a keyed hash of the Matrix id is stored.
 # hostType is required and set once (§9.1 lives on the person, not the event):
 #   club             no authority over attendees, not a business, not sensitive: hosts at L0, L1 or L3
@@ -95,6 +104,9 @@ Each player needs their own browser storage. Use a normal window and a private w
 To check the host side: a host, guest reader or promoter who joins their own event's queue gets "stranger mode isn't available here."
 
 ## 3b. The host portal and the deck
+
+- **Onboarding by invite:** make an invite (section 2, or "Invites" on the admin screen) and open its link with `&devmxid=@jensen:local`. Sign in, agree to the host 18+ consent, "start the ID check" (locally `RI_DEV_FAKE_IDENTITY` sends you straight back to `?hostinvite=back`, which carries no token), read the host terms, "I agree", and the portal opens signed in. The token leaves the address bar as soon as the page loads. Opening the link again says "this invite isn't available."; the admin list shows it "used by Sister Jensen", and the person's "Host terms" column shows the version she agreed to. The routes: `POST /api/host/invite/peek|pass|consent|identity/start|identity/check|accept`.
+- **A person added directly without a signed agreement** sees only the host terms in the portal until they agree (`POST /api/host/agree {pass, version}`); share codes and event actions answer 403 until then.
 
 - **Host portal:** `http://localhost:5173/?host=1&devmxid=@robin:local` (the `devmxid` stand-in is dev-only). Sign in. An approved host sees their events' status. Numbers appear only for level 1 and up, once, 24 hours after close. Hosts can pause, resume, close and lower their own events. A guest reader sees each event's name and dates.
 - **The host's link, card and new link** (each of the host's own events, not a guest reader's): "show the meetup link" shows the link to hand out, again, with "copy". "see the card your players see" shows the card exactly as `GET /events/card` gives it, read-only. "get a new link" warns, then replaces the code: the old code answers as for a code never made (the card, the acknowledgement and sign-in), so a player still on the card gets "this meetup isn't open anymore."; anyone already past the card (signed in, queued, playing) carries on, because their passes and queue entries move to the new code. A closed meetup shows only the card. An event made before 2.17.0 has no derivable code ("get a new link to see one here"). The routes: `POST /api/host/events/<ref>/link|card|new-link {pass}`.

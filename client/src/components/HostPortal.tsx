@@ -17,6 +17,8 @@ import {
 import { Deck } from "./Deck";
 import { HostCodes } from "./HostCodes";
 import { HostEventLink } from "./HostEventLink";
+import { HostTermsView } from "./HostTermsView";
+import { asTerms } from "../hostInvite";
 
 /**
  * The meetup host portal (host tools spec §4, B.4, B.5), at `?host=1`. Hosts
@@ -198,6 +200,37 @@ export function HostPortal({ deck }: { deck: DeckData }) {
         <p className="event-card-links">{deckLink}</p>
         <button className="btn btn-secondary" onClick={leave}>back</button>
       </div>
+    );
+  }
+
+  // Added by the studio without a signed agreement: the terms first (persona tests, S2-5).
+  if (data?.needsAgreement) {
+    const terms = data.needsAgreement;
+    const agree = async () => {
+      setBusy(true);
+      setError(null);
+      try {
+        const r = await post<{ ok?: boolean; error?: string; terms?: unknown }>("/host/agree", { pass, version: terms.version });
+        if (r.status === 401) return signedOut("you were signed out. sign in again.");
+        if (r.status === 409) {
+          const t = asTerms(r.body.terms);
+          if (t) { setData({ ...data, needsAgreement: t }); return setError("the terms changed while you were reading. here are the current ones."); }
+        }
+        if (r.status !== 200) return setError(r.body.error ?? TRY_AGAIN);
+        await loadEvents(pass);
+      } catch {
+        setError(TRY_AGAIN);
+      } finally {
+        setBusy(false);
+      }
+    };
+    return (
+      <HostTermsView terms={terms} busy={busy} error={error} onAgree={() => void agree()}>
+        <p className="event-card-links">
+          {data.displayName && <>signed in as {data.displayName} · </>}
+          <button className="btn-link" onClick={signOut}>sign out</button>
+        </p>
+      </HostTermsView>
     );
   }
 

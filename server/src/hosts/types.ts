@@ -18,8 +18,9 @@ export interface HostPerson {
   roleText: string | null;
   roleChecked: string | null;
   roleCheckedAt: number | null;
-  agreementVersion: string;
-  agreementAt: number;
+  /** The terms they agreed to, and when; null until they agree (a direct add with no signed agreement recorded). */
+  agreementVersion: string | null;
+  agreementAt: number | null;
   status: "approved" | "suspended" | "closed";
   createdAt: number;
   /** null: added before host types; can't go on a new event until set. */
@@ -131,3 +132,17 @@ export interface ShareCodeRow {
 
 export interface HostReport { id: string; eventId: string | null; text: string; at: number; status: "open" | "done" }
 export interface UnlinkRequest { id: string; gameId: string; subject: string; at: number; doneAt: number | null }
+
+/** An invite to become a host or guest reader (persona tests, S2-5). */
+export interface HostInvite {
+  id: string;
+  tokenHash: string;
+  displayName: string;
+  hostType: HostType;
+  organisation: string | null;
+  createdAt: number;
+  expiresAt: number;
+  usedAt: number | null;
+  personId: string | null;
+  revokedAt: number | null;
+}

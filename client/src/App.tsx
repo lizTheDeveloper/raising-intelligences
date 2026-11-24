@@ -16,6 +16,8 @@ import { Deck, loadDeck, probeHostTools } from "./components/Deck";
 import { hostRoute, type Deck as DeckData } from "./hostPortal";
 import { Account, probeAccount } from "./components/Account";
 import { isAccountRoute } from "./shareCodes";
+import { HostInvite } from "./components/HostInvite";
+import { hostInviteRoute } from "./hostInvite";
 
 const TAGLINES = [
   // funny
@@ -187,7 +189,9 @@ const TAGLINE = TAGLINES[Math.floor(Math.random() * TAGLINES.length)];
 // "host" / "deck": the host portal and the discussion deck (spec §4, B.6). Untracked.
 // "accountcheck" / "account": a ?stranger=account link, waiting to hear whether host
 // tools are on, then the stranger player's account page (spec §5.4). Untracked.
-type Mode = "choose" | "solo" | "multiplayer" | "stranger" | "pending" | "card" | "notforme" | "hostcheck" | "host" | "deck" | "accountcheck" | "account";
+// "invitecheck" / "hostinvite": a host or guest reader's onboarding invite
+// (?hostinvite=), shown only when host tools are on. Untracked.
+type Mode = "choose" | "solo" | "multiplayer" | "stranger" | "pending" | "card" | "notforme" | "hostcheck" | "host" | "deck" | "accountcheck" | "account" | "invitecheck" | "hostinvite";
 type Theme = "" | "theme-ocean-grunge" | "theme-cyber";
 
 const THEMES: { id: Theme; label: string }[] = [
@@ -224,9 +228,25 @@ export function App() {
   // ?stranger=account: the account page. Nothing paints until the server says
   // host tools are on; otherwise this becomes "choose", as if there were no param.
   const [accountTarget] = useState(() => !joinGameId && !arrivedForCard && !hostTarget && isAccountRoute(window.location.search));
+  // ?hostinvite=<token> (or =back, from Stripe): host onboarding. Nothing paints until
+  // the server says host tools are on; otherwise this becomes "choose".
+  const [inviteTarget] = useState(() => (joinGameId || backFromIdCheck || arrivedForCard || hostTarget || accountTarget ? null : hostInviteRoute(window.location.search)));
   const [mode, setMode] = useState<Mode>(
-    isSoloResume ? "solo" : joinGameId ? "multiplayer" : backFromIdCheck ? "stranger" : arrivedForCard ? "pending" : hostTarget ? "hostcheck" : accountTarget ? "accountcheck" : "choose",
+    isSoloResume ? "solo" : joinGameId ? "multiplayer" : backFromIdCheck ? "stranger" : arrivedForCard ? "pending" : hostTarget ? "hostcheck" : accountTarget ? "accountcheck" : inviteTarget ? "invitecheck" : "choose",
   );
+  useEffect(() => {
+    if (!inviteTarget) return;
+    let live = true;
+    const giveUp = setTimeout(() => setMode((m) => (m === "invitecheck" ? "choose" : m)), 8000);
+    void probeHostTools().then((on) => {
+      clearTimeout(giveUp);
+      if (!live) return;
+      // Off: the link is stripped, as if it had no param.
+      if (!on) window.history.replaceState(null, "", import.meta.env.BASE_URL);
+      setMode((m) => (m === "invitecheck" ? (on ? "hostinvite" : "choose") : m));
+    });
+    return () => { live = false; clearTimeout(giveUp); };
+  }, [inviteTarget]);
   useEffect(() => {
     if (!accountTarget) return;
     let live = true;
@@ -377,7 +397,8 @@ export function App() {
     if (mode === "choose") clearResume();
   }, [mode]);
 
-  if (mode === "pending" || mode === "hostcheck" || mode === "accountcheck") return <div className="app"><div className="lobby" aria-busy="true" /></div>;
+  if (mode === "hostinvite" && inviteTarget) return <div className="app fade-in"><HostInvite route={inviteTarget} /></div>;
+  if (mode === "pending" || mode === "hostcheck" || mode === "accountcheck" || mode === "invitecheck") return <div className="app"><div className="lobby" aria-busy="true" /></div>;
   if (mode === "account") return <div className="app fade-in"><Account /></div>;
   if (mode === "host" && deck) return <div className="app fade-in"><HostPortal deck={deck} /></div>;
   if (mode === "deck" && deck) {

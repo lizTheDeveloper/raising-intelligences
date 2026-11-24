@@ -32,6 +32,13 @@ import type { StrangerStore } from "./store.js";
  * (client/src/components/StrangerConsent.tsx) changes, so players re-consent.
  */
 export const CONSENT_VERSION = "2026-11-24.1"; // 2.16.2: the screen names the Stripe check id and the document fingerprint
+/**
+ * The same consent, worded for hosts and guest readers on the invite page
+ * (persona tests, S2-5). It must state the same facts as the players' screen:
+ * change both, and both versions, together.
+ */
+export const HOST_CONSENT_VERSION = "host-2026-11-24.1";
+const CONSENT_VERSIONS = new Set([CONSENT_VERSION, HOST_CONSENT_VERSION]);
 
 /**
  * Age is computed on a clock 14 hours behind UTC. The UTC date can run ahead
@@ -186,14 +193,14 @@ export class AgeVerification {
   }
 
   async recordConsent(matrixId: string, version: string): Promise<boolean> {
-    if (version !== CONSENT_VERSION) return false;
+    if (!CONSENT_VERSIONS.has(version)) return false;
     await this.store.recordConsent({ subject: await this.subjectHash(matrixId), version, at: this.now() });
     return true;
   }
 
   async hasConsent(matrixId: string): Promise<boolean> {
     const c = await this.store.getConsent(await this.subjectHash(matrixId));
-    return c?.version === CONSENT_VERSION;
+    return !!c && CONSENT_VERSIONS.has(c.version);
   }
 
   /** What the stored record says, without asking Stripe. */
@@ -202,7 +209,7 @@ export class AgeVerification {
   }
 
   /** Start an ID + selfie check. Returns Stripe's hosted URL. */
-  async start(matrixId: string, meetupCode: string | null): Promise<{ url: string } | { error: string; reason: string }> {
+  async start(matrixId: string, meetupCode: string | null, opts: { hostInvite?: boolean } = {}): Promise<{ url: string } | { error: string; reason: string }> {
     const subject = await this.subjectHash(matrixId);
     const api = this.api();
     if (!api) return { error: "Age checks aren't set up yet.", reason: "not_configured" };
@@ -218,7 +225,8 @@ export class AgeVerification {
     }
     const base = this.config().publicBaseUrl;
     // No meetup code leaves for Stripe: an opaque reference brings the player back to it.
-    const returnUrl = `${base}/?stranger=identity${meetupCode ? `&ref=${this.issueReturnRef(meetupCode)}` : ""}`;
+    // A host invite comes back to the invite page; its token stays in the tab, never in this URL.
+    const returnUrl = opts.hostInvite ? `${base}/?hostinvite=back` : `${base}/?stranger=identity${meetupCode ? `&ref=${this.issueReturnRef(meetupCode)}` : ""}`;
     // Only an opaque hash goes to Stripe: no Matrix id, no name, no email.
     const session = await api.createVerificationSession({
       type: "document",

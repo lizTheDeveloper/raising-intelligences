@@ -135,7 +135,7 @@ export class HostHarness {
   async person(mxid: string, displayName: string, extra: Record<string, unknown> = {}): Promise<string> {
     await this.verify(mxid);
     // Host type defaults to "club" (no authority, not a business, not sensitive): the old per-event answers.
-    const r = await this.post("/admin/host-tools/hosts", { matrixId: mxid, displayName, hostType: "club", ...extra }, ADMIN);
+    const r = await this.post("/admin/host-tools/hosts", { matrixId: mxid, displayName, hostType: "club", agreementSigned: true, ...extra }, ADMIN);
     if (r.status !== 200) throw new Error(`person: ${r.status} ${r.text}`);
     return r.body.id as string;
   }
