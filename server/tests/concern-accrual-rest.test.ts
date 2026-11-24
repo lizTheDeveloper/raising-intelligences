@@ -56,13 +56,19 @@ describe("concern accumulator — accrual through the real REST scene-end route"
     await built.close();
   });
 
+  // GET /state needs the game's own secret (privacy review F1).
+  const secrets = new Map<string, string>();
+  const readState = (gameId: string) =>
+    fetch(`${baseUrl}/api/game/${gameId}/state`, { headers: { "x-game-secret": secrets.get(gameId) ?? "" } });
+
   async function createGameAndReachFamilyChat(ip: string): Promise<string> {
     const createRes = await fetch(`${baseUrl}/api/game`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Forwarded-For": ip },
       body: JSON.stringify({ childName: "Kai" }),
     });
-    const { gameId } = (await createRes.json()) as { gameId: string };
+    const { gameId, secret } = (await createRes.json()) as { gameId: string; secret: string };
+    secrets.set(gameId, secret);
 
     const nextRes = await fetch(`${baseUrl}/api/game/${gameId}/next-event`, {
       method: "POST",
@@ -113,7 +119,7 @@ describe("concern accumulator — accrual through the real REST scene-end route"
     // Sanity: it really did accrue server-side.
     expect((await repo.loadGame(gameId))?.concernLevel).toBe(CONCERN_INCREMENT);
 
-    const stateRes = await fetch(`${baseUrl}/api/game/${gameId}/state`);
+    const stateRes = await readState(gameId);
     const body = (await stateRes.json()) as Record<string, unknown>;
     expect(body).not.toHaveProperty("concernLevel");
     expect(body).not.toHaveProperty("concerningStreak");

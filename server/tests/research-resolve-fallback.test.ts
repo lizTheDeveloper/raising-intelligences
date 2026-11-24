@@ -27,10 +27,10 @@ describe("a failed research lookup does not break gameplay routes", () => {
       headers: { "Content-Type": "application/json", "X-Forwarded-For": "198.51.100.9" },
       body: JSON.stringify({ childName: "Kai", birthYear: 1985 }),
     });
-    const { gameId } = (await r.json()) as { gameId: string };
+    const { gameId, secret } = (await r.json()) as { gameId: string; secret: string };
     built.games.delete(gameId); // as if evicted
     const spy = vi.spyOn(repo, "listAnswers").mockRejectedValue(new Error("db down"));
-    const res = await fetch(`${base}/game/${gameId}/state`);
+    const res = await fetch(`${base}/game/${gameId}/state`, { headers: { "x-game-secret": secret } });
     spy.mockRestore();
     expect(res.status).toBe(200);
     expect(built.games.get(gameId)?.parentContext).toBeUndefined();

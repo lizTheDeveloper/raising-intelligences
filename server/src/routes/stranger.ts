@@ -30,9 +30,14 @@ export function createStrangerRoutes(stranger: StrangerService, limit: RequestHa
     return p;
   };
 
+  // `?ref=` is the opaque reference Stripe's ID check returns with (privacy
+  // review F5): it stands for the meetup code, which then comes back only in
+  // this response body, never in a URL.
   router.get("/stranger/status", (req: Request, res: Response, next: NextFunction) => {
-    if (!stranger.visible(req.query.meetup)) return void hide(next);
-    res.json({ visible: true, consentVersion: CONSENT_VERSION, identityReady: stranger.age.configured() });
+    const fromRef = req.query.meetup === undefined ? stranger.age.meetupForReturnRef(req.query.ref) : null;
+    const code = fromRef ?? req.query.meetup;
+    if (!stranger.visible(code)) return void hide(next);
+    res.json({ visible: true, consentVersion: CONSENT_VERSION, identityReady: stranger.age.configured(), ...(fromRef ? { meetup: fromRef } : {}) });
   });
 
   router.post("/stranger/pass", limit, async (req: Request, res: Response, next: NextFunction) => {

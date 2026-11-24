@@ -62,8 +62,8 @@ describe("research privacy: /state and deletion", () => {
   }
 
   it("(a) GET /state never contains personalities, identity document or answer text", async () => {
-    const { gameId } = await makeGame();
-    const res = await fetch(`${baseUrl}/game/${gameId}/state`);
+    const { gameId, secret } = await makeGame();
+    const res = await fetch(`${baseUrl}/game/${gameId}/state`, { headers: { "x-game-secret": secret } });
     expect(res.status).toBe(200);
     const text = await res.text();
     const body = JSON.parse(text) as Record<string, unknown>;
@@ -73,7 +73,7 @@ describe("research privacy: /state and deletion", () => {
   });
 
   it("(b) DELETE without or with a wrong secret is 403 and leaves data intact", async () => {
-    const { gameId } = await makeGame();
+    const { gameId, secret } = await makeGame();
     const none = await fetch(`${baseUrl}/game/${gameId}`, { method: "DELETE" });
     expect(none.status).toBe(403);
     const wrong = await fetch(`${baseUrl}/game/${gameId}`, {
@@ -82,7 +82,7 @@ describe("research privacy: /state and deletion", () => {
     });
     expect(wrong.status).toBe(403);
     expect(await repo.loadGame(gameId)).not.toBeNull();
-    expect((await fetch(`${baseUrl}/game/${gameId}/state`)).status).toBe(200);
+    expect((await fetch(`${baseUrl}/game/${gameId}/state`, { headers: { "x-game-secret": secret } })).status).toBe(200);
   });
 
   it("(c) DELETE with the right secret is 204 and /state is then 404", async () => {

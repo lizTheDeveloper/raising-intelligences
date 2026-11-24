@@ -72,7 +72,8 @@ export async function generateMultiplayerAlbums(deps: {
       if (!partner) return; // no co-parent to group under
       const userId = player.userId as string;
       try {
-        await repo.saveUserGame(userId, state.id, state.childName);
+        // Written by the server for a seat that played this game: proof of access.
+        await repo.saveUserGame(userId, state.id, state.childName, true);
         const partnerId = await repo.saveAlbumPartner({
           userId,
           partnerName: partner.displayName,

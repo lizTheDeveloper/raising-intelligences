@@ -49,6 +49,7 @@ import { cleanRepairMessage } from "../research/repair.js";
 import { forgetSceneSummary } from "../research/moment-label.js";
 import { requireAdmin } from "./admin.js";
 import { isSeatedGame } from "../research/seats.js";
+import { gameReaderOf, stateForReader, type MatrixVerifier } from "../security/game-read-access.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -83,6 +84,8 @@ interface GameRouteOptions {
   requirePaid?: RequestHandler;
   /** The seat this player token holds in a game, and whether the game has seats at all. */
   seatOf?: (gameId: string, token: unknown) => Promise<{ seated: boolean; slot: string | null }>;
+  /** Verifies a Matrix OpenID token (x-matrix-openid): the owner reading from another device. */
+  verifyMatrix?: MatrixVerifier;
 }
 
 export function createGameRoutes(
@@ -92,7 +95,7 @@ export function createGameRoutes(
   repo: GameRepository,
   options: GameRouteOptions = {}
 ): Router {
-  const { llmRateLimit, gameCreateLimit, gameLocks = new Map<string, Promise<void>>(), llm, hasSeat = () => false, partnerGate = async () => false, seatOf = async () => ({ seated: false, slot: null }), requirePaid = passThrough } = options;
+  const { llmRateLimit, gameCreateLimit, gameLocks = new Map<string, Promise<void>>(), llm, hasSeat = () => false, partnerGate = async () => false, seatOf = async () => ({ seated: false, slot: null }), requirePaid = passThrough, verifyMatrix = async () => null } = options;
   const router = Router();
 
   // Prefetched event promises — kicked off at game creation (event 1) and after
@@ -274,46 +277,50 @@ export function createGameRoutes(
     res.json({ deletedGameIds: gameIds });
   });
 
+  // Privacy review F1: the game id is not a credential. Both co-parents hold
+  // it (the invite link carries it), so a read needs the reader's own
+  // credential (game secret, seat token, or a Matrix sign-in with a proven
+  // kid row) and returns only what that reader may see: a seat never gets the
+  // other parent's sidebar, and nobody gets the confessional-derived seed or
+  // the server-only fields (parentPersonalities, see #139). A game that
+  // doesn't exist still answers 404, as before.
   router.get("/game/:id/state", async (req: Request, res: Response) => {
     const state = await resolveGame(req.params.id as string);
     if (!state) {
       res.status(404).json({ error: "Game not found" });
       return;
     }
-    // Strip server-only fields before serializing: the identity doc/snapshots,
-    // and the safety/guidance internals (concernLevel is Dark Play Plan 2's
-    // silent accumulator — spec §5 requires it stay invisible in-play;
-    // concerningStreak/pendingGuidance are World-Manager internals).
-    // highestRungFired/cpsOutcome are Dark Play Plan 3's ladder-gating
-    // internals — server-only for the same reason. interventionText and
-    // therapyMessages are the human-facing generated beat texts the
-    // consult/therapy/cps_review screens render, so they are deliberately
-    // KEPT in the response. The client reads none of the stripped fields.
-    // parentPersonalities holds both parents' raw OCEAN scores and their
-    // intimate free-text confessionals; it is server-only (it seeds the
-    // child and drives context assembly). This unauthenticated endpoint must
-    // NOT echo it back — doing so leaked one parent's confessionals to the
-    // other (and to anyone holding the gameId). See #139. The socket
-    // viewerState() path already exposes only the derived
-    // partnerPersonalitySubmitted boolean.
-    const {
-      identityDocument,
-      identitySnapshots,
-      concernLevel,
-      concerningStreak,
-      pendingGuidance,
-      highestRungFired,
-      cpsOutcome,
-      parentPersonalities,
-      parentContext,
-      repairNote,
-      sceneRepairLine,
-      ...publicState
-    } = state;
-    res.json({
-      ...publicState,
-      messagesRemaining: PARENT_MESSAGE_CAP - state.parentMessageCount,
-    });
+    const reader = await gameReaderOf(req, state, { repo, seatOf, verifyMatrix });
+    if (!reader) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    res.json(stateForReader(state, reader));
+  });
+
+  // A seatless game made before per-game secrets existed (before 2.2.0) has no
+  // credential anywhere, so its player could never resume it once reads need
+  // one. Its first claim mints a secret, exactly once (the hash is set only
+  // while none is stored); every later claim is refused. Seated games read
+  // with their seat tokens and are never claimable.
+  router.post("/game/:id/claim", ...(gameCreateLimit ? [gameCreateLimit] : []), async (req: Request, res: Response) => {
+    const gameId = req.params.id as string;
+    if (!UUID_RE.test(gameId)) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    const state = await resolveGame(gameId);
+    if (!state || (await seatOf(gameId, undefined)).seated || (await repo.getAccessSecretHash(gameId)) !== null) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    const { secret, hash } = newGameSecret();
+    if (!(await repo.claimAccessSecretHash(gameId, hash))) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    logger.info("legacy_game_claimed", { gameId });
+    res.json({ secret });
   });
 
   router.post("/game/:id/next-event", requirePaid, async (req: Request, res: Response) => {

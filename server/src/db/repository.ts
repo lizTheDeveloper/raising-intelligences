@@ -129,8 +129,15 @@ export interface GameRepository {
    */
   campusSubForSeat(gameId: string, slot: string): Promise<string | null>;
   /** Associate a signed-in user with a game (the album's kid row). Idempotent —
-   * ON CONFLICT DO NOTHING so an existing row is left untouched. */
-  saveUserGame(userId: string, gameId: string, childName: string): Promise<void>;
+   * an existing row is left untouched, except that `proven` only ever turns on.
+   * `proven`: the row was written by someone holding the game's own credential
+   * (its secret or a seat token), or by the server for a seat. Only a proven
+   * row lets its user read the game (privacy review F1); an unproven one only lists. */
+  saveUserGame(userId: string, gameId: string, childName: string, proven?: boolean): Promise<void>;
+  /** A user's kid rows, newest first (GET /user/:userId/kids). */
+  listUserKids(userId: string): Promise<Array<{ gameId: string; childName: string; createdAt: number }>>;
+  /** Was this user's row for this game written with proof of access? */
+  isProvenUserGame(userId: string, gameId: string): Promise<boolean>;
 
   // Album methods
   saveAlbumPartner(partner: { userId: string; partnerName: string; partnerType: string; relationshipSummary: string }): Promise<string>;
@@ -182,6 +189,8 @@ export interface GameRepository {
   recordAccessSecretHash(gameId: string, hash: string): Promise<void>;
   /** Null for unknown games and legacy games created before secrets existed. */
   getAccessSecretHash(gameId: string): Promise<string | null>;
+  /** Store a secret hash only if the game has none yet. True if this call stored it. */
+  claimAccessSecretHash(gameId: string, hash: string): Promise<boolean>;
   /**
    * Removes the game and every row keyed to it (messages, events, snapshots,
    * players, endgames, moderation/concern/escalation records, album moments,
@@ -586,13 +595,29 @@ export class PgGameRepository implements GameRepository {
     }));
   }
 
-  async saveUserGame(userId: string, gameId: string, childName: string): Promise<void> {
+  async saveUserGame(userId: string, gameId: string, childName: string, proven = false): Promise<void> {
     await this.db.query(
-      `INSERT INTO user_games (user_id, game_id, child_name)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (user_id, game_id) DO NOTHING`,
-      [userId, gameId, childName]
+      `INSERT INTO user_games (user_id, game_id, child_name, proven)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, game_id) DO UPDATE SET proven = user_games.proven OR EXCLUDED.proven`,
+      [userId, gameId, childName, proven]
     );
+  }
+
+  async listUserKids(userId: string): Promise<Array<{ gameId: string; childName: string; createdAt: number }>> {
+    const { rows } = await this.db.query<{ game_id: string; child_name: string; created_at: string }>(
+      "SELECT game_id, child_name, created_at FROM user_games WHERE user_id = $1 ORDER BY created_at DESC",
+      [userId]
+    );
+    return rows.map((r) => ({ gameId: r.game_id, childName: r.child_name, createdAt: new Date(r.created_at).getTime() }));
+  }
+
+  async isProvenUserGame(userId: string, gameId: string): Promise<boolean> {
+    const { rows } = await this.db.query<{ proven: boolean }>(
+      "SELECT proven FROM user_games WHERE user_id = $1 AND game_id = $2",
+      [userId, gameId]
+    );
+    return rows[0]?.proven === true;
   }
 
   async loadGame(gameId: string): Promise<GameState | null> {
@@ -818,7 +843,7 @@ export class PgGameRepository implements GameRepository {
        FROM user_games ug
        LEFT JOIN album_partners ap ON ap.id = ug.partner_id
        LEFT JOIN endgames eg ON eg.game_id = ug.game_id
-       WHERE ug.user_id = $1 AND ug.game_id = $2`,
+       WHERE ug.user_id = $1 AND ug.game_id = $2 AND ug.proven`,
       [userId, gameId]
     );
 
@@ -1164,6 +1189,14 @@ export class PgGameRepository implements GameRepository {
     await this.db.query(`UPDATE games SET access_secret_hash = $2 WHERE id = $1`, [gameId, hash]);
   }
 
+  async claimAccessSecretHash(gameId: string, hash: string): Promise<boolean> {
+    const { rowCount } = await this.db.query(
+      `UPDATE games SET access_secret_hash = $2 WHERE id = $1 AND access_secret_hash IS NULL`,
+      [gameId, hash]
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
   async getAccessSecretHash(gameId: string): Promise<string | null> {
     const { rows } = await this.db.query<{ access_secret_hash: string | null }>(
       `SELECT access_secret_hash FROM games WHERE id = $1`,
@@ -1271,7 +1304,7 @@ export class InMemoryGameRepository implements GameRepository {
   private playerRecords = new Map<string, Map<string, PlayerRecord>>();
   private albumPartners = new Map<string, { id: string; userId: string; partnerName: string; partnerType: string; relationshipSummary: string }>();
   private albumMoments = new Map<string, Array<AlbumMoment>>();
-  private userGames = new Map<string, { userId: string; gameId: string; childName: string; partnerId: string | null; createdAt: number }>();
+  private userGames = new Map<string, { userId: string; gameId: string; childName: string; partnerId: string | null; createdAt: number; proven: boolean }>();
   private partnerLinks = new Map<string, string>();
   private moderationFlags: StoredModerationFlag[] = [];
   private bannedIps = new Set<string>();
@@ -1402,11 +1435,25 @@ export class InMemoryGameRepository implements GameRepository {
     return [...(this.playerRecords.get(gameId)?.values() ?? [])];
   }
 
-  async saveUserGame(userId: string, gameId: string, childName: string): Promise<void> {
+  async saveUserGame(userId: string, gameId: string, childName: string, proven = false): Promise<void> {
     const key = `${userId}:${gameId}`;
-    if (!this.userGames.has(key)) {
-      this.userGames.set(key, { userId, gameId, childName, partnerId: null, createdAt: Date.now() });
+    const existing = this.userGames.get(key);
+    if (!existing) {
+      this.userGames.set(key, { userId, gameId, childName, partnerId: null, createdAt: Date.now(), proven });
+    } else if (proven) {
+      existing.proven = true;
     }
+  }
+
+  async listUserKids(userId: string): Promise<Array<{ gameId: string; childName: string; createdAt: number }>> {
+    return [...this.userGames.values()]
+      .filter((ug) => ug.userId === userId)
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map((ug) => ({ gameId: ug.gameId, childName: ug.childName, createdAt: ug.createdAt }));
+  }
+
+  async isProvenUserGame(userId: string, gameId: string): Promise<boolean> {
+    return this.userGames.get(`${userId}:${gameId}`)?.proven === true;
   }
 
   async loadGame(gameId: string): Promise<GameState | null> {
@@ -1458,11 +1505,11 @@ export class InMemoryGameRepository implements GameRepository {
     return this.endgames.get(gameId) ?? null;
   }
 
-  /** Test helper: simulate INSERT INTO user_games. */
-  async addUserGame(userId: string, gameId: string, childName: string, partnerId?: string): Promise<void> {
+  /** Test helper: simulate INSERT INTO user_games (a proven row unless told otherwise). */
+  async addUserGame(userId: string, gameId: string, childName: string, partnerId?: string, proven = true): Promise<void> {
     const key = `${userId}:${gameId}`;
     if (!this.userGames.has(key)) {
-      this.userGames.set(key, { userId, gameId, childName, partnerId: partnerId ?? null, createdAt: Date.now() });
+      this.userGames.set(key, { userId, gameId, childName, partnerId: partnerId ?? null, createdAt: Date.now(), proven });
     }
   }
 
@@ -1559,7 +1606,7 @@ export class InMemoryGameRepository implements GameRepository {
   async loadScrapbook(userId: string, gameId: string): Promise<{ childName: string; partnerName: string | null; partnerType: string | null; relationshipSummary: string | null; moments: AlbumMoment[]; epilogue: string; reportCard: string } | null> {
     const key = `${userId}:${gameId}`;
     const ug = this.userGames.get(key);
-    if (!ug) return null;
+    if (!ug || !ug.proven) return null;
 
     let partnerName: string | null = null;
     let partnerType: string | null = null;
@@ -1800,6 +1847,12 @@ export class InMemoryGameRepository implements GameRepository {
 
   async getAccessSecretHash(gameId: string): Promise<string | null> {
     return this.accessSecretHashes.get(gameId) ?? null;
+  }
+
+  async claimAccessSecretHash(gameId: string, hash: string): Promise<boolean> {
+    if (this.accessSecretHashes.has(gameId)) return false;
+    this.accessSecretHashes.set(gameId, hash);
+    return true;
   }
 
   async getIpPlayProfile(ipAddress: string): Promise<{ totalGames: number; darkGames: number; ordinaryGames: number }> {

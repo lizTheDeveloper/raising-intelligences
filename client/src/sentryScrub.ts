@@ -56,7 +56,18 @@ export function stripRequestBody<T extends { request?: ScrubbableRequest }>(even
   return event;
 }
 
-type ScrubbableBreadcrumb = { data?: Record<string, unknown> };
+type ScrubbableBreadcrumb = { data?: Record<string, unknown>; message?: string };
+
+const MEETUP_PARAM = /([?&#]meetup=)[^&#\s"'<>]*/gi;
+
+/**
+ * A meetup code names the event a player tried to attend (privacy review F5).
+ * URLs already lose their query; this cuts the code out of any other text an
+ * event carries (a message or exception that quotes a URL).
+ */
+export function scrubMeetup(text: string): string {
+  return text.replace(MEETUP_PARAM, "$1[scrubbed]");
+}
 
 /**
  * Breadcrumbs ride along on every later event. Navigation crumbs carry
@@ -75,12 +86,22 @@ export function scrubBreadcrumb<B extends ScrubbableBreadcrumb>(crumb: B): B {
     delete data["http.query"];
     delete data["http.fragment"];
   }
+  if (typeof crumb.message === "string") crumb.message = scrubMeetup(crumb.message);
   return crumb;
 }
 
-/** stripRequestBody plus scrubBreadcrumb over any breadcrumbs already on the event. */
-export function scrubEvent<T extends { request?: ScrubbableRequest; breadcrumbs?: ScrubbableBreadcrumb[] }>(event: T): T {
+type ScrubbableText = {
+  message?: unknown;
+  transaction?: unknown;
+  exception?: { values?: Array<{ value?: unknown }> };
+};
+
+/** stripRequestBody plus scrubBreadcrumb over any breadcrumbs already on the event, and no meetup code in its text. */
+export function scrubEvent<T extends { request?: ScrubbableRequest; breadcrumbs?: ScrubbableBreadcrumb[] } & ScrubbableText>(event: T): T {
   stripRequestBody(event);
   for (const b of event.breadcrumbs ?? []) scrubBreadcrumb(b);
+  if (typeof event.message === "string") event.message = scrubMeetup(event.message);
+  if (typeof event.transaction === "string") event.transaction = scrubMeetup(event.transaction);
+  for (const v of event.exception?.values ?? []) if (typeof v.value === "string") v.value = scrubMeetup(v.value);
   return event;
 }

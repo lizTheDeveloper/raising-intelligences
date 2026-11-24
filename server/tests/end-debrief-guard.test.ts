@@ -55,9 +55,14 @@ describe("end-debrief phase guard", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ childName: "Guard" }),
     });
-    const json = (await res.json()) as { gameId: string };
+    const json = (await res.json()) as { gameId: string; secret: string };
+    secrets.set(json.gameId, json.secret);
     return json.gameId;
   }
+  // GET /state needs the game's own secret (privacy review F1).
+  const secrets = new Map<string, string>();
+  const readState = (gameId: string) =>
+    fetch(`${baseUrl}/api/game/${gameId}/state`, { headers: { "x-game-secret": secrets.get(gameId) ?? "" } });
 
   it("rejects end-debrief when the game is not in the debrief phase", async () => {
     const gameId = await newGame();
@@ -75,9 +80,9 @@ describe("end-debrief phase guard", () => {
   it("leaves the game's phase unchanged after a rejected end-debrief", async () => {
     const gameId = await newGame();
 
-    const before = await fetch(`${baseUrl}/api/game/${gameId}/state`).then((r) => r.json());
+    const before = await readState(gameId).then((r) => r.json());
     await fetch(`${baseUrl}/api/game/${gameId}/end-debrief`, { method: "POST" });
-    const after = await fetch(`${baseUrl}/api/game/${gameId}/state`).then((r) => r.json());
+    const after = await readState(gameId).then((r) => r.json());
 
     expect((after as { phase: string }).phase).toBe((before as { phase: string }).phase);
   });

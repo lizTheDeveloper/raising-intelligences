@@ -54,3 +54,19 @@ test("scrubEvent trims breadcrumbs carried on the event", () => {
   });
   assert.doesNotMatch(JSON.stringify(ev), /HC8|s3cret/);
 });
+
+// Privacy review F5: the meetup code must not survive in any text a browser
+// error report carries (the URL query was already cut).
+test("meetup codes are cut from URL, message, exception text, transaction and breadcrumbs", () => {
+  const ev = scrubEvent({
+    request: { url: "https://multiversegames.ai/raising-intelligences/?meetup=stmarys-prenatal" },
+    message: "boom at ?meetup=stmarys-prenatal",
+    transaction: "/raising-intelligences/?meetup=stmarys-prenatal",
+    exception: { values: [{ type: "Error", value: "load /?stranger=queue&meetup=stmarys-prenatal failed" }] },
+    breadcrumbs: [
+      { data: { to: "/?meetup=stmarys-prenatal" } },
+      { message: "navigated to /?meetup=stmarys-prenatal" },
+    ],
+  });
+  assert.doesNotMatch(JSON.stringify(ev), /stmarys-prenatal/);
+});

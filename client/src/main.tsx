@@ -7,6 +7,7 @@ import { CampusCabinet, setActiveCabinet } from "./campusCabinet";
 import { normalizeNullPayload, toReportableRejection, toReportableWindowError } from "./errorReporting";
 import { eventHasOnlyThirdPartyFrames } from "./errorNoise";
 import { scrubBreadcrumb, scrubEvent } from "./sentryScrub";
+import { umamiScriptAttributes } from "./umamiScript";
 import "./global.css";
 
 /**
@@ -90,19 +91,10 @@ if (import.meta.env.VITE_SENTRY_DSN) {
 }
 
 if (import.meta.env.PROD) {
-  // Load analytics from the host matching the domain the user actually reached.
-  // Some ISPs (e.g. Comcast) SNI-block the .xyz TLD, which is why we also serve
-  // on .ai — a user on multiversegames.ai cannot reach analytics.multiversestudios.xyz,
-  // so hardcoding either host silently drops half the traffic. Pick by domain;
-  // default to .ai (the non-blocked host) for anything else. Both hosts serve the
-  // same Umami instance and are allowlisted in the server CSP (see app.ts).
-  const analyticsHost = location.hostname.endsWith("multiversestudios.xyz")
-    ? "https://analytics.multiversestudios.xyz"
-    : "https://analytics.multiversegames.ai";
+  // Host by domain, and never the query string (privacy review F5): see umamiScript.ts.
   const s = document.createElement("script");
   s.defer = true;
-  s.src = `${analyticsHost}/script.js`;
-  s.dataset.websiteId = "70687d81-c604-4643-a6b6-9d0bccdba970";
+  for (const [name, value] of Object.entries(umamiScriptAttributes(location.hostname))) s.setAttribute(name, value);
   document.head.appendChild(s);
 }
 

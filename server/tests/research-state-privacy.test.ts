@@ -58,8 +58,11 @@ describe("GET /state on an adult research game never carries research data", () 
     expect((await call("POST", `/research/followup/${gameId}`, { email: EMAIL, consentFollowup: true, consentAiAnalysis: true }, secret)).status).toBe(204);
 
     const bodies: Record<string, string> = {};
-    bodies.state = await (await call("GET", `/game/${gameId}/state`)).text();
-    bodies.stateWithSecret = await (await call("GET", `/game/${gameId}/state`, undefined, secret)).text();
+    // Without the secret the read is refused outright (privacy review F1).
+    const refused = await call("GET", `/game/${gameId}/state`);
+    expect(refused.status).toBe(403);
+    bodies.refused = await refused.text();
+    bodies.state = await (await call("GET", `/game/${gameId}/state`, undefined, secret)).text();
     for (const wait of ["first", "post_scene", "next_scene"]) {
       const r = await call("GET", `/game/${gameId}/questions?wait=${wait}`, undefined, secret);
       expect(r.status).toBe(200);

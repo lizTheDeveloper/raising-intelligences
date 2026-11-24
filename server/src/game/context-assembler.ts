@@ -633,8 +633,11 @@ export function buildAlbumContext(
     childName: state.childName,
   });
 
+  // Shared conversation only. One album text is generated per game and both
+  // co-parents see it, so a private sidebar (a parent's, and the child's
+  // replies in it) never goes in. Solo games have no sidebar to lose.
   const allMessages = state.messages
-    .filter((m) => m.chatType === "shared" || m.chatType === "private")
+    .filter((m) => m.chatType === "shared")
     .map((m) => {
       const event = state.events.find(e => e.eventNumber === m.eventNumber);
       return `[Age ${event?.age ?? "?"}] ${senderLabel(m.sender)}: ${m.content}`;

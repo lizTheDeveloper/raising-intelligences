@@ -67,9 +67,14 @@ describe("repair of the last moment", () => {
     });
   async function create(birthYear: number | undefined) {
     const r = await post("/game", { childName: "Kai", relationshipType: "solo parent", ...(birthYear ? { birthYear } : {}) });
-    return (await r.json()) as { gameId: string; secret: string };
+    const g = (await r.json()) as { gameId: string; secret: string };
+    secrets.set(g.gameId, g.secret);
+    return g;
   }
-  const phaseOf = async (id: string) => ((await (await fetch(`${baseUrl}/game/${id}/state`)).json()) as { phase: string }).phase;
+  // GET /state needs the game's own secret (privacy review F1).
+  const secrets = new Map<string, string>();
+  const readState = (id: string) => fetch(`${baseUrl}/game/${id}/state`, { headers: { "x-game-secret": secrets.get(id) ?? "" } });
+  const phaseOf = async (id: string) => ((await (await readState(id)).json()) as { phase: string }).phase;
   async function waitFor(fn: () => boolean) {
     for (let i = 0; i < 200 && !fn(); i++) await new Promise((r) => setTimeout(r, 10));
     expect(fn()).toBe(true);
@@ -225,7 +230,8 @@ describe("repair of the last moment", () => {
   it("never exposes repairNote in GET /state", async () => {
     const g = await toDebrief();
     await repair(g, MSG);
-    const res = await fetch(`${baseUrl}/game/${g.gameId}/state`);
+    const res = await readState(g.gameId);
+    expect(res.status).toBe(200);
     const raw = await res.text();
     expect(raw).not.toContain("repairNote");
     expect(raw).not.toContain("REPAIR-SENTINEL");
@@ -271,7 +277,9 @@ describe("repair of the last moment", () => {
     await repair(g, "GROOM-PATTERN-PHRASE come closer, this is our secret");
     await post(`/game/${g.gameId}/end-debrief`, {});
     await post(`/game/${g.gameId}/next-event`, {});
-    const state = await (await fetch(`${baseUrl}/game/${g.gameId}/state`)).text();
+    const stateRes = await readState(g.gameId);
+    expect(stateRes.status).toBe(200);
+    const state = await stateRes.text();
     expect(state).not.toContain("sceneRepairLine");
     expect(state).not.toContain("GROOM-PATTERN-PHRASE");
     await (await post(`/game/${g.gameId}/end-chat`, {})).text();

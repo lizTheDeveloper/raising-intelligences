@@ -16,8 +16,8 @@ export class RestClient {
     return { status: res.status, json };
   }
 
-  async get<T = unknown>(path: string): Promise<{ status: number; json: T }> {
-    const res = await fetch(this.baseUrl + path);
+  async get<T = unknown>(path: string, headers: Record<string, string> = {}): Promise<{ status: number; json: T }> {
+    const res = await fetch(this.baseUrl + path, { headers });
     const json = (await res.json()) as T;
     return { status: res.status, json };
   }

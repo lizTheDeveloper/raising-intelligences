@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { saveGameSecret, saveResearchHint, getGameSecret } from "./gameSecret";
+import { gameReadHeaders, kidsWithProof, matrixAuthHeaders } from "../gameAuth";
 import { sendRepair, type RepairResult } from "../repairClient";
 import { readMemorySummary } from "../memorySummary";
 import { track, mark, secondsSince, bucketSeconds, bucketHours } from "../analytics";
@@ -49,19 +50,23 @@ export const THERAPY_TURN_CAP = 3;
 
 const API = import.meta.env.BASE_URL + "api";
 
+// Both kids routes are the signed-in user's own (privacy review F1): they send
+// a Matrix OpenID token, and each synced kid carries whatever proof of access
+// this device holds, so the server knows which games this account may read.
 export async function syncKidsToServer(userId: string): Promise<void> {
   const kids = getSavedKids();
   if (!kids.length) return;
+  const auth = await matrixAuthHeaders();
   await fetch(`${API}/user/${encodeURIComponent(userId)}/kids`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(kids.map((k) => ({ gameId: k.gameId, childName: k.childName }))),
+    headers: { "Content-Type": "application/json", ...auth },
+    body: JSON.stringify(kidsWithProof(kids)),
   }).catch(() => {});
 }
 
 export async function fetchServerKids(userId: string): Promise<SavedKid[]> {
   try {
-    const res = await fetch(`${API}/user/${encodeURIComponent(userId)}/kids`);
+    const res = await fetch(`${API}/user/${encodeURIComponent(userId)}/kids`, { headers: await matrixAuthHeaders() });
     if (!res.ok) return [];
     return await res.json();
   } catch {
@@ -195,7 +200,17 @@ export function useGame() {
    */
   const loadGame = useCallback(
     async (id: string, source?: "url" | "saved_list") => {
-      const res = await fetch(`${API}/game/${id}/state`);
+      let res = await fetch(`${API}/game/${id}/state`, { headers: await gameReadHeaders(id) });
+      // A game from before per-game secrets (privacy review F1) has none to
+      // send. Claim it once: the server mints a secret only while none exists.
+      if (res.status === 403 && !getGameSecret(id)) {
+        const claim = await fetch(`${API}/game/${id}/claim`, { method: "POST" }).catch(() => null);
+        const body = claim?.ok ? ((await claim.json().catch(() => null)) as { secret?: unknown } | null) : null;
+        if (typeof body?.secret === "string") {
+          saveGameSecret(id, body.secret);
+          res = await fetch(`${API}/game/${id}/state`, { headers: { "x-game-secret": body.secret } });
+        }
+      }
       if (!res.ok) return false;
       const data = await res.json();
       setGameId(data.id);
@@ -556,7 +571,10 @@ export function useGame() {
       // renders. Best effort: any failure just means no memory section.
       if (data.phase === "debrief") {
         let summary = "";
-        const fromServer = await readMemorySummary(`${API}/game/${gameId}/state`);
+        const readHeaders = await gameReadHeaders(gameId);
+        const fromServer = await readMemorySummary(`${API}/game/${gameId}/state`, (input, init) =>
+          fetch(input, { ...init, headers: readHeaders }),
+        );
         // Only a successful read advances the "last seen" summary. An identical
         // text is hidden on purpose: when the Memory Keeper fails for a scene
         // the server keeps the previous scene's summary, so an unchanged

@@ -4,6 +4,7 @@ import {
   buildPsychologistContext,
   buildWorldManagerContext,
   buildAlbumContext,
+  buildReportCardContext,
   buildLandmineSection,
 } from "../src/game/context-assembler.js";
 import { createGame, transition } from "../src/game/state-machine.js";
@@ -478,5 +479,37 @@ describe("buildAlbumContext", () => {
     expect(ctx.userMessage).not.toContain("solo-parent household");
     expect(ctx.userMessage).toContain("Luna became a negotiator.");
     expect(ctx.userMessage).toContain("Strengths: reads the room.");
+  });
+  // Round-3 privacy review: one album text is generated per game and shown to
+  // BOTH co-parents, so a parent's private sidebar with the child (and the
+  // child's private replies) must never be in its prompt.
+  // The report card is built from the identity timeline and the epilogue,
+  // never from the transcript, so a sidebar's words can't reach it directly.
+  // (They can still shape the identity documents the Psychologist writes,
+  // which is the child remembering them; see the 2.8.5 PR notes.)
+  it("the report card prompt carries no transcript, so no raw sidebar text", () => {
+    let state = createGame("Luna", "romantic partners");
+    state = transition(state, { type: "START_EVENT", event: testEvent });
+    state = transition(state, { type: "START_SIDEBAR", parent: "parent2" });
+    state = transition(state, { type: "PARENT_MESSAGE", sender: "parent2", content: "SIDEBAR-SENTINEL don't tell your dad" });
+    state = transition(state, { type: "END_SIDEBAR" });
+    const ctx = buildReportCardContext(state, "an epilogue");
+    expect(ctx.userMessage + ctx.system).not.toContain("SIDEBAR-SENTINEL");
+  });
+
+  it("never feeds a parent's private sidebar into the shared album prompt", () => {
+    let state = createGame("Luna", "romantic partners");
+    state = transition(state, { type: "START_EVENT", event: testEvent });
+    state = transition(state, { type: "PARENT_MESSAGE", sender: "parent1", content: "SHARED-LINE we can fix the vase" });
+    state = transition(state, { type: "START_SIDEBAR", parent: "parent2" });
+    state = transition(state, { type: "PARENT_MESSAGE", sender: "parent2", content: "SIDEBAR-SENTINEL don't tell your dad" });
+    state = transition(state, { type: "KID_MESSAGE", content: "SIDEBAR-KID-SENTINEL ok I won't" });
+    state = transition(state, { type: "END_SIDEBAR" });
+    expect(state.messages.filter((m) => m.chatType === "private").length).toBeGreaterThan(0);
+
+    const ctx = buildAlbumContext(state, "", "", "Jordan");
+    expect(ctx.userMessage).toContain("SHARED-LINE");
+    expect(ctx.userMessage).not.toContain("SIDEBAR-SENTINEL");
+    expect(ctx.userMessage).not.toContain("SIDEBAR-KID-SENTINEL");
   });
 });

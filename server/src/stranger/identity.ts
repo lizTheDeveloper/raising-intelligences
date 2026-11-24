@@ -1,5 +1,6 @@
-import { createHmac } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { pepperProblem } from "./config.js";
+import { PASS_TTL_MS } from "./matrix-identity.js";
 import { logger } from "../logger.js";
 import { createStripeRest, type StripeParams, type StripeRest } from "../payments/stripe.js";
 import type { ChildSafetyStore } from "../safety/child-safety/store.js";
@@ -110,6 +111,14 @@ export class AgeVerification {
   private readonly injectedApi?: IdentityApi;
   private readonly now: () => number;
   private readonly pepper: string;
+  /**
+   * Opaque return references (privacy review F5): Stripe's return_url used to
+   * carry `?meetup=<code>`, so Stripe held "this verified person tried to
+   * attend <code>". It now carries a random reference that only this process
+   * resolves back to the code, for as long as a pass lives. In memory, like
+   * the passes: a restart means signing in again anyway.
+   */
+  private readonly returnRefs = new Map<string, { meetupCode: string; expiresAt: number }>();
 
   constructor(deps: Deps) {
     this.store = deps.store;
@@ -129,6 +138,27 @@ export class AgeVerification {
     // Fail closed: never hash with a missing or guessable key.
     if (pepperProblem(this.pepper)) throw new Error("RI_STRANGER_PEPPER is missing or too short");
     return createHmac("sha256", this.pepper).update(value).digest("hex");
+  }
+
+  private issueReturnRef(meetupCode: string): string {
+    const now = this.now();
+    for (const [r, v] of this.returnRefs) if (v.expiresAt <= now) this.returnRefs.delete(r);
+    const ref = randomBytes(18).toString("base64url");
+    this.returnRefs.set(ref, { meetupCode, expiresAt: now + PASS_TTL_MS });
+    if (this.returnRefs.size > 10_000) this.returnRefs.delete(this.returnRefs.keys().next().value as string);
+    return ref;
+  }
+
+  /** The meetup code an ID-check return reference stands for, or null. */
+  meetupForReturnRef(ref: unknown): string | null {
+    if (typeof ref !== "string" || ref.length === 0 || ref.length > 64) return null;
+    const v = this.returnRefs.get(ref);
+    if (!v) return null;
+    if (v.expiresAt <= this.now()) {
+      this.returnRefs.delete(ref);
+      return null;
+    }
+    return v.meetupCode;
   }
 
   /** Is this address under a child-safety ban? */
@@ -186,7 +216,8 @@ export class AgeVerification {
       return { error: "That's the most checks for one day. Try again tomorrow.", reason: "rate_limited" };
     }
     const base = this.config().publicBaseUrl;
-    const returnUrl = `${base}/?stranger=identity${meetupCode ? `&meetup=${encodeURIComponent(meetupCode)}` : ""}`;
+    // No meetup code leaves for Stripe: an opaque reference brings the player back to it.
+    const returnUrl = `${base}/?stranger=identity${meetupCode ? `&ref=${this.issueReturnRef(meetupCode)}` : ""}`;
     // Only an opaque hash goes to Stripe: no Matrix id, no name, no email.
     const session = await api.createVerificationSession({
       type: "document",
