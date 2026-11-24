@@ -37,6 +37,8 @@ export const DERIVED_RUN = 6;
 export const QUOTED_WORDS = 2;
 export const PARAPHRASE_STEMS = 3;
 export const PRIVATE_ONLY_STEMS = 2;
+/** Private-only words may be short ("car", "hit"): being absent from everything said in the open is the signal. */
+const PRIVATE_ONLY_MIN = 3;
 export const MAX_DROPPED = 0.4;
 const VOICES = "## The Voices in Their Head";
 const QUOTES = "## Notable Quotes That Stuck";
@@ -76,8 +78,14 @@ export function normaliseWords(text: string): string[] {
   return tokens(text).map((t) => t.norm);
 }
 
-const STOP = new Set(`a about above after again against all almost also always am an and any are around as at away back be became because become been before being below between both but by came can could did didnt do does doesnt doing done dont down during each even ever every few for from get gets getting go goes going gone got had has have having he her here hers herself him himself his how however i if in into is isnt it its itself just keep kept know knew known later least less let like little made make makes making many may me might more most much must my myself never no nor not nothing now of off often on once one only or other others our ours out over own quite rather really said same say says see seems she should since so some something sometimes still such take than that thats the their theirs them themselves then there these they thing things think this those though through time times to together too told toward under until up upon us very was wasnt way we well went were what whatever when where whether which while who whom whose why will with without would wouldnt yet you your yours yourself years year day days life people every everything someone anyone always also
-mother father mom mum dad mama papa mommy mummy daddy momma parent parents child children kid kids family home house love loved loves loving son daughter baby grandma grandpa granny nana grandmother grandfather aunt uncle brother sister boy girl man woman`.split(/\s+/));
+const STOP = new Set(`a about above after again against all almost also always am an and any are around as at away back be became because become been before being below between both but by came can could did didnt do does doesnt doing done dont down during each even ever every few for from get gets getting go goes going gone got had has have having he her here hers herself him himself his how however i if in into is isnt it its itself just keep kept know knew known later least less let like little made make makes making many may me might more most much must my myself never no nor not nothing now of off often on once one only or other others our ours out over own quite rather really said same say says see seems she should since so some something sometimes still such take than that thats the their theirs them themselves then there these they thing things think this those though through time times to together too told toward under until up upon us very was wasnt way we well went were what whatever when where whether which while who whom whose why will with without would wouldnt yet you your yours yourself years year day days life people every everything someone anyone always also`.split(/\s+/));
+
+/**
+ * Relationship and person words. They count in every overlap and paraphrase
+ * check ("my dad hit my mother at home" is exactly what must be caught); they
+ * are only kept from looking like typed names at the start of a sentence.
+ */
+const FAMILY = new Set(`mother father mom mum dad mama papa mommy mummy daddy momma parent parents child children kid kids family home house love loved loves loving son daughter baby grandma grandpa granny nana grandmother grandfather aunt uncle brother sister boy girl man woman`.split(/\s+/));
 
 /** A light Porter-style stem: enough to match "lullabies"/"lullaby" and "nights"/"night". */
 function stem(w: string): string {
@@ -197,9 +205,9 @@ function copiedSpans(text: string, banned: Set<string>, n: number): Span[] {
 
 const SECRET = /\b(secrets?|secretly|confid(?:e|ed|es|ing|ant|ante|ants|ential|entially)|privately|in private|never told|confess\w*|just between)\b/i;
 
-function stems(text: string, exclude: Set<string>): Set<string> {
+function stems(text: string, exclude: Set<string>, minLength = 4): Set<string> {
   const out = new Set<string>();
-  for (const w of normaliseWords(text)) if (w.length >= 4 && !STOP.has(w) && !exclude.has(w)) out.add(stem(w));
+  for (const w of normaliseWords(text)) if (w.length >= minLength && !STOP.has(w) && !exclude.has(w)) out.add(stem(w));
   return out;
 }
 
@@ -280,7 +288,8 @@ function positioned(text: string): Array<Tok & { initial: boolean }> {
   const boldEnd = bold ? bold[0].length : -1;
   return toks.map((t, i) => {
     const gap = text.slice(i === 0 ? 0 : toks[i - 1].end, t.start);
-    const initial = i === 0 || t.end <= boldEnd || /[:;—–(\[“"‘«„]|\s-\s|\*\*/.test(gap);
+    const firstAfterLabel = boldEnd >= 0 && t.start >= boldEnd && (i === 0 || toks[i - 1].end <= boldEnd);
+    const initial = i === 0 || t.end <= boldEnd || firstAfterLabel || /[:;—–(\[“"‘«„]|\s-\s/.test(gap);
     return { ...t, initial };
   });
 }
@@ -299,7 +308,7 @@ function capsMid(texts: readonly string[]): Set<string> {
 
 function lowerWords(texts: readonly string[]): Set<string> {
   const out = new Set<string>();
-  for (const t of texts) for (const k of tokens(t)) if (!isCap(k.raw)) out.add(k.norm);
+  for (const t of texts) for (const k of tokens(t)) if (!isCap(k.raw)) { out.add(k.norm); out.add(baseNorm(k.raw)); }
   return out;
 }
 
@@ -323,7 +332,7 @@ function nameProblem(sentence: string, ctx: NameContext): boolean {
     if (!t.initial) return true;
     if (HONORIFIC.has(w)) return true;
     if (ctx.typedCapsMid.has(w) || ctx.partCapsMid.has(w)) return true;
-    if (ctx.typedLower.has(w) && !ctx.reference.has(w) && !STOP.has(w)) return true;
+    if (ctx.typedLower.has(w) && !ctx.reference.has(w) && !STOP.has(w) && !FAMILY.has(w)) return true;
   }
   return false;
 }
@@ -375,7 +384,7 @@ function scrubPart(text: string, checks: Checks): string | null {
       : SECRET.test(s) ? "secret"
       : nameProblem(s, checks.names) ? "name"
       : checks.privateStems.some((p) => shared(mine, p) >= PARAPHRASE_STEMS) ? "paraphrase"
-      : checks.privateOnly.some((p) => shared(mine, p) >= PRIVATE_ONLY_STEMS) ? "private-only words"
+      : checks.privateOnly.some((p) => shared(stems(s, checks.stemExclude, PRIVATE_ONLY_MIN), p) >= PRIVATE_ONLY_STEMS) ? "private-only words"
       : null;
     if (reason) { dropped.add(u); checks.explain?.push({ reason, sentence: s }); }
   }
@@ -451,7 +460,7 @@ export function buildShareSnapshot(
   explain?: Array<{ reason: string; sentence: string }>,
 ): ShareSnapshot {
   const child = new Set(normaliseWords(src.childName));
-  const typedTokens = new Set(src.typed.flatMap((t) => normaliseWords(t)));
+  const typedTokens = new Set(src.typed.flatMap((t) => tokens(t).flatMap((k) => [k.norm, baseNorm(k.raw)])));
   const generated = new Set<string>();
   for (const t of [...src.scenes, ...src.childLines]) {
     for (const k of tokens(t)) if (isCap(k.raw)) generated.add(baseNorm(k.raw));
@@ -465,13 +474,13 @@ export function buildShareSnapshot(
   const stemExclude = new Set([...child, ...playerWords]);
   // Words the game says in the open: shared chat (typed lines that aren't private talk), scenes, the child's shared lines.
   const privateSet = new Set(src.privateTalk);
-  const openStems = stems([...src.typed.filter((t) => !privateSet.has(t)), ...src.scenes, ...src.childLines].join("\n"), new Set());
+  const openStems = stems([...src.typed.filter((t) => !privateSet.has(t)), ...src.scenes, ...src.childLines].join("\n"), new Set(), PRIVATE_ONLY_MIN);
   const checks: Checks = {
     typedRuns: runSet([...src.typed, ...src.privateTalk], TYPED_RUN),
     derivedRuns: runSet(src.derived, DERIVED_RUN),
     privateStems: privateSentences.map((s) => stems(s, stemExclude)).filter((s) => s.size >= PARAPHRASE_STEMS),
     privateOnly: privateSentences
-      .map((s) => new Set([...stems(s, stemExclude)].filter((x) => !openStems.has(x))))
+      .map((s) => new Set([...stems(s, stemExclude, PRIVATE_ONLY_MIN)].filter((x) => !openStems.has(x))))
       .filter((s) => s.size >= PRIVATE_ONLY_STEMS),
     stemExclude,
     explain,
