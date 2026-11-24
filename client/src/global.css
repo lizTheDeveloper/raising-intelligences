@@ -1724,6 +1724,17 @@ button.stranger-report { align-self: flex-end; font-size: 0.85em; }
 .host-event h2 strong { font-weight: 500; }
 .host-event-actions { justify-content: flex-start; margin-top: 4px; }
 .host-codes { border-top: 1px solid var(--fg-dim); padding-top: 12px; }
+/* Share codes (host tools §5): the share step, the account page and the host's code view */
+.share-step { margin-top: 24px; }
+.share-answers .btn { min-width: 0; }
+.share-snapshot { width: 100%; text-align: left; }
+.share-snapshot h2, .share-snapshot h3, .share-snapshot h4 { font-weight: 400; letter-spacing: 1px; margin: 12px 0 4px; }
+.share-snapshot p { margin: 0 0 8px; }
+.share-watermark { font-size: 11px; color: var(--fg-dim); margin: 0 0 10px; letter-spacing: 0.5px; }
+.code-view { user-select: none; -webkit-user-select: none; }
+.account-meetup, .account-game { border-top: 1px solid var(--fg-dim); padding-top: 10px; margin-top: 10px; }
+.account-card, .account-panel { border-left: 1px solid var(--fg-dim); padding-left: 12px; margin: 8px 0; }
+.account-panel .event-card-actions { justify-content: flex-start; }
 .deck-questions { width: 100%; text-align: left; padding-left: 24px; }
 .deck-questions li { margin-bottom: 10px; }
 

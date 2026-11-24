@@ -217,12 +217,12 @@ export function lowerLevel(kind: "studio" | "outside", level: number): number | 
 }
 
 /**
- * The card says "nothing on this page is counted", and the host portal and
- * deck are untracked too: on these landings no pageview is sent and the
- * session beats don't start. Custom stranger-step events (the counted funnel
+ * The card says "nothing on this page is counted", and the host portal, the
+ * deck and the stranger account page (`?stranger=account`) are untracked too:
+ * on these landings no pageview is sent and the session beats don't start. Custom stranger-step events (the counted funnel
  * the card describes) still send once the player moves past the card.
  */
 export function untrackedLanding(search: string): boolean {
   const q = new URLSearchParams(search);
-  return q.has("meetup") || q.has("host") || q.has("deck");
+  return q.has("meetup") || q.has("host") || q.has("deck") || q.get("stranger") === "account";
 }

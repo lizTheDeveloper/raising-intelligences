@@ -47,6 +47,8 @@ export interface HostStore {
   getCode(id: string): Promise<ShareCodeRow | null>;
   codeByGame(gameId: string): Promise<ShareCodeRow | null>;
   codeByHash(hash: string): Promise<ShareCodeRow | null>;
+  /** The codes a host or guest reader has redeemed. */
+  codesForReader(hostPersonId: string): Promise<ShareCodeRow[]>;
   updateCode(id: string, patch: Partial<ShareCodeRow>): Promise<void>;
   /** Binds the code to its first reader, atomically. True if this reader holds it now. */
   redeemCode(id: string, hostPersonId: string, at: number, accessUntil: number): Promise<boolean>;
@@ -181,6 +183,7 @@ export class InMemoryHostStore implements HostStore {
   async getCode(id: string) { return clone(this.codes.get(id) ?? null); }
   async codeByGame(gameId: string) { return clone([...this.codes.values()].find((c) => c.gameId === gameId) ?? null); }
   async codeByHash(hash: string) { return clone([...this.codes.values()].find((c) => c.codeHash === hash) ?? null); }
+  async codesForReader(hostPersonId: string) { return clone([...this.codes.values()].filter((c) => c.redeemedBy === hostPersonId)); }
   async updateCode(id: string, patch: Partial<ShareCodeRow>) {
     const c = this.codes.get(id);
     if (c) Object.assign(c, clone(patch));
@@ -463,6 +466,9 @@ export class PgHostStore implements HostStore {
   async codeByHash(hash: string) {
     const r = await this.db.query(`SELECT * FROM share_codes WHERE code_hash = $1`, [hash]);
     return r.rows[0] ? toCode(r.rows[0]) : null;
+  }
+  async codesForReader(hostPersonId: string) {
+    return (await this.db.query(`SELECT * FROM share_codes WHERE redeemed_by = $1`, [hostPersonId])).rows.map(toCode);
   }
   async updateCode(id: string, patch: Partial<ShareCodeRow>) {
     const sets: string[] = [];

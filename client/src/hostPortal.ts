@@ -54,7 +54,7 @@ const isStr = (v: unknown): v is string => typeof v === "string";
 const isTime = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const isRec = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
-function asFunnel(v: unknown): PublishedFunnel | null | undefined | false {
+export function asFunnel(v: unknown): PublishedFunnel | null | undefined | false {
   if (v === undefined) return undefined;
   if (v === null) return null;
   if (!isRec(v)) return false;

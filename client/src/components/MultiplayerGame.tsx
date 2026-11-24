@@ -18,6 +18,8 @@ import { FamilyAlbum } from "./FamilyAlbum";
 import { PartnerPaymentGate } from "./PartnerPaymentGate";
 import { StrangerNoShow } from "./StrangerQueue";
 import { HandleExchange, StrangerGameEnded, StrangerReport } from "./StrangerExchange";
+import { ShareStep } from "./ShareStep";
+import { handlesAfterShare } from "../shareCodes";
 
 const API = import.meta.env.BASE_URL + "api";
 
@@ -1003,11 +1005,25 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   }
 
   if (state.phase === "report_card") {
+    // Host tools end screens, in order: report card → share step → handle exchange (if on).
+    const shareOn = !!(state.strangerRun && state.meetupEnd?.share);
+    const handlesOn = state.meetupEnd ? state.meetupEnd.handles : true;
     return (
       <div className="app fade-in">
         {strangerControls}
         <ReportCard reportCard={mp.reportCard} childName={state.childName} />
-        {state.strangerRun && <HandleExchange state={mp.handleState} onAnswer={mp.answerHandle} onStatus={mp.handleStatus} />}
+        {shareOn && (
+          <ShareStep
+            host={state.meetupEnd?.host ?? "your host"}
+            view={mp.shareView}
+            preview={mp.sharePreview}
+            error={mp.shareError}
+            onDecide={mp.shareDecision}
+          />
+        )}
+        {state.strangerRun && handlesOn && handlesAfterShare(shareOn, mp.shareLatest) && (
+          <HandleExchange state={mp.handleState} onAnswer={mp.answerHandle} onStatus={mp.handleStatus} />
+        )}
       </div>
     );
   }

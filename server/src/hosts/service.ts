@@ -4,7 +4,7 @@ import { normalizeMeetupCode, readStrangerConfig } from "../stranger/config.js";
 import type { StrangerService, StrangerHostTools } from "../stranger/service.js";
 import type { PartnerPayments } from "../payments/partner-payments.js";
 import { buildCard, liveTerms, reconcileTerms, termsFor, type CardPayload, type LiveSettings } from "./card.js";
-import { ackTokenHash, eventCodeHash, newAckToken, newEventCode, opaqueRef } from "./codes.js";
+import { ackTokenHash, eventCodeHash, newAckToken, newEventCode, opaqueRef, shareCodeHash } from "./codes.js";
 import { MAX_EVENT_MS, readHostToolsConfig, type HostToolsConfig } from "./config.js";
 import type { HostStore } from "./store.js";
 import type { EventStatus, HostEvent, HostPerson, Level } from "./types.js";
@@ -115,8 +115,12 @@ export class HostTools implements StrangerHostTools {
     return e;
   }
 
+  /** Display names of hosts and guest readers, for the end screens (sync). */
+  private names = new Map<string, string>();
+
   private async init(): Promise<void> {
     for (const e of await this.store.listEvents()) this.remember(e);
+    for (const p of await this.store.listPeople()) this.names.set(p.id, p.displayName);
     if (this.active()) {
       await this.syncEnvEvents();
       await this.reconcileAll();
@@ -207,6 +211,11 @@ export class HostTools implements StrangerHostTools {
     const c = normalizeMeetupCode(code);
     if (!c) return null;
     return this.byHash.get(eventCodeHash(this.pepper, c)) ?? null;
+  }
+
+  /** The stored hash of a share code's words. */
+  shareHash(normalizedWords: string): string {
+    return shareCodeHash(this.pepper, normalizedWords);
   }
 
   /** A per-viewer opaque reference (H11): never a raw id in a host or account response. */
@@ -382,11 +391,13 @@ export class HostTools implements StrangerHostTools {
   }
 
   /** Which end screens follow the report card in a game at this event (frozen terms). */
-  endScreens(eventId: string): { handles: boolean; share: boolean; learning: boolean } | null {
+  endScreens(eventId: string): { handles: boolean; share: boolean; learning: boolean; host?: string } | null {
     const e = this.eventById(eventId);
     if (!e) return null;
     const t = e.frozenTerms ?? liveTerms(e, this.live());
-    return { handles: t.handleExchange, share: false, learning: false };
+    const readerId = e.kind === "outside" ? e.hostPersonId : e.guestReaderId;
+    const host = e.shareCodes && readerId ? this.names.get(readerId) : undefined;
+    return { handles: t.handleExchange, share: e.shareCodes && !!host, learning: false, ...(host ? { host } : {}) };
   }
 
   handleExchangeOn(eventId: string | null | undefined): boolean {
@@ -424,6 +435,7 @@ export class HostTools implements StrangerHostTools {
       agreementAt: now, status: "approved", createdAt: now,
     };
     if (!(await this.store.createPerson(p))) return { ok: false, status: 409, error: "This account is already a host or guest reader." };
+    this.names.set(p.id, p.displayName);
     logger.info("host_person_created", { id: p.id });
     return { ok: true, value: p };
   }

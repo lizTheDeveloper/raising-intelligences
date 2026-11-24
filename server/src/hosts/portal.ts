@@ -7,6 +7,7 @@ import { PUBLISH_AFTER_MS } from "./config.js";
 import { publishFunnel, type FunnelCounts } from "./funnel.js";
 import { liveTerms } from "./card.js";
 import type { HostTools } from "./service.js";
+import { CODE_NOT_AVAILABLE, ShareService } from "./share.js";
 import type { HostEvent, HostPerson, PublishedFunnel } from "./types.js";
 
 /** The RI discussion deck (spec §B.6): static, from the studio, no player data. */
@@ -135,7 +136,7 @@ export class HostPortal {
   }
 }
 
-export function createHostPortalRoutes(hosts: HostTools, portal: HostPortal, limit: RequestHandler): Router {
+export function createHostPortalRoutes(hosts: HostTools, portal: HostPortal, limit: RequestHandler, share?: ShareService): Router {
   const router = Router();
   const hide = (next: NextFunction) => next("router");
   router.use(["/host", "/events/deck"], (_req: Request, res: Response, next: NextFunction) => {
@@ -163,6 +164,33 @@ export function createHostPortalRoutes(hosts: HostTools, portal: HostPortal, lim
 
   router.post("/host/events", limit, withPerson(async (person, _req, res) => {
     res.json({ displayName: person.displayName, events: await portal.eventsFor(person) });
+  }));
+
+  // Share codes (§5.2). Every failure: the same 404, the same body, after the same floor.
+  router.post("/host/codes/redeem", limit, async (req: Request, res: Response) => {
+    const started = Date.now();
+    let codeRef: string | null = null;
+    let signedIn = true;
+    try {
+      await hosts.ready;
+      const body = (req.body ?? {}) as { pass?: unknown; words?: unknown };
+      const person = await portal.person(body.pass);
+      signedIn = !!person;
+      if (person && share) codeRef = await share.redeem(person, body.words);
+    } catch {
+      codeRef = null;
+    }
+    await ShareService.floor(started);
+    // Not signed in says nothing about any code; it only sends the host back to sign-in.
+    if (!signedIn) return void res.status(401).json({ error: NOT_SIGNED_IN });
+    if (!codeRef) return void res.status(404).json({ error: CODE_NOT_AVAILABLE });
+    res.json({ codeRef });
+  });
+
+  router.post("/host/codes/view", limit, withPerson(async (person, req, res) => {
+    const v = share ? await share.viewCode(person, (req.body as { codeRef?: unknown } | undefined)?.codeRef) : null;
+    if (!v) return void res.status(404).json({ error: CODE_NOT_AVAILABLE });
+    res.json({ snapshot: v.snapshot, until: v.until, watermark: { reader: v.reader, openedAt: v.openedAt } });
   }));
 
   // Pause, close, lower: the host of that event only (never a guest reader), at any time.
