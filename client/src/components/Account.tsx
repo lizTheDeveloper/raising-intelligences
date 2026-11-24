@@ -1,4 +1,4 @@
-import { loadDeck } from "./Deck";
+import { probeHostTools } from "./Deck";
 import { useCallback, useEffect, useState } from "react";
 import { formatDate } from "../hostPortal";
 import {
@@ -60,13 +60,13 @@ async function post<T>(path: string, body: unknown): Promise<{ status: number; b
  * the normal title screen, as if there were no parameter.
  */
 /**
- * Are host tools on? The deck is the probe (a 200 only when they are). A
- * sign-in probe can't tell: with host tools off, an unknown /api path answers
- * a JSON 401 too.
+ * Are host tools on? GET /host/on is the probe (a 200 saying so only when
+ * they are; the deck is served in every mode now). A sign-in probe can't
+ * tell: with host tools off, an unknown /api path answers a JSON 401 too.
  */
 export async function probeAccount(): Promise<boolean> {
   try {
-    return (await loadDeck()) !== null;
+    return await probeHostTools();
   } catch {
     return false;
   }

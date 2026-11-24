@@ -1,4 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap');
+/* IBM Plex Mono, served from this site (persona tests, finding 17): no request to Google. */
+@import "@fontsource/ibm-plex-mono/300.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource/ibm-plex-mono/300-italic.css";
+@import "@fontsource/ibm-plex-mono/400-italic.css";
 
 * {
   margin: 0;
@@ -1742,6 +1747,9 @@ button.stranger-report { align-self: flex-end; font-size: 0.85em; }
 .account-panel .event-card-actions { justify-content: flex-start; }
 .deck-questions { width: 100%; text-align: left; padding-left: 24px; }
 .deck-questions li { margin-bottom: 10px; }
+.deck-play { width: 100%; text-align: left; margin: 8px 0 12px; }
+.deck-play h2 { font-weight: 400; letter-spacing: 1px; margin: 0 0 4px; font-size: 1em; }
+.deck-play p { margin: 0 0 6px; }
 
 /* The deck prints as plain questions on white: no buttons, theme or grain. Only pages showing the deck. */
 @media print {

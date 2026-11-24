@@ -94,8 +94,13 @@ To check the host side: a host, guest reader or promoter who joins their own eve
 - **Studio pause:** a pause made through the admin PATCH is the studio's. The host can't resume it ("the studio paused this meetup…"); only the admin can.
 - **Every portal request re-checks the person.** The request is refused if the person is no longer approved by the admin, is no longer a verified adult, is on the ban list, or is suspended from stranger mode. Revoking the account's stranger passes also revokes its host pass.
 - **Publish a funnel early** (for testing, once the event has been closed for 24 hours): `curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" $BASE/api/admin/host-tools/events/<id>/publish`
-- **Discussion deck alone:** `http://localhost:5173/?deck=1`. No sign-in is needed, and it prints cleanly.
+- **Discussion deck alone:** `http://localhost:5173/?deck=1`. No sign-in is needed, and it prints cleanly. It ends with a "to play" block giving the game's address and how two people start ("play with a partner", send the link). `GET /api/events/deck` is served in **every** mode, so the deck loads with `RI_STRANGER_MODE` unset too (check it by restarting without `RI_STRANGER_MODE=meetup`). `?host=1` and `?stranger=account` wait on `GET /api/host/on` instead, which is a 200 only in meetup mode and otherwise falls through like a path never built.
 - **Untracked pages:** the meetup card, the portal and the deck send no Umami pageview and don't start the session beats.
+- **Analytics (production builds only; dev never loads Umami):**
+  - With Global Privacy Control on (`navigator.globalPrivacyControl === true`), no Umami script is added and `track()` sends and queues nothing.
+  - Every payload passes through `window.__riUmamiBeforeSend` (the tracker's `data-before-send`). In a tab whose session began at a meetup card, the portal, the deck or the account page (`sessionStorage.ri_meetup_session`), the referrer is blank. Elsewhere it keeps the referring page without its query. No url or referrer ever carries a query or fragment.
+  - To check without sending anything: build with `NODE_ENV=production npx vite build`, serve `client/dist` under `/raising-intelligences/` (a Playwright `context.route` that fulfils from `dist` and forwards `/api` to the harness server works), answer `analytics.*/script.js` with the real tracker, and fulfil `analytics.*/api/send` locally while recording each payload. Land on `?meetup=<code>` with a `referer` from another site and check that no payload has a referrer or mentions the code.
+- **Fonts:** IBM Plex Mono is bundled (`@fontsource/ibm-plex-mono`); the CSP allows fonts and styles from this site only, so no page asks Google for anything.
 
 ## 3c. Share codes, end to end
 

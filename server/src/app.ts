@@ -22,7 +22,7 @@ import { StrangerService } from "./stranger/service.js";
 import { HostTools } from "./hosts/service.js";
 import { devMatrixVerifier, readDevHarness } from "./dev/harness.js";
 import { createHostToolsRoutes, createHostToolsAdminRoutes } from "./hosts/routes.js";
-import { HostPortal, createHostPortalRoutes, createHostPortalAdminRoutes } from "./hosts/portal.js";
+import { HostPortal, createDeckRoute, createHostPortalRoutes, createHostPortalAdminRoutes } from "./hosts/portal.js";
 import { ShareService } from "./hosts/share.js";
 import { AccountService, createAccountRoutes } from "./hosts/account.js";
 import { LearningService } from "./hosts/learning.js";
@@ -159,7 +159,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
           // see the domain-aware loader in client/src/main.tsx.
           scriptSrc: ["'self'", "https://analytics.multiversestudios.xyz", "https://analytics.multiversegames.ai"],
           // Inline styles used by React component library; Google Fonts stylesheet
-          styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
           // Portrait images arrive as data URIs and blob: URLs during generation
           imgSrc: ["'self'", "data:", "blob:"],
           // SSE and API calls go back to the same origin; the analytics script
@@ -174,7 +174,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
             "https://analytics.multiversegames.ai",
             "https://errors.multiversegames.ai",
           ],
-          fontSrc: ["'self'", "https://fonts.gstatic.com"],
+          fontSrc: ["'self'"],
           mediaSrc: ["'self'"],
           // Web cabinets: campus.themultiverse.school frames the game in an
           // iframe (see "Campus cabinet" in README.md). Nobody else may.
@@ -334,6 +334,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   // router-level requireAdmin answers every /api path that reaches them.
   app.use("/api", createStripeWebhookRoute(payments));
   app.use("/api", createIdentityWebhookRoute(stranger));
+  app.use("/api", createDeckRoute(rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false })));
   app.use("/api", createStrangerRoutes(stranger, rateLimit({ windowMs: 60_000, max: 30, standardHeaders: true, legacyHeaders: false })));
   let share: ShareService | null = null;
   let learning: LearningService | null = null;

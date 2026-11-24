@@ -189,12 +189,17 @@ describe("the host portal", () => {
     expect((await h.post(`/host/events/${ref}/close`, { pass: devPass })).body.status).toBe("closed");
   });
 
-  it("the deck is static, and hidden like everything else when host tools are off", async () => {
+  it("the deck is static and served whatever the mode (Marisol's handout); host screens stay hidden when host tools are off", async () => {
     const r = await h.get("/events/deck");
     expect(r.body.deck).toEqual(JSON.parse(JSON.stringify(DECK)));
     expect(r.body.deck.questions).toHaveLength(10);
+    expect((await h.get("/host/on")).body).toEqual({ on: true });
     h.hostCfg = { ...h.hostCfg, enabled: false };
-    expect((await h.get("/events/deck")).text).toBe((await h.get("/never-built-path")).text);
+    const off = await h.get("/events/deck");
+    expect(off.status).toBe(200);
+    expect(off.body.deck).toEqual(JSON.parse(JSON.stringify(DECK)));
+    // The probe the portal and the account page wait on: like a path never built.
+    expect((await h.get("/host/on")).text).toBe((await h.get("/never-built-path")).text);
     expect((await h.post("/host/pass", { openIdToken: `tok:${DEV}` })).text).toBe((await h.post("/never-built-path", {})).text);
   });
 

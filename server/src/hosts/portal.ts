@@ -145,13 +145,14 @@ export class HostPortal {
 export function createHostPortalRoutes(hosts: HostTools, portal: HostPortal, limit: RequestHandler, share?: ShareService): Router {
   const router = Router();
   const hide = (next: NextFunction) => next("router");
-  router.use(["/host", "/events/deck"], (_req: Request, res: Response, next: NextFunction) => {
+  router.use(["/host"], (_req: Request, res: Response, next: NextFunction) => {
     if (!hosts.active()) return hide(next);
     res.setHeader("Cache-Control", "no-store");
     next();
   });
 
-  router.get("/events/deck", limit, (_req: Request, res: Response) => void res.json({ deck: DECK }));
+  // What ?host=1 and ?stranger=account wait on before painting anything: off, a path never built.
+  router.get("/host/on", limit, (_req: Request, res: Response) => void res.json({ on: true }));
 
   router.post("/host/pass", limit, async (req: Request, res: Response) => {
     await hosts.ready;
@@ -236,6 +237,20 @@ export function createHostPortalAdminRoutes(hosts: HostTools, portal: HostPortal
     const f = await portal.publishIfDue(e);
     if (!f) return void res.status(409).json({ error: "the funnel publishes 24 hours after the event closes", publishableAt: portal.publishableAt(e) });
     res.json({ funnel: f });
+  });
+  return router;
+}
+
+/**
+ * The deck (§B.6), in every mode (persona tests, finding 10): a link on a
+ * class handout has to work whenever the site is up. Static, no player data,
+ * no sign-in, nothing logged.
+ */
+export function createDeckRoute(limit: RequestHandler): Router {
+  const router = Router();
+  router.get("/events/deck", limit, (_req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.json({ deck: DECK });
   });
   return router;
 }

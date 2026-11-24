@@ -7,7 +7,7 @@ import { CampusCabinet, setActiveCabinet } from "./campusCabinet";
 import { normalizeNullPayload, toReportableRejection, toReportableWindowError } from "./errorReporting";
 import { eventHasOnlyThirdPartyFrames } from "./errorNoise";
 import { scrubBreadcrumb, scrubEvent } from "./sentryScrub";
-import { umamiScriptAttributes } from "./umamiScript";
+import { BEFORE_SEND_HOOK, analyticsAllowed, meetupSession, umamiBeforeSend, umamiScriptAttributes } from "./umamiScript";
 import { untrackedLanding } from "./meetupCard";
 import "./global.css";
 
@@ -91,7 +91,14 @@ if (import.meta.env.VITE_SENTRY_DSN) {
   });
 }
 
-if (import.meta.env.PROD) {
+// Global Privacy Control: no Umami at all (no script, no events). A session
+// that began at a meetup card, the portal, the deck or the account page sends
+// no referrer, and no payload carries a query (see umamiScript.ts).
+const analyticsOn = analyticsAllowed(navigator as Navigator & { globalPrivacyControl?: unknown });
+const fromMeetup = meetupSession(untrackedLanding(location.search), (() => { try { return window.sessionStorage; } catch { return undefined; } })());
+if (import.meta.env.PROD && analyticsOn) {
+  (window as unknown as Record<string, unknown>)[BEFORE_SEND_HOOK] = (type: string, payload: { url?: unknown; referrer?: unknown }) =>
+    umamiBeforeSend(type, payload, { meetupSession: fromMeetup });
   // Host by domain, and never the query string (privacy review F5): see umamiScript.ts.
   const s = document.createElement("script");
   s.defer = true;
@@ -105,7 +112,7 @@ if (import.meta.env.PROD) {
 // Umami script has landed: analytics.ts queues until the global appears (which
 // is the whole reason that queue exists — this script is inserted dynamically
 // and so resolves well after first render).
-if (!untrackedLanding(location.search)) startSessionTracking();
+if (analyticsOn && !untrackedLanding(location.search)) startSessionTracking();
 
 // Web cabinets: inert unless framed with ?cabinet=campus (see campusCabinet.ts).
 // The pass-exchange path comes from vite's configured base, never the URL.

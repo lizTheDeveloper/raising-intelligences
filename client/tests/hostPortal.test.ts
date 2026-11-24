@@ -10,6 +10,8 @@ import {
   funnelLine,
   hostActions,
   hostRoute,
+  gameAddress,
+  deckPlayLines,
   loadHostPass,
   saveHostPass,
   showShareCodes,
@@ -154,6 +156,17 @@ test("host pass: kept in session storage, cleared, and blocked storage is surviv
   assert.doesNotThrow(() => saveHostPass("p", t));
   assert.equal(loadHostPass(t), null);
   assert.equal(loadHostPass(null), null);
+});
+
+test("the deck's printout says where the game is and how two people start (Marisol)", () => {
+  assert.equal(gameAddress("https://multiversegames.ai", "/raising-intelligences/"), "multiversegames.ai/raising-intelligences");
+  assert.equal(gameAddress("http://localhost:5173", "/"), "localhost:5173");
+  const lines = deckPlayLines("multiversegames.ai/raising-intelligences");
+  assert.equal(lines.heading, "to play");
+  assert.deepEqual(lines.steps, [
+    "open multiversegames.ai/raising-intelligences on a phone or laptop.",
+    "to play together, choose \"play with a partner\" and send the other person the link it gives you. to play alone, choose \"play solo\".",
+  ]);
 });
 
 test("hostRoute: ?host=1 and ?deck=1 only", () => {
