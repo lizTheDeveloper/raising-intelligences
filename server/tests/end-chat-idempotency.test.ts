@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestServer, type TestServer } from "./helpers/test-server.js";
 import { RestClient } from "./helpers/rest-client.js";
 import { createGame } from "../src/game/state-machine.js";
+import { secretHeaders } from "./helpers/game-auth.js";
 
 /**
  * Regression for the top production error on Raising Intelligences:
@@ -33,6 +34,7 @@ describe("end-chat idempotency", () => {
   it("returns the current phase (not an error) when the game already left family_chat", async () => {
     const state = { ...createGame("Luna"), phase: "debrief" as const };
     await server.memRepo.saveGame(state);
+    api.auth = await secretHeaders(server.memRepo, state.id);
 
     const { json } = await api.postSSE<{ phase: string }>(`/api/game/${state.id}/end-chat`);
     expect(json.phase).toBe("debrief");

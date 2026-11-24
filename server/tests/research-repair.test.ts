@@ -59,12 +59,16 @@ describe("repair of the last moment", () => {
     if (saved === undefined) delete process.env.RI_RESEARCH_ENABLED; else process.env.RI_RESEARCH_ENABLED = saved;
   });
 
-  const post = (path: string, body: unknown, secret?: string) =>
-    fetch(`${baseUrl}${path}`, {
+  // Every write carries the game's own secret unless a test says otherwise
+  // (null: send none).
+  const post = (path: string, body: unknown, secret?: string | null) => {
+    const s = secret === null ? undefined : secret ?? secrets.get(/\/game\/([^/]+)\//.exec(path)?.[1] ?? "");
+    return fetch(`${baseUrl}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Forwarded-For": `198.51.100.${++ip % 250}`, ...(secret ? { "x-game-secret": secret } : {}) },
+      headers: { "Content-Type": "application/json", "X-Forwarded-For": `198.51.100.${++ip % 250}`, ...(s ? { "x-game-secret": s } : {}) },
       body: typeof body === "string" ? body : JSON.stringify(body),
     });
+  };
   async function create(birthYear: number | undefined) {
     const r = await post("/game", { childName: "Kai", relationshipType: "solo parent", ...(birthYear ? { birthYear } : {}) });
     const g = (await r.json()) as { gameId: string; secret: string };
@@ -90,7 +94,7 @@ describe("repair of the last moment", () => {
     return g;
   }
   const repair = (g: { gameId: string; secret: string }, message: unknown, ...rest: [secret?: string]) =>
-    post(`/game/${g.gameId}/repair`, { message }, rest.length ? rest[0] : g.secret);
+    post(`/game/${g.gameId}/repair`, { message }, rest.length ? (rest[0] ?? null) : g.secret);
   const repairRows = async (id: string) => (await repo.listAnswers(id)).filter((a) => a.kind === "repair");
 
   it("is refused outside the debrief phase", async () => {
@@ -218,13 +222,15 @@ describe("repair of the last moment", () => {
     });
   });
 
-  it.each([["missing", undefined], ["wrong", "f".repeat(64)]])("an adult research game with a %s secret repairs but stores nothing", async (_n, secret) => {
+  // A repair note shapes the child's next scene: a caller who holds only the
+  // game id must not be able to plant one (it was accepted, unstored, before).
+  it.each([["missing", undefined], ["wrong", "f".repeat(64)]])("a %s secret is refused: no repair, nothing stored", async (_n, secret) => {
     const g = await toDebrief();
-    expect((await repair(g, MSG, secret)).status).toBe(204);
+    expect((await repair(g, MSG, secret)).status).toBe(403);
     expect(await repairRows(g.gameId)).toHaveLength(0);
     await post(`/game/${g.gameId}/end-debrief`, {});
     await post(`/game/${g.gameId}/next-event`, {});
-    expect(mock.worldManagerPrompts[mock.worldManagerPrompts.length - 1]).toContain(MSG);
+    expect(mock.worldManagerPrompts[mock.worldManagerPrompts.length - 1]).not.toContain(MSG);
   });
 
   it("never exposes repairNote in GET /state", async () => {

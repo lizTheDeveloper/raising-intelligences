@@ -40,6 +40,8 @@ describe("E2E: solo REST playthrough", () => {
     expect(json.gameId).toBeTruthy();
     gameId = json.gameId;
     gameSecret = json.secret;
+    // Every read and write of the game carries its secret, as the client does.
+    api.auth = { "x-game-secret": json.secret };
   });
 
   it("generates the first event from the world manager", async () => {
@@ -126,7 +128,8 @@ describe("E2E: solo REST playthrough", () => {
   // report card), so they're exercised on their own game. startAdultConversation
   // builds the scenario event locally — no LLM call — so this stays offline.
   it("starts an adult conversation scenario from a fresh game", async () => {
-    const created = await api.post<{ gameId: string }>("/api/game", { childName: "Luna" });
+    const created = await api.post<{ gameId: string; secret: string }>("/api/game", { childName: "Luna" });
+    api.auth = { "x-game-secret": created.json.secret };
     const { json } = await api.post<{ phase: string; event: GameEvent }>(
       `/api/game/${created.json.gameId}/adult-chat`,
       { scenario: "Luna calls home, unsure whether to take a job across the country." }

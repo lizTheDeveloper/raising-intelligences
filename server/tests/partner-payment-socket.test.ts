@@ -120,7 +120,7 @@ describe("partner payment over the socket", () => {
   });
 
   it("stops the opening at 'due' and generates nothing for the child", async () => {
-    const { p1, p2, gameId } = await pair();
+    const { p1, p2, gameId, hostToken } = await pair();
     const dueHost = p1.waitFor<ViewerState>(E.STATE, (s) => s.payment?.status === "due");
     const duePartner = p2.waitFor<ViewerState>(E.STATE, (s) => s.payment?.status === "due");
     await bothSubmit(p1, p2);
@@ -130,8 +130,8 @@ describe("partner payment over the socket", () => {
     expect(mock.seedCalls).toBe(0);
     expect(mock.worldManagerCalls).toBe(0);
     expect(built.games.get(gameId)?.phase).toBe("event_intro");
-    // REST side doors are shut too.
-    expect((await post(`/api/game/${gameId}/next-event`, {})).status).toBe(402);
+    // REST side doors are shut too, even to a seat.
+    expect((await post(`/api/game/${gameId}/next-event`, {}, { "x-player-token": hostToken })).status).toBe(402);
   });
 
   it("does not charge before the partner joins, or before they finish the quiz", async () => {
@@ -238,6 +238,7 @@ describe("partner payment over the socket", () => {
     const res = await post("/api/game", { childName: "Solo", relationshipType: "solo parent", birthYear: 1990 });
     expect(res.status).toBe(200);
     const id = res.body.gameId as string;
-    expect((await post(`/api/game/${id}/next-event`, {})).status).not.toBe(402);
+    const secret = res.body.secret as string;
+    expect((await post(`/api/game/${id}/next-event`, {}, { "x-game-secret": secret })).status).toBe(200);
   });
 });

@@ -70,7 +70,7 @@ describe("debrief state after end-chat", () => {
     const { secret, hash } = newGameSecret();
     await repo.recordAccessSecretHash(state.id, hash);
 
-    const end = await fetch(`${baseUrl}/api/game/${state.id}/end-chat`, { method: "POST" });
+    const end = await fetch(`${baseUrl}/api/game/${state.id}/end-chat`, { method: "POST", headers: { "x-game-secret": secret } });
     expect(end.status).toBe(200);
     await end.text();
 

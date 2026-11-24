@@ -17,6 +17,7 @@ import { MockLLMClient } from "../src/llm/mock.js";
 import { InMemoryGameRepository } from "../src/db/repository.js";
 import { PARENT_MESSAGE_CAP, createGame, transition } from "../src/game/state-machine.js";
 import type { GameState } from "../src/types.js";
+import { secretHeaders } from "./helpers/game-auth.js";
 
 const testEvent = {
   eventNumber: 1,
@@ -99,7 +100,7 @@ describe("solo REST scene-end — detection, stripping, auto-end (MUL-59)", () =
   async function send(gameId: string, content: string): Promise<SSEFrame[]> {
     const res = await fetch(`${baseUrl}/api/game/${gameId}/message`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Forwarded-For": freshIp() },
+      headers: { "Content-Type": "application/json", "X-Forwarded-For": freshIp(), ...(await secretHeaders(repo, gameId)) },
       body: JSON.stringify({ sender: "parent1", content }),
     });
     return readSSE(res);

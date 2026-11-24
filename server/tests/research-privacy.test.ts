@@ -49,7 +49,7 @@ describe("research privacy: /state and deletion", () => {
     const body = (await res.json()) as { gameId: string; secret: string };
     const p = await fetch(`${baseUrl}/game/${body.gameId}/personality`, {
       method: "POST",
-      headers: json,
+      headers: { ...json, "x-game-secret": body.secret },
       body: JSON.stringify({
         ocean: [3, 3, 3, 3, 3],
         confessional1: SENTINEL,

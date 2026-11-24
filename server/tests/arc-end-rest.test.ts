@@ -27,6 +27,7 @@ import { MockLLMClient } from "../src/llm/mock.js";
 import { InMemoryGameRepository } from "../src/db/repository.js";
 import { createGame } from "../src/game/state-machine.js";
 import type { GameEvent, GameState } from "../src/types.js";
+import { secretHeaders } from "./helpers/game-auth.js";
 
 let ipSeq = 0;
 /** A fresh synthetic source IP per rate-limited request (/epilogue is one). */
@@ -111,7 +112,7 @@ describe("solo arc end — /next-event backstop and epilogue recovery", () => {
   async function postNextEvent(gameId: string) {
     const res = await fetch(`${baseUrl}/api/game/${gameId}/next-event`, {
       method: "POST",
-      headers: { "X-Forwarded-For": freshIp() },
+      headers: { "X-Forwarded-For": freshIp(), ...(await secretHeaders(repo, gameId)) },
     });
     return { status: res.status, json: (await res.json()) as Record<string, unknown> };
   }
@@ -119,7 +120,7 @@ describe("solo arc end — /next-event backstop and epilogue recovery", () => {
   async function postEpilogue(gameId: string) {
     const res = await fetch(`${baseUrl}/api/game/${gameId}/epilogue`, {
       method: "POST",
-      headers: { "X-Forwarded-For": freshIp() },
+      headers: { "X-Forwarded-For": freshIp(), ...(await secretHeaders(repo, gameId)) },
     });
     return readSSE(res);
   }

@@ -4,12 +4,15 @@
  */
 
 export class RestClient {
+  /** Credential headers sent with every request (a game's secret, a seat token). */
+  public auth: Record<string, string> = {};
+
   constructor(private readonly baseUrl: string) {}
 
   async post<T = unknown>(path: string, body?: unknown): Promise<{ status: number; json: T }> {
     const res = await fetch(this.baseUrl + path, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...this.auth },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const json = (await res.json()) as T;
@@ -17,7 +20,7 @@ export class RestClient {
   }
 
   async get<T = unknown>(path: string, headers: Record<string, string> = {}): Promise<{ status: number; json: T }> {
-    const res = await fetch(this.baseUrl + path, { headers });
+    const res = await fetch(this.baseUrl + path, { headers: { ...this.auth, ...headers } });
     const json = (await res.json()) as T;
     return { status: res.status, json };
   }
@@ -31,7 +34,7 @@ export class RestClient {
   async postSSE<T = unknown>(path: string, body?: unknown): Promise<{ status: number; json: T }> {
     const res = await fetch(this.baseUrl + path, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...this.auth },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (!res.body) throw new Error(`No response body from ${path}`);
@@ -71,7 +74,7 @@ export class RestClient {
   ): Promise<{ chunks: string; kidResponse: string; messagesRemaining: number }> {
     const res = await fetch(`${this.baseUrl}/api/game/${gameId}/message`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...this.auth },
       body: JSON.stringify({ sender, content }),
     });
     if (!res.body) throw new Error("No response body from /message");

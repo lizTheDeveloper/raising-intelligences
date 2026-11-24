@@ -132,20 +132,25 @@ describe("intervention ladder — full drive through the real REST routes", () =
     });
   }
 
+  // Every write needs the game's own secret, as the client sends it.
+  const secrets = new Map<string, string>();
+  const auth = (path: string) => ({ "x-game-secret": secrets.get(/\/game\/([^/]+)\//.exec(path)?.[1] ?? "") ?? "" });
+
   async function createGame(): Promise<string> {
     const createRes = await fetch(`${baseUrl}/api/game`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Forwarded-For": freshIp() },
       body: JSON.stringify({ childName: "Kai" }),
     });
-    const { gameId } = (await createRes.json()) as { gameId: string };
+    const { gameId, secret } = (await createRes.json()) as { gameId: string; secret: string };
+    secrets.set(gameId, secret);
     return gameId;
   }
 
   async function sendOneMessage(gameId: string): Promise<void> {
     const res = await fetch(`${baseUrl}/api/game/${gameId}/message`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Forwarded-For": freshIp() },
+      headers: { "Content-Type": "application/json", "X-Forwarded-For": freshIp(), ...auth(`/game/${gameId}/`) },
       body: JSON.stringify({ sender: "parent1", content: "hello" }),
     });
     await drainSSE(res);
@@ -154,7 +159,7 @@ describe("intervention ladder — full drive through the real REST routes", () =
   async function endChat(gameId: string): Promise<void> {
     const res = await fetch(`${baseUrl}/api/game/${gameId}/end-chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Forwarded-For": freshIp() },
+      headers: { "Content-Type": "application/json", "X-Forwarded-For": freshIp(), ...auth(`/game/${gameId}/`) },
       body: JSON.stringify({}),
     });
     await drainSSE(res);
@@ -163,7 +168,7 @@ describe("intervention ladder — full drive through the real REST routes", () =
   async function postJson(path: string, body: unknown = {}): Promise<any> {
     const res = await fetch(`${baseUrl}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Forwarded-For": freshIp() },
+      headers: { "Content-Type": "application/json", "X-Forwarded-For": freshIp(), ...auth(`${baseUrl}${path}`) },
       body: JSON.stringify(body),
     });
     return res.json();
@@ -172,7 +177,7 @@ describe("intervention ladder — full drive through the real REST routes", () =
   async function therapyMessage(gameId: string, content: string): Promise<SSEFrame[]> {
     const res = await fetch(`${baseUrl}/api/game/${gameId}/therapy-message`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Forwarded-For": freshIp() },
+      headers: { "Content-Type": "application/json", "X-Forwarded-For": freshIp(), ...auth(`/game/${gameId}/`) },
       body: JSON.stringify({ content }),
     });
     return readSSE(res);
@@ -183,7 +188,7 @@ describe("intervention ladder — full drive through the real REST routes", () =
   async function driveOneScene(gameId: string): Promise<string> {
     const nextRes = await fetch(`${baseUrl}/api/game/${gameId}/next-event`, {
       method: "POST",
-      headers: { "X-Forwarded-For": freshIp() },
+      headers: { "X-Forwarded-For": freshIp(), ...auth(`/game/${gameId}/`) },
     });
     const nextJson = (await nextRes.json()) as { phase: string };
     expect(nextJson.phase).toBe("family_chat");

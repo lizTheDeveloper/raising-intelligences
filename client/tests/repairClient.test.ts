@@ -32,6 +32,14 @@ test("omits the secret header when the device has none", async () => {
   assert.equal("x-game-secret" in headers, false);
 });
 
+test("sends the device's game credential when it holds no secret (a seat, or the owner on another device)", async () => {
+  const { calls, fetchFn } = fake(() => new Response(null, { status: 204 }));
+  const authHeaders = { "x-matrix-openid": "tok" };
+  assert.equal(await sendRepair({ gameId: "g", secret: null, authHeaders, message: "hi", base: "/", fetchFn }), "sent");
+  const headers = calls[0].init?.headers as Record<string, string>;
+  assert.equal(headers["x-matrix-openid"], "tok");
+});
+
 test("returns false, and does not throw, on an error status", async () => {
   for (const status of [400, 409, 500]) {
     const { fetchFn } = fake(() => new Response("{}", { status }));

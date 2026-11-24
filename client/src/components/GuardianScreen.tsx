@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { ChildPortrait } from "./ChildPortrait";
+import { gameReadHeaders } from "../gameAuth";
 import { WaitQuestions } from "./WaitQuestionCard";
 import { track, mark, secondsSince, bucketSeconds } from "../analytics";
 import { getWeightedFragments } from "../data/child-fragments";
@@ -477,7 +478,7 @@ export function GuardianScreen({ childName, gameId, eventReady, onReady, onSubmi
     try {
       const res = await fetch(`${base}api/game/${gameId}/personality`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(await gameReadHeaders(gameId)) },
         body: JSON.stringify({
           ocean: oceanAnswers,
           confessional1,

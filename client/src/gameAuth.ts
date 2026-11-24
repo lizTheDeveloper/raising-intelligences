@@ -48,7 +48,11 @@ export interface GameReadDeps {
 
 const defaultDeps = (): GameReadDeps => ({ getSecret: getGameSecret, loadResume, matrix: currentMatrix() });
 
-/** The headers that read this game: its secret, else this player's seat token for it, else a Matrix sign-in. */
+/**
+ * The headers that read or write this game: its secret, else this player's
+ * seat token for it, else a Matrix sign-in. Every REST call on a game sends
+ * them (a game id alone opens nothing).
+ */
 export async function gameReadHeaders(gameId: string, deps: GameReadDeps = defaultDeps()): Promise<Record<string, string>> {
   const secret = deps.getSecret(gameId);
   if (secret) return { "x-game-secret": secret };

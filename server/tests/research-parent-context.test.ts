@@ -183,15 +183,21 @@ describe("parent context through the HTTP flow", () => {
   afterEach(() => { if (saved === undefined) delete process.env.RI_RESEARCH_ENABLED; else process.env.RI_RESEARCH_ENABLED = saved; });
 
   let ip = 0;
-  const post = (path: string, body: unknown, secret?: string) =>
-    fetch(`${baseUrl}${path}`, {
+  // Every write carries the game's own secret, as the client sends it.
+  const secrets = new Map<string, string>();
+  const post = (path: string, body: unknown, secret?: string) => {
+    const s = secret ?? secrets.get(/\/game\/([^/]+)\//.exec(path)?.[1] ?? "");
+    return fetch(`${baseUrl}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Forwarded-For": `192.0.2.${++ip}`, ...(secret ? { "x-game-secret": secret } : {}) },
+      headers: { "Content-Type": "application/json", "X-Forwarded-For": `192.0.2.${++ip}`, ...(s ? { "x-game-secret": s } : {}) },
       body: JSON.stringify(body),
     });
+  };
   async function create(birthYear?: number) {
     const r = await post("/game", { childName: "Kai", relationshipType: "solo parent", ...(birthYear ? { birthYear } : {}) });
-    return (await r.json()) as { gameId: string; secret: string };
+    const g = (await r.json()) as { gameId: string; secret: string };
+    secrets.set(g.gameId, g.secret);
+    return g;
   }
   const answer = (id: string, secret: string, questionId: string, value: string, extra: Record<string, unknown> = {}) =>
     post(`/game/${id}/answers`, { questionId, version: 1, sceneIndex: 0, answer: value, shownAt: Date.now(), ...extra }, secret);
