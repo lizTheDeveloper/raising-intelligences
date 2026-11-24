@@ -18,7 +18,8 @@ import { logPaywallState, readPaymentConfig } from "./payments/config.js";
 const REQUIRED_ENV_VARS = ["OPENROUTER_API_KEY"];
 
 function validateConfig(): void {
-  const missing = REQUIRED_ENV_VARS.filter((k) => !process.env[k]);
+  // The local harness's canned model (never in production) makes no model calls.
+  const missing = readDevHarness().mockLlm ? [] : REQUIRED_ENV_VARS.filter((k) => !process.env[k]);
   if (missing.length) {
     logger.error("missing_env_vars", { missing });
     process.exit(1);

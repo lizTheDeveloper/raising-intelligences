@@ -332,7 +332,7 @@ export class HostTools implements StrangerHostTools {
   }
 
   /** The queue's checks at an event (StrangerMatching.join). */
-  async join(subject: string, meetupCode: string | null): Promise<{ ok: true } | { ok: false; status: number; error: string; card?: unknown }> {
+  async join(subject: string, meetupCode: string | null): Promise<{ ok: true; eventId: string; cardVersion: number } | { ok: false; status: number; error: string; card?: unknown }> {
     const e = this.eventForCode(meetupCode);
     if (!e) return { ok: false, status: 404, error: "Not found" };
     if (await this.isHostOrGuest(e, subject)) return { ok: false, status: 403, error: NEUTRAL_REFUSAL };
@@ -345,7 +345,24 @@ export class HostTools implements StrangerHostTools {
       return { ok: false, status: 409, error: "this meetup is full." };
     }
     await this.store.markQueued(subject, e.id, this.now());
-    return { ok: true };
+    return { ok: true, eventId: e.id, cardVersion: e.cardVersion };
+  }
+
+  /**
+   * May a queued entry still be matched (synchronous, from the registry)?
+   * A code that moved on to a new period, or a card version the player didn't
+   * accept, is "stale": back to the card. Closed is "closed". Paused or not
+   * yet open holds the entry unmatched.
+   */
+  entryState(eventId: string, cardVersion: number | null): "ok" | "paused" | "closed" | "stale" {
+    const e = this.byId.get(eventId);
+    if (!e) return "closed";
+    if (e.source === "env" && (e.codeHash.startsWith("retired:") || (e.closedAt === null && this.now() >= e.closesAt))) return "stale";
+    const s = this.status(e);
+    if (s === "closed") return "closed";
+    if (cardVersion !== null && cardVersion !== e.cardVersion) return "stale";
+    if (s === "paused" || s === "not_open_yet") return "paused";
+    return "ok";
   }
 
   /** At JOIN_GAME: the host or guest reader never sits in a game at their own event (H12). */

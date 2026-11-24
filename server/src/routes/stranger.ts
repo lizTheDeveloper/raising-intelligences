@@ -106,6 +106,16 @@ export function createStrangerRoutes(stranger: StrangerService, limit: RequestHa
   });
 
   router.post("/stranger/queue/poll", limit, async (req: Request, res: Response, next: NextFunction) => {
+    // Host tools: a meetup that closed (or moved to a new period) under someone
+    // already waiting there. Their own live pass still gets the neutral ending,
+    // or "read the card again", instead of a silent dead end. Anyone else still
+    // sees the never-built answer.
+    const raw = (req.body as { pass?: unknown } | undefined)?.pass;
+    if (stranger.hosts?.active() && (await stranger.resolveLive(raw)) === "hidden") {
+      const held = stranger.passes.resolve(raw);
+      const r = held ? stranger.matching?.pollWaiting(held.subject) : null;
+      if (r) return void res.json(r);
+    }
     const p = await withPass(req, res, next);
     if (!p) return;
     res.json(stranger.matching?.poll(p.subject) ?? { status: "none" });

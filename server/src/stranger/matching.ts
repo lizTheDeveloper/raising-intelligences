@@ -52,7 +52,12 @@ export interface QueueEntry {
    * played on the terms both players accepted.
    */
   eventId?: string | null;
+  /** The card version this entry's player accepted at that event. */
+  cardVersion?: number | null;
 }
+
+/** Where a queued entry at an event stands now (host tools). */
+export type EntryState = "ok" | "paused" | "closed" | "stale";
 
 export interface StrangerRunSeats {
   gameId: string;
@@ -70,8 +75,15 @@ export interface StrangerRunSeats {
  * current card acknowledged, not its host or guest reader).
  */
 export interface MatchingGate {
-  join(subject: string, meetupCode: string | null): Promise<{ ok: true } | { ok: false; status: number; error: string; card?: unknown }>;
+  /** On success, the event and the card version that were checked (what the player accepted). */
+  join(subject: string, meetupCode: string | null): Promise<{ ok: true; eventId?: string; cardVersion?: number } | { ok: false; status: number; error: string; card?: unknown }>;
   eventIdFor(meetupCode: string | null): string | null;
+  /**
+   * Synchronous: may this entry still be matched? "paused" (or not open yet)
+   * holds it unmatched; "closed" ends it; "stale" (the card changed, or the
+   * code moved on to a new period) sends its player back to the card.
+   */
+  entryState(eventId: string, cardVersion: number | null): EntryState;
   joinWindowMs(eventId: string): number | null;
 }
 
@@ -98,7 +110,11 @@ interface Run {
 export type PollResult =
   | { status: "waiting"; position: number; count: number }
   | { status: "matched"; gameId: string; slot: StrangerSlot; playerToken: string; partnerName: string }
-  | { status: "none" };
+  | { status: "none" }
+  /** Host tools: the meetup closed while waiting. Neutral: no reason given. */
+  | { status: "ended" }
+  /** Host tools: the meetup's card changed while waiting; read it again, then join again. */
+  | { status: "card_changed" };
 
 const SLOTS: StrangerSlot[] = ["parent1", "parent2"];
 
@@ -114,6 +130,8 @@ export class StrangerMatching {
    * would tell them who reported them.
    */
   private held = new Map<string, QueueEntry>();
+  /** Entries taken out of the queue by their event (closed, or a new card), told on their next poll. */
+  private notices = new Map<string, "ended" | "card_changed">();
   private chain: Promise<void> = Promise.resolve();
 
   constructor(
@@ -138,13 +156,16 @@ export class StrangerMatching {
     const subject = await this.deps.age.subjectHash(mxid);
     const gate = this.deps.gate?.();
     let eventId: string | null = null;
+    let cardVersion: number | null = null;
     if (gate) {
       const g = await gate.join(subject, meetupCode);
       if (!g.ok) return g;
-      eventId = gate.eventIdFor(meetupCode);
+      eventId = g.eventId ?? gate.eventIdFor(meetupCode);
+      cardVersion = g.cardVersion ?? null;
+      this.notices.delete(mxid);
     }
     if (await this.deps.store.isSuspended(subject)) {
-      this.hold({ mxid, subject, meetupCode, displayName, childName, queuedAt: this.now(), seq: ++this.seq, lastSeen: this.now(), eventId });
+      this.hold({ mxid, subject, meetupCode, displayName, childName, queuedAt: this.now(), seq: ++this.seq, lastSeen: this.now(), eventId, cardVersion });
       return { ok: true };
     }
     if (this.matched.has(mxid)) return { ok: true };
@@ -153,11 +174,11 @@ export class StrangerMatching {
       existing.displayName = displayName;
       existing.childName = childName;
       existing.lastSeen = this.now();
-      if (gate) existing.eventId = eventId; // re-joined under a new card (a new period): its terms now
+      if (gate) { existing.eventId = eventId; existing.cardVersion = cardVersion; } // re-joined under a new card: its terms now
       return { ok: true };
     }
     const now = this.now();
-    this.queue.push({ mxid, subject, meetupCode, displayName, childName, queuedAt: now, seq: ++this.seq, lastSeen: now, eventId });
+    this.queue.push({ mxid, subject, meetupCode, displayName, childName, queuedAt: now, seq: ++this.seq, lastSeen: now, eventId, cardVersion });
     await this.runMatch(meetupCode);
     return { ok: true };
   }
@@ -167,10 +188,47 @@ export class StrangerMatching {
     this.held.delete(mxid);
   }
 
+  private entryState(e: QueueEntry): EntryState {
+    if (!e.eventId) return "ok";
+    const gate = this.deps.gate?.();
+    // Host tools switched off under a queued entry: nothing to match it at.
+    if (!gate) return "closed";
+    return gate.entryState(e.eventId, e.cardVersion ?? null);
+  }
+
+  /** Takes an entry out because of its event, and tells its player on the next poll. */
+  private endEntry(e: QueueEntry, state: "closed" | "stale"): void {
+    this.leave(e.mxid);
+    this.notices.set(e.mxid, state === "closed" ? "ended" : "card_changed");
+  }
+
+  /** Applies each waiting entry's event state; returns those that may be paired now. */
+  private matchable(entries: QueueEntry[]): QueueEntry[] {
+    const out: QueueEntry[] = [];
+    for (const e of entries) {
+      const st = this.entryState(e);
+      if (st === "closed" || st === "stale") this.endEntry(e, st);
+      else if (st === "ok") out.push(e);
+      // "paused": stays queued, unmatched.
+    }
+    return out;
+  }
+
   private hold(entry: QueueEntry): void {
     this.queue = this.queue.filter((e) => e.mxid !== entry.mxid);
     const prior = this.held.get(entry.mxid);
     this.held.set(entry.mxid, { ...(prior ?? entry), lastSeen: this.now() });
+  }
+
+  /**
+   * For a waiting entry (or one just taken out) at an event its pass can no
+   * longer see: the "ended" / "card_changed" result, or null if there's none.
+   */
+  pollWaiting(mxid: string): PollResult | null {
+    const inQueue = this.queue.some((e) => e.mxid === mxid && e.eventId) || !!this.held.get(mxid)?.eventId;
+    if (!inQueue && !this.notices.has(mxid)) return null;
+    const r = this.poll(mxid);
+    return r.status === "ended" || r.status === "card_changed" ? r : null;
   }
 
   poll(mxid: string): PollResult {
@@ -184,9 +242,25 @@ export class StrangerMatching {
       this.matched.delete(mxid);
     }
     this.pruneIdle();
+    const notice = this.notices.get(mxid);
+    if (notice && !this.queue.some((e) => e.mxid === mxid) && !this.held.has(mxid)) {
+      this.notices.delete(mxid);
+      return { status: notice };
+    }
     const mine = this.held.get(mxid) ?? this.queue.find((e) => e.mxid === mxid);
     if (!mine) return { status: "none" };
     mine.lastSeen = this.now();
+    if (mine.eventId) {
+      const st = this.entryState(mine);
+      if (st === "closed" || st === "stale") {
+        this.leave(mxid);
+        return { status: st === "closed" ? "ended" : "card_changed" };
+      }
+      // Resumed (or just opened): a pass that pairs whoever is ready, since nobody new may join to start one.
+      if (st === "ok" && this.queue.includes(mine) && this.queue.some((e) => e !== mine && e.eventId === mine.eventId)) {
+        void this.runMatch(mine.meetupCode);
+      }
+    }
     // Privacy review F2: a held (suspended) player is counted, and placed,
     // exactly like a waiting one, in their own count and in everyone else's.
     // Leaving them out made the difference between phones (or a host watching
@@ -331,7 +405,7 @@ export class StrangerMatching {
         if (!pool.ok) this.leave(e.mxid);
         else if (await this.deps.store.isSuspended(e.subject)) this.hold(e);
       }
-      const eligible = this.sorted(meetupCode);
+      const eligible = this.matchable(this.sorted(meetupCode));
       let pair: [QueueEntry, QueueEntry] | null = null;
       outer: for (let i = 0; i < eligible.length; i++) {
         for (let j = i + 1; j < eligible.length; j++) {
@@ -354,6 +428,7 @@ export class StrangerMatching {
   private async makeRun(host: QueueEntry, partner: QueueEntry): Promise<boolean> {
     let gameId: string;
     let tokens: Record<StrangerSlot, string>;
+    if (this.matchable([host, partner]).length < 2) return true;
     const gate = this.deps.gate?.() ?? null;
     const eventId = host.eventId ?? gate?.eventIdFor(host.meetupCode) ?? null;
     // At an event, the run names the event, never its code.
@@ -371,7 +446,9 @@ export class StrangerMatching {
       if (!(await this.deps.age.adultForPool(e.mxid)).ok) this.leave(e.mxid);
       else if (await this.deps.store.isSuspended(e.subject)) this.hold(e);
     }
-    if (!this.queue.includes(host) || !this.queue.includes(partner)) {
+    // The event may have closed, paused or changed its card while the game was being made (no await after this).
+    const stillMatchable = this.queue.includes(host) && this.queue.includes(partner) && this.matchable([host, partner]).length === 2;
+    if (!stillMatchable) {
       // One left (or stopped being eligible) while the game was being made:
       // throw it away, keep the other queued.
       this.cacheSeats(gameId, { gameId, meetupCode: storedCode, parent1: host.subject, parent2: partner.subject, eventId });

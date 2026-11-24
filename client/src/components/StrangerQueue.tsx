@@ -18,7 +18,11 @@ async function call<T>(path: string, body: unknown): Promise<{ status: number; b
 type Poll =
   | { status: "waiting"; position: number; count: number }
   | { status: "matched"; gameId: string; slot: string; playerToken: string; partnerName: string }
-  | { status: "none" };
+  | { status: "none" }
+  /** Host tools: the meetup closed while waiting (no reason is given). */
+  | { status: "ended" }
+  /** Host tools: the meetup's card changed while waiting: read it again, then join again. */
+  | { status: "card_changed" };
 
 function rememberMeetup(code: string | null): void {
   try { if (code) sessionStorage.setItem(MEETUP_KEY, code); } catch { /* private window */ }
@@ -51,6 +55,17 @@ export function StrangerQueue({ pass, meetup, onBack, onCardChanged }: {
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const apply = (p: Poll) => {
+    if (p.status === "card_changed") {
+      setPoll({ status: "none" });
+      void (async () => {
+        const r = meetup
+          ? await fetch(`${API}/events/card?meetup=${encodeURIComponent(meetup)}`).then(async (x) => (x.ok ? asCard((await x.json()).card) : null)).catch(() => null)
+          : null;
+        if (r && onCardChanged) onCardChanged(r, () => void tryJoin());
+        else setPoll({ status: "ended" });
+      })();
+      return;
+    }
     setPoll(p);
     if (p.status === "matched") {
       track("stranger_matched");
@@ -93,6 +108,16 @@ export function StrangerQueue({ pass, meetup, onBack, onCardChanged }: {
     setPoll({ status: "none" });
     onBack();
   };
+
+  if (poll.status === "ended") {
+    return (
+      <div className="lobby stranger-mode" role="status">
+        <h1>this meetup isn't open anymore</h1>
+        <p className="dim">nothing was started, and nothing was charged.</p>
+        <button className="btn btn-secondary" onClick={() => window.location.assign(import.meta.env.BASE_URL)} style={{ marginTop: 12 }}>back</button>
+      </div>
+    );
+  }
 
   if (poll.status === "waiting") {
     return (
