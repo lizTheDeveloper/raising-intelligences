@@ -111,7 +111,7 @@ export class ShareService {
    * code made (or not).
    */
   private async secondYes(gameId: string, ctx: { run: EventRun; event: HostEvent }): Promise<void> {
-    const delayMs = REVEAL_MIN_MS + this.rng() * (REVEAL_MAX_MS - REVEAL_MIN_MS);
+    const delayMs = Math.round(REVEAL_MIN_MS + this.rng() * (REVEAL_MAX_MS - REVEAL_MIN_MS)); // whole ms: BIGINT columns
     this.drawn.push({ gameId, delayMs });
     const secret = this.hosts.config().shareCodeSecret;
     if (!secret) return;

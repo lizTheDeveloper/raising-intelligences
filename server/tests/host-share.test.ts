@@ -165,6 +165,14 @@ describe("share codes", () => {
     });
   });
 
+  it("every stored time is a whole millisecond (the Postgres columns are BIGINT)", async () => {
+    const g = await finished();
+    await decide(g.A, "yes"); await decide(g.B, "yes");
+    const code = await h.repo.hosts.codeByGame(g.gameId);
+    expect(code).not.toBeNull();
+    for (const t of [code!.visibleAt, code!.expiresAt]) expect(Number.isInteger(t)).toBe(true);
+  });
+
   it("B2: a phrase from a private talk never reaches a code, nor do the Voices and Quotes sections or the players' names (H5, H9)", async () => {
     const g = await finished({ private: `between us: ${SENTINEL}, ok?` });
     await decide(g.A, "yes"); await decide(g.B, "yes");
