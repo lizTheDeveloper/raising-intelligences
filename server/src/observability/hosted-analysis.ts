@@ -45,6 +45,19 @@ const gameOf = (t: TraceLike): string | null => {
   return tag ? tag.slice("game_id:".length) : null;
 };
 
+/**
+ * The traces a bulk reader may use at all: only those that name their game.
+ * Before RI 2.12.2 no trace carried `game_id:<id>`, so neither
+ * `hosted_no_analysis` nor `child_safety_hold` could ever be applied to them
+ * (games with child-safety cases from July and August 2026 are among them).
+ * Since 2.12.2 every trace names its game, so a trace without one is either
+ * older than that or a bug; either way a reader can't tell whether it is
+ * hosted or held, and drops it (fail closed).
+ */
+export function gameTaggedTraceIds(traces: TraceLike[]): Set<string> {
+  return new Set(traces.filter((t) => gameOf(t) !== null).map((t) => t.id));
+}
+
 /** The hosted traces a reader must drop: every one whose game isn't on the allow-list. */
 export function hostedTraceIdsToDrop(traces: TraceLike[], allowed: Set<string>): Set<string> {
   const drop = new Set<string>();

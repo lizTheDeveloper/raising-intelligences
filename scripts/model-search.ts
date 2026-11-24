@@ -21,7 +21,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import OpenAI from "openai";
 import { fetchHeldTraceIds, filterHeldObservations } from "../server/src/observability/child-safety-exclusion.js";
-import { fetchAnalysisAllowlist, fetchHostedTraces, filterHostedObservations, hostedTraceIdsToDrop } from "../server/src/observability/hosted-analysis.js";
+import { fetchAnalysisAllowlist, fetchHostedTraces, filterHostedObservations, gameTaggedTraceIds, hostedTraceIdsToDrop } from "../server/src/observability/hosted-analysis.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CACHE_DIR = join(__dirname, ".prompt-cache");
@@ -96,7 +96,20 @@ async function pullPrompts(): Promise<CachedPrompt[]> {
   // every hosted trace is dropped.
   const allowed = await fetchAnalysisAllowlist(process.env.RI_ADMIN_URL, process.env.ADMIN_TOKEN);
   const dropHosted = hostedTraceIdsToDrop(await fetchHostedTraces(langfuseGet), allowed);
-  const data = { data: filterHostedObservations(filterHeldObservations(allObs, held), dropHosted) };
+  // Only observations whose trace names its game: an untagged trace (every
+  // trace before RI 2.12.2) can't be known not to be hosted or held.
+  const named = new Set<string>();
+  for (let page = 1; page <= 10; page++) {
+    const res = (await langfuseGet("/api/public/traces", {
+      name: "kid_family_chat.stream", limit: "100", page: String(page),
+    })) as { data: Array<{ id: string; tags?: string[] | null }> };
+    for (const id of gameTaggedTraceIds(res.data)) named.add(id);
+    if (res.data.length < 100) break;
+  }
+  const data = {
+    data: filterHostedObservations(filterHeldObservations(allObs, held), dropHosted)
+      .filter((o) => !!o.traceId && named.has(o.traceId)),
+  };
 
   for (const age of targetAges) {
     // Find observations where the system prompt mentions the target age

@@ -58,6 +58,7 @@ import {
   type ViewerState,
 } from "./protocol.js";
 import { generatePersonalitySeed } from "../game/personality.js";
+import { runInGameContext } from "../observability/trace-context.js";
 import { moderateParentMessage, applyModerationBlock, recordConcern } from "../safety/moderation.js";
 import { logIp } from "../safety/child-safety/vault.js";
 import { campusIdentityForRequest, isCampusSubBanned, sanitizeClaimedUserId, seatOccupant } from "../security/campus-identity.js";
@@ -861,6 +862,18 @@ export function registerSocketHandlers(deps: SocketDeps): void {
 
   io.on("connection", (socket: Socket) => {
     const data = socket.data as SocketData;
+
+    // Every event runs as work for its game, so each model call it makes,
+    // however deep or deferred, is traced under that game's id (and gets the
+    // game's hosted / held tags). Registered first, so the other middleware
+    // and the handler itself all run inside it. JOIN_GAME is for the game it
+    // names; CREATE_GAME is for no game yet, even on a socket that sat in one.
+    socket.use((packet, next) => {
+      const event = String(packet[0]);
+      const named = (packet[1] as { gameId?: unknown } | undefined)?.gameId;
+      const gameId = event === E.CREATE_GAME ? null : event === E.JOIN_GAME ? (typeof named === "string" ? named : null) : data.gameId;
+      runInGameContext(gameId, () => next());
+    });
 
     // The partner payment, on every later step: once a child exists, an
     // event that would generate for it waits on paidOrFree. With the paywall

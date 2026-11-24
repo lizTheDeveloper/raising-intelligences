@@ -16,6 +16,7 @@ import { SOCKET_EVENTS as E } from "../../src/socket/protocol.js";
 import { FakeIdentity, strangerConfig } from "./fake-identity.js";
 import { FakeCheckout, paywallConfig } from "./fake-stripe.js";
 import type { GameEvent } from "../../src/types.js";
+import type { LLMClient } from "../../src/llm/client.js";
 
 export const ADMIN = { Authorization: "Bearer admin-test-token" };
 export const SHARE_SECRET = "s".repeat(48);
@@ -51,8 +52,11 @@ export class HostHarness {
   clock: { now: number } | null = null;
   clients: TestClient[] = [];
   private savedAdmin = process.env.ADMIN_TOKEN;
+  /** How the app's model client is built around `mock`: by default the bare mock; pass the production wrapper to see traces. */
+  private wrapLlm: (mock: MockLLMClient) => LLMClient;
 
-  constructor(opts: { stranger?: Partial<StrangerConfig>; host?: Partial<HostToolsConfig>; paywallOn?: boolean; clock?: number } = {}) {
+  constructor(opts: { stranger?: Partial<StrangerConfig>; host?: Partial<HostToolsConfig>; paywallOn?: boolean; clock?: number; wrapLlm?: (mock: MockLLMClient) => LLMClient } = {}) {
+    this.wrapLlm = opts.wrapLlm ?? ((m) => m);
     this.strangerCfg = strangerConfig({ joinWindowMs: 60_000, meetupCodes: new Set(), ...opts.stranger });
     this.hostCfg = hostConfig(opts.host);
     this.paywall = paywallConfig({ switchOn: opts.paywallOn ?? false });
@@ -83,7 +87,7 @@ export class HostHarness {
       now: this.now,
     });
     this.built = buildServer({
-      llm: this.mock,
+      llm: this.wrapLlm(this.mock),
       repo: this.repo,
       adminQueries: new InMemoryAdminQueries(),
       enableEviction: false,

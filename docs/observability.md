@@ -50,7 +50,7 @@ To add a new event, import `track` and call it. No registration needed — Umami
 
 **Dashboard:** `https://langfuse.multiversegames.ai`
 
-Every call through `OpenRouterLLMClient` is wrapped by `TracedLLMClient` (`server/src/observability/langfuse.ts`). It records a trace + generation per call with the prompt, output, token counts, and metadata tags.
+Every LLM call (the real router, or the dev harness's canned model) is wrapped by `TracedLLMClient` (`server/src/observability/langfuse.ts`). It records a trace + generation per call with the prompt, output, token counts, and metadata tags.
 
 ### Configuration
 
@@ -66,25 +66,32 @@ If either key **or** `LANGFUSE_HOST`/`LANGFUSE_BASEURL` is missing, `TracedLLMCl
 
 ### What gets traced
 
-Each LLM call produces one **trace** (tagged with `game_id`, `event_number`, `llm_role`) containing one **generation** with:
-- full system prompt and message history sent to the model
+Each LLM call produces one **trace** containing one **generation** with:
+- full system prompt and message history sent to the model (redacted as below)
 - the raw text response
 - token usage and cost (from OpenRouter's response)
 - error level if the call threw
 
-**Exception:** the `personality_seed` role's prompt embeds both parents' raw confessional text (see `game/personality.ts`). That role's traced input has the confessional quotes redacted to a length-only placeholder before being sent to Langfuse — see `redactConfessionalText` in `observability/langfuse.ts`.
+**Tags on every trace:**
+- `game_id:<id>`: the game the call was made for. Always present (see "Which game a call belongs to").
+- `llm_role:<role>`: the role in `model-config.ts` (`kid_family_chat`, `kid_sidebar`, `kid_adult_chat`, `world_manager`, `psychologist`, `memory_summarizer`, `epilogue`, `report_card`, `album`, `personality_seed`, `gender_inference`, `moment_comparison`, `safety_check`, `psychologist_consult`, `family_therapist`, `cps_caseworker`). Filter by role in the Langfuse UI to compare quality across roles or spot regressions after a model swap.
+- `hosted_no_analysis`: the game was played at a host-tools meetup (`observability/hosted-analysis.ts`). Bulk readers drop it unless the game is on the analysis allow-list.
+- `child_safety_hold`: the game has a child-safety case (`observability/child-safety-exclusion.ts`). Added to later traces from the start, and to earlier traces of the game by `holdGameTraces`, which finds them by their `game_id:<id>` tag. Bulk readers drop them.
 
-The `llm_role` tag maps to the roles in `model-config.ts`: `kid_family_chat`, `kid_sidebar`, `kid_adult_chat`, `world_manager`, `psychologist`, `epilogue`, `report_card`. Filter by role in the Langfuse UI to compare quality across roles or spot regressions after a model swap.
+**Redaction:** the `personality_seed` role's prompt embeds both parents' raw confessional text (see `game/personality.ts`), and the world manager's prompt can carry one confessional in its "pressure point" section. Both are replaced with length-only placeholders before anything is sent (`redactConfessionalText`, `redactPressurePoint` in `observability/langfuse.ts`).
 
-### Adding context to traces
+### Which game a call belongs to
 
-The server creates a root `TracedLLMClient` in `server/src/index.ts` and passes it to the engines. To carry game/event context into traces, call `.withContext()` before passing the client to an engine method:
+The server has one `TracedLLMClient` (`traceAppLlm` in `server/src/index.ts`), shared by every game. It learns the game from the async context (`observability/trace-context.ts`), which is set where work for a game enters the server:
+- the first socket middleware in `socket/handlers.ts` (the socket's game; for `JOIN_GAME`, the game it names);
+- the `/api/game/:id` middleware in `app.ts`, for every REST route under it;
+- game creation in `routes/game.ts` (`POST /game` isn't under `/api/game/:id`).
 
-```ts
-const tracedWithContext = llm.withContext({ gameId: state.id, eventNumber: state.eventNumber });
-```
+Everything that runs from there (awaits, timers, fire-and-forget work such as the scene prefetch) is traced under that game. `withChildSeed(gameId)` and `withContext({ gameId })` scope a client explicitly.
 
-The resulting client shares the same inner `OpenRouterLLMClient` (stateless) but stamps every trace it produces with the provided metadata.
+**Fail closed.** A call with no game, or whose client names a different game from the context, still runs, but its trace is never sent; the server logs `llm_trace_refused_no_game_id` or `llm_trace_refused_game_mismatch` (and reports it to GlitchTip). A new LLM call site that runs outside these entry points shows up there, not as an untagged trace. `tests/langfuse-game-id-production-path.test.ts` plays meetup, invite, held, intervention-ladder and REST games through the real handlers with a Langfuse stand-in (`tests/helpers/langfuse-sink.ts`) and asserts one trace per model call, each naming its game.
+
+**Before 2.12.2** no trace carried `game_id` (the shared client had empty metadata and nothing scoped it), so neither `hosted_no_analysis` nor `child_safety_hold` was ever applied. Bulk readers (`scripts/model-search.ts`, the ri-devlog skill) therefore use only traces that carry a `game_id:<id>` tag (`gameTaggedTraceIds`).
 
 ### Shutdown flushing
 
