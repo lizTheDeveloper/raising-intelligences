@@ -40,6 +40,9 @@ import {
   snapshotBlocks,
   stopWarning,
   watermarkLine,
+  asOpenedCodes,
+  openedCodeLine,
+  CODES_PAUSED,
   type AccountMeetup,
 } from "../src/shareCodes.ts";
 import { TOO_SMALL } from "../src/hostPortal.ts";
@@ -383,6 +386,21 @@ test("asCodeView and the watermark", () => {
   assert.equal(openUntil(v.until, "UTC"), "you can open this until december 4, 2026.");
   assert.equal(asCodeView({ snapshot: null, until: DEC4, watermark: { reader: "Sam", openedAt: NOV21 } }), null);
   assert.equal(asCodeView({ snapshot: { reportCard: null, epilogue: null }, until: DEC4 }), null);
+});
+
+test("S2-1: the reader's opened codes, newest first, each saying when and until when", () => {
+  const codes = asOpenedCodes({ codes: [
+    { codeRef: "r1", eventName: "tuesday tea", openedAt: NOV21, until: NOV21 + 30 * 86_400_000 },
+    { codeRef: 7, eventName: "bad", openedAt: NOV21, until: DEC4 },
+    { codeRef: "r2", eventName: "", openedAt: DEC4, until: DEC4 + 30 * 86_400_000 },
+  ] });
+  assert.deepEqual(codes.map((c) => c.codeRef), ["r2", "r1"]);
+  assert.equal(openedCodeLine(codes[1], "UTC"), "tuesday tea · opened november 21, 2026 at 6:00 pm · you can read it until december 21, 2026");
+  assert.equal(openedCodeLine(codes[0], "UTC"), "opened december 4, 2026 at 6:00 pm · you can read it until january 3, 2027");
+  assert.deepEqual(asOpenedCodes({}), []);
+  assert.deepEqual(asOpenedCodes(null), []);
+  // The server's lockout copy, word for word.
+  assert.match(CODES_PAUSED, /^too many codes didn't open lately/);
 });
 
 // ---- Pass and route ----

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { HostHarness, ADMIN } from "./helpers/host-tools.js";
 import { SOCKET_EVENTS as E } from "../src/socket/protocol.js";
 import { markGameHeld } from "../src/observability/child-safety-exclusion.js";
-import { CODE_NOT_AVAILABLE } from "../src/hosts/share.js";
+import { CODE_NOT_AVAILABLE, CODES_PAUSED } from "../src/hosts/share.js";
 import type { TestClient } from "./helpers/socket-client.js";
 
 /**
@@ -241,17 +241,17 @@ describe("share codes", () => {
       const words = (await account(`@a${n}:multiversegames.ai`)).games[0].share.words as string;
       return { g, words };
     }
+    const attempt = async (pass: string, w: string) => {
+      const t = Date.now();
+      const r = await h.post("/host/codes/redeem", { pass, words: w });
+      return { status: r.status, text: r.text, ms: Date.now() - t };
+    };
 
     it("code no-tip-off: every failure has the same status, body, and at least the 400ms floor", async () => {
       const { g, words } = await code();
       const devPass = await hostPass();
       const otherPass = await hostPass(OTHER_HOST);
       const failures: Array<{ status: number; text: string; ms: number }> = [];
-      const attempt = async (pass: string, w: string) => {
-        const t = Date.now();
-        const r = await h.post("/host/codes/redeem", { pass, words: w });
-        return { status: r.status, text: r.text, ms: Date.now() - t };
-      };
       failures.push(await attempt(devPass, "wrong words here please"));
       failures.push(await attempt(devPass, "notaword"));
       failures.push(await attempt(otherPass, words)); // another host's code
@@ -337,14 +337,102 @@ describe("share codes", () => {
       expect((await h.post("/host/codes/view", { pass, codeRef })).status).toBe(401);
     });
 
-    it("rate limit: past 10 an hour, a right code fails like any other", async () => {
+    it("rate limit: past 10 failures an hour, a right code gets exactly what a wrong one gets", async () => {
       const { words } = await code();
       const pass = await hostPass();
+      for (let i = 0; i < 10; i++) {
+        expect((await h.post("/host/codes/redeem", { pass, words: `wrong words number ${i}` })).status).toBe(404);
+      }
+      const right = await attempt(pass, words);
+      const wrong = await attempt(pass, "still wrong words here");
+      expect(right.status).toBe(429);
+      expect([right.status, right.text]).toEqual([wrong.status, wrong.text]);
+      expect(JSON.parse(right.text)).toEqual({ error: CODES_PAUSED });
+      expect(right.ms).toBeGreaterThanOrEqual(390);
+      expect(wrong.ms).toBeGreaterThanOrEqual(390);
+      // The lockout itself isn't counted: an hour after the tenth failure, she can try again.
+      h.clock!.now += 61 * MIN;
+      expect((await h.post("/host/codes/redeem", { pass, words })).status).toBe(200);
+    }, 30_000);
+
+    it("S2-1: re-opening a code she already opened never counts, however often (Sister Jensen at a busy meetup)", async () => {
+      const first = await code();
+      const pass = await hostPass();
+      for (const w of ["mistyped words one", "mistyped words two", "mistyped words three"]) {
+        expect((await h.post("/host/codes/redeem", { pass, words: w })).status).toBe(404);
+      }
+      expect((await h.post("/host/codes/redeem", { pass, words: first.words })).status).toBe(200);
+      for (let i = 0; i < 25; i++) {
+        expect((await h.post("/host/codes/redeem", { pass, words: first.words })).status).toBe(200);
+      }
+      // Only the three mistypes counted: a new pair's code still opens.
+      const second = await code();
+      expect((await h.post("/host/codes/redeem", { pass, words: second.words })).status).toBe(200);
+    }, 60_000);
+
+    it("locked out after 10 failures, the codes she already opened still open (by words and from her list)", async () => {
+      const { words } = await code();
+      const pass = await hostPass();
+      const { codeRef } = (await h.post("/host/codes/redeem", { pass, words })).body;
       for (let i = 0; i < 10; i++) await h.post("/host/codes/redeem", { pass, words: `wrong words number ${i}` });
-      const r = await h.post("/host/codes/redeem", { pass, words });
-      expect(r.status).toBe(404);
-      expect(r.body).toEqual({ error: CODE_NOT_AVAILABLE });
-    }, 20_000);
+      expect((await h.post("/host/codes/redeem", { pass, words: "one more wrong try" })).status).toBe(429);
+      expect((await h.post("/host/codes/redeem", { pass, words })).status).toBe(200);
+      expect((await h.post("/host/codes/view", { pass, codeRef })).status).toBe(200);
+    }, 30_000);
+
+    it("30 failures in a day lock codes until the day has passed", async () => {
+      const { words } = await code();
+      const pass = await hostPass();
+      for (let round = 0; round < 3; round++) {
+        for (let i = 0; i < 10; i++) await h.post("/host/codes/redeem", { pass, words: `wrong words ${round} ${i}` });
+        h.clock!.now += 61 * MIN;
+      }
+      expect((await h.post("/host/codes/redeem", { pass, words })).status).toBe(429);
+      h.clock!.now += DAY;
+      expect((await h.post("/host/codes/redeem", { pass: await hostPass(), words })).status).toBe(200);
+    }, 60_000);
+
+    it("her portal lists the codes she has opened, while she can still read them; never anyone else's", async () => {
+      const a = await code();
+      const pass = await hostPass();
+      const openedAt = h.now();
+      const opened = (await h.post("/host/codes/redeem", { pass, words: a.words })).body.codeRef as string;
+      h.clock!.now += 2 * DAY;
+      const b = await code();
+      const later = await hostPass();
+      const second = (await h.post("/host/codes/redeem", { pass: later, words: b.words })).body.codeRef as string;
+      const list = await h.post("/host/codes/list", { pass: later });
+      expect(list.status).toBe(200);
+      expect(list.body.codes).toHaveLength(2);
+      // Newest first; each says which meetup, when she opened it, and until when she can read it.
+      expect(list.body.codes.map((c: any) => c.codeRef)).toEqual([second, opened]);
+      expect(list.body.codes[1]).toEqual({ codeRef: opened, eventName: expect.any(String), openedAt, until: openedAt + 30 * DAY });
+      // A ref from the list opens without the words and without a redemption.
+      expect((await h.post("/host/codes/view", { pass: later, codeRef: opened })).status).toBe(200);
+      const text = JSON.stringify(list.body);
+      expect(text).not.toContain(a.g.gameId);
+      expect(text).not.toMatch(/@[a-z0-9]+:multiversegames/);
+      // Another host sees none of them.
+      expect((await h.post("/host/codes/list", { pass: await hostPass(OTHER_HOST) })).body.codes).toEqual([]);
+      // Past its 30 days a code leaves the list.
+      h.clock!.now += 29 * DAY;
+      expect((await h.post("/host/codes/list", { pass: await hostPass() })).body.codes.map((c: any) => c.codeRef)).toEqual([second]);
+      // Not signed in: nothing.
+      expect((await h.post("/host/codes/list", { pass: "nope" })).status).toBe(401);
+    }, 30_000);
+
+    it("a code stopped after she opened it stays on her list and opens like any unavailable code", async () => {
+      const { words } = await code();
+      const pass = await hostPass();
+      const { codeRef } = (await h.post("/host/codes/redeem", { pass, words })).body;
+      const a = await accountPass(`@a${n}:multiversegames.ai`);
+      const ref = (await h.post("/stranger/account", { pass: a })).body.games[0].ref;
+      await h.post("/stranger/account/stop", { pass: a, gameRef: ref });
+      const list = (await h.post("/host/codes/list", { pass })).body.codes;
+      expect(list.map((c: any) => c.codeRef)).toEqual([codeRef]);
+      const v = await h.post("/host/codes/view", { pass, codeRef });
+      expect([v.status, v.body]).toEqual([404, { error: CODE_NOT_AVAILABLE }]);
+    });
   });
 
   describe("the account page", () => {

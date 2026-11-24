@@ -472,6 +472,33 @@ export function watermarkLine(w: { reader: string; openedAt: number }, timeZone?
 }
 
 export const CODE_NOT_AVAILABLE = "this code isn't available.";
+/** The server's answer to every new code after too many failures (the same for right and wrong). */
+export const CODES_PAUSED = "too many codes didn't open lately, so new codes are paused: try again in an hour (or tomorrow, after 30 in a day). codes you've already opened still open from your list.";
+
+/** A code this reader has opened, still readable: she re-opens it from her list (S2-1). */
+export interface OpenedCode { codeRef: string; eventName: string; openedAt: number; until: number }
+
+export function asOpenedCodes(v: unknown): OpenedCode[] {
+  if (!isRec(v) || !Array.isArray(v.codes)) return [];
+  const out: OpenedCode[] = [];
+  for (const c of v.codes) {
+    if (!isRec(c) || !isStr(c.codeRef) || !c.codeRef || !isStr(c.eventName) || !isTime(c.openedAt) || !isTime(c.until)) continue;
+    out.push({ codeRef: c.codeRef, eventName: c.eventName, openedAt: c.openedAt, until: c.until });
+  }
+  return out.sort((a, b) => b.openedAt - a.openedAt);
+}
+
+function formatTime(ms: number, timeZone?: string): string {
+  return new Date(ms)
+    .toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", ...(timeZone ? { timeZone } : {}) })
+    .toLowerCase();
+}
+
+/** "tuesday tea · opened november 21, 2026 at 6:00 pm · you can read it until december 21, 2026" */
+export function openedCodeLine(c: OpenedCode, timeZone?: string): string {
+  const opened = `opened ${formatDate(c.openedAt, timeZone)} at ${formatTime(c.openedAt, timeZone)}`;
+  return [c.eventName, opened, `you can read it until ${formatDate(c.until, timeZone)}`].filter(Boolean).join(" · ");
+}
 export const openUntil = (until: number, timeZone?: string) => `you can open this until ${formatDate(until, timeZone)}.`;
 
 // ---- The account pass, kept for this tab ----

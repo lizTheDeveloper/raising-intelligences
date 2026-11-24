@@ -1731,7 +1731,12 @@ button.stranger-report { align-self: flex-end; font-size: 0.85em; }
 .share-snapshot h2, .share-snapshot h3, .share-snapshot h4 { font-weight: 400; letter-spacing: 1px; margin: 12px 0 4px; }
 .share-snapshot p { margin: 0 0 8px; }
 .share-watermark { font-size: 11px; color: var(--fg-dim); margin: 0 0 10px; letter-spacing: 0.5px; }
-.code-view { user-select: none; -webkit-user-select: none; }
+.code-view { user-select: none; -webkit-user-select: none; background-repeat: repeat; color: var(--fg); }
+.code-watermark-bar { position: sticky; top: 0; z-index: 2; background: var(--bg); padding: 6px 0; margin: 0 0 8px; border-bottom: 1px solid var(--fg-dim); }
+.opened-codes { width: 100%; text-align: left; margin: 0 0 12px; }
+.opened-codes ul { list-style: none; padding: 0; margin: 0; }
+.opened-codes li { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 6px 0; border-bottom: 1px solid rgba(127, 127, 127, 0.2); }
+.opened-codes h3 { font-weight: 400; letter-spacing: 1px; margin: 8px 0 4px; }
 .account-meetup, .account-game { border-top: 1px solid var(--fg-dim); padding-top: 10px; margin-top: 10px; }
 .account-card, .account-panel { border-left: 1px solid var(--fg-dim); padding-left: 12px; margin: 8px 0; }
 .account-panel .event-card-actions { justify-content: flex-start; }
