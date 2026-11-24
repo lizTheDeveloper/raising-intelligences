@@ -170,7 +170,7 @@ As v2:
 >
 > RI never gives {host} a list of who played or who made a code. but {host} may know you came, and may notice that no code came from your pair. they can't tell why. games end up without a code when they don't finish, when either of you says no or waits, when you keep the code to yourselves, or for reasons RI doesn't share.
 >
-> a code shows: part of your report card (your child's personality, strengths and struggles) and your child's epilogue. both were written from your whole game, including your private talks with your child, so they can reflect them. we take out every sentence that quotes anyone or repeats five or more of your words in a row, and we try to take out every name either of you typed and anything that retells your private talks. your names become "Parent 1" and "Parent 2". you'll read exactly what {host} would see before you choose.
+> a code shows: part of your report card (your child's personality, strengths and struggles) and your child's epilogue. both were written from your whole game, including what each of you said in private, so they can reflect it. we take out every sentence that quotes anyone or repeats five or more of your words in a row, and we try to take out every name either of you typed and anything that retells what you said in private. your names become "Parent 1" and "Parent 2". you'll read exactly what {host} would see before you choose.
 >
 > if you both say yes but no code appears, your game couldn't make one. RI doesn't say why.
 >
@@ -227,7 +227,7 @@ At every level, the host sees only whether the event is **open, paused, closed o
 3. **Preview.** Tapping "show me exactly what {host} would see" renders the trimmed content (§5.3). It is deterministic, there is no LLM call, and excluded games are rendered too.
 4. **Decision screen copy:**
    > **make a share code for {host}?**
-   > a share code lets {host} read part of your report card (your child's personality, strengths and struggles) and your child's epilogue. both were written from your whole game, including your private talks with your child, so they can reflect them. we take out every sentence that quotes anyone or repeats five or more of your words in a row, and we try to take out every name either of you typed and anything that retells your private talks. your names become "Parent 1" and "Parent 2".
+   > a share code lets {host} read part of your report card (your child's personality, strengths and struggles) and your child's epilogue. both were written from your whole game, including what each of you said in private, so they can reflect it. we take out every sentence that quotes anyone or repeats five or more of your words in a row, and we try to take out every name either of you typed and anything that retells what you said in private. your names become "Parent 1" and "Parent 2".
    > [ show me exactly what {host} would see ]
    > RI won't tell your co-parent what you chose. if one of you says yes and no code appears, that can mean the other said no, or is deciding later, or that this game can't make a code. RI never says which.
    > [ yes ]   [ no ]   [ decide later, on my own ]
@@ -946,4 +946,16 @@ The 2.12 persona tests got third-party names (a bishop, a grandfather, a mission
 - **Debugging.** `buildShareSnapshot(..., explain)` fills `explain` with each dropped sentence and its reason (quote, copied run, secret, name, paraphrase, private-only words).
 - **Names (H5).** The players' names, diminutives (Rebecca → Becca, Becky; Tom → Tommy, Thomas) and nicknames built on them become "Parent 1"/"Parent 2". The child's name always wins.
 - **Copy.** The card and the share step say what a code carries: the child's personality, strengths and struggles plus the epilogue, with quotes and 5-word copies removed, and a best effort on typed names and retellings ("we try to"), because those two are heuristics.
+
+# As built: disclosure copy (2.16.2)
+
+- **Never in a blog post.** The ri-devlog skill (outside this repo, `~/.claude/skills/ri-devlog/SKILL.md`) drops every `hosted_no_analysis` trace, allow-listed or not. The allow-list is for model-search and internal review only; the admin screen says so.
+- **Never used to train AI.** `scripts/model-search.ts` replays real prompts to candidate models. Every request now carries OpenRouter's `provider: {data_collection: "deny"}` (`benchmarkRequest`), so allow-listed games go only to providers that don't store or train on prompts. A model with no such provider fails.
+- **The ID check, as stored.** The card (`ID_LINE`) and the consent screen both name what's kept: the outcome, the Stripe session id, and a keyed fingerprint of the document's number and issuing country. None has a deletion path yet, and both say so. `CONSENT_VERSION` is now `2026-11-24.1`, so everyone re-consents to the corrected wording.
+- **Who outside the studio gets what you type.** The reply models via OpenRouter, and OpenAI's moderation endpoint, which is called directly. The album prompt carries the name a player gives their co-parent, so the card no longer says "they don't get your name". `STUDIO_BLOCK` no longer says "nobody outside the studio sees it"; at a guest-reader event it's `STUDIO_BLOCK_GUEST`, which allows for the share code.
+- **"In short".** Five plain lines open every card. Dates use the studio's day (`America/Los_Angeles`). The guest's role line shows what was checked and closes its clause with a comma. "Matrix handle" becomes "multiversegames.ai username" in the card and the exchange copy.
+- **No live headcount.** `queue/poll` returns `{status:"waiting", others}` (is anyone else waiting here), not `{position, count}`. Held players still count like waiting ones (F2).
+- **Studio events have no host to report.** The link reads "tell the studio about a problem" when no card names a host, and "report {name}" otherwise.
+- **The queue form** asks "what should your co-parent call you? (any name)".
+- **Private talk wording.** No multiplayer control starts a private talk (the button was removed in June: "private moments happen automatically", but nothing triggers them). The share copy now says "what each of you said in private", which covers the confessionals.
 

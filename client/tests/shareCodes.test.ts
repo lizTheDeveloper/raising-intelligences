@@ -34,6 +34,8 @@ import {
   openUntil,
   panelLine,
   reportHostName,
+  reportLabel,
+  reportIntro,
   saveAccountPass,
   shareRowLines,
   shareViewLine,
@@ -370,7 +372,13 @@ test("hostForEvent and reportHostName: from the agreed cards, with plain fallbac
   assert.equal(hostForEvent(ms, "gone"), "your host");
   assert.equal(reportHostName([meetup("tea", "Sam"), meetup("pie", "Sam")]), "Sam");
   assert.equal(reportHostName([meetup("tea", "Sam"), meetup("pie", "Kit")]), "the host");
-  assert.equal(reportHostName([]), "the host");
+  // Persona tests 13: a studio event has no host to report.
+  assert.equal(reportHostName([]), null);
+  assert.equal(reportHostName([meetup("tea", null)]), null);
+  assert.equal(reportLabel(null), "tell the studio about a problem");
+  assert.equal(reportLabel("Sam"), "report Sam");
+  assert.equal(reportIntro(null), "tell the studio what happened. a person reads every report.");
+  assert.equal(reportIntro("Sam"), "tell the studio what happened. a person reads every report. Sam isn't told who sent it.");
 });
 
 // ---- Code view ----

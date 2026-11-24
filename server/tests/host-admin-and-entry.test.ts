@@ -157,7 +157,7 @@ describe("host tools admin and entry", () => {
     const card = await h.card("tea-party");
     expect(card.status).toBe(200);
     expect(card.body.card.hostLine).toBe("run by the studio that makes raising intelligences.");
-    expect(JSON.stringify(card.body.card)).toContain("if you both say yes, you'll each see the other's Matrix handle");
+    expect(JSON.stringify(card.body.card)).toContain("if you both say yes, you'll each see the other's multiversegames.ai username");
     const env = [...(h.repo.hosts as any).events.values()];
     expect(env).toHaveLength(1);
     expect(env[0].source).toBe("env");

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { HostHarness, ADMIN } from "./helpers/host-tools.js";
-import { buildCard, guestBlock, l3Block, notForMeLines, STUDIO_BLOCK } from "../src/hosts/card.js";
+import { AI_LINE, buildCard, cardDate, guestBlock, ID_LINE, l3Block, notForMeLines, STUDIO_BLOCK, STUDIO_BLOCK_GUEST } from "../src/hosts/card.js";
 import type { HostEvent, HostPerson } from "../src/hosts/types.js";
 
 /**
@@ -26,14 +26,14 @@ describe("the event card", () => {
   it("B4: the L3 block says what a host can notice, in the round-3 wording", () => {
     const text = l3Block("Dev").join("\n");
     expect(text).toContain("may notice that no code came from your pair");
-    expect(text).toContain("can reflect them");
+    expect(text).toContain("can reflect it");
     expect(text).toContain("might say so in front of your co-parent");
     expect(text).not.toContain("isn't told you were asked");
     expect(text).not.toContain("no list of who played or who made a code");
     expect(l3Block("Dev")).toEqual([
       "Dev only sees your game if **you two** give them a share code. at the end you'll each be asked, on your own, and you'll see exactly what it shows first. if you both say yes, a code appears on your account page, and you decide whether and when to give it to Dev. Dev can open a code for 14 days after it appears, then read it for 30 days after opening it.",
       "RI never gives Dev a list of who played or who made a code. but Dev may know you came, and may notice that no code came from your pair. they can't tell why. games end up without a code when they don't finish, when either of you says no or waits, when you keep the code to yourselves, or for reasons RI doesn't share.",
-      "a code shows: part of your report card (your child's personality, strengths and struggles) and your child's epilogue. both were written from your whole game, including your private talks with your child, so they can reflect them. we take out every sentence that quotes anyone or repeats five or more of your words in a row, and we try to take out every name either of you typed and anything that retells your private talks. your names become \"Parent 1\" and \"Parent 2\". you'll read exactly what Dev would see before you choose.",
+      "a code shows: part of your report card (your child's personality, strengths and struggles) and your child's epilogue. both were written from your whole game, including what each of you said in private, so they can reflect it. we take out every sentence that quotes anyone or repeats five or more of your words in a row, and we try to take out every name either of you typed and anything that retells what you said in private. your names become \"Parent 1\" and \"Parent 2\". you'll read exactly what Dev would see before you choose.",
       "if you both say yes but no code appears, your game couldn't make one. RI doesn't say why.",
       "you can stop a code from your account page at any time. that stops Dev opening it again; it can't make Dev forget what they've already read. if you stop it, Dev will see that it no longer opens, and might say so in front of your co-parent.",
     ]);
@@ -41,7 +41,12 @@ describe("the event card", () => {
 
   it("B4: the guest-reader block is the studio block, the guest paragraph, then the L3 block", () => {
     const g = guestBlock(person());
-    expect(g[0]).toBe(STUDIO_BLOCK);
+    expect(g[0]).toBe(STUDIO_BLOCK_GUEST);
+    // Item 9 + S3-1: the studio block names who outside the studio gets what you type, and doesn't say
+    // "nobody outside the studio sees it" two lines before a guest who can.
+    expect(g[0]).toContain("nobody else at this meetup sees it unless you both make a share code");
+    expect(STUDIO_BLOCK).toContain("nobody at this meetup sees it. outside the studio, the AI companies that write your child's replies and check what you type for safety get what you type");
+    expect(STUDIO_BLOCK).not.toContain("nobody outside the studio");
     expect(g[1]).toBe("Sister Jensen is a guest at this meetup. if you both want to talk your game through with Sister Jensen, you can make a share code for Sister Jensen. Sister Jensen sees nothing else about this meetup.");
     expect(g.slice(2)).toEqual(l3Block("Sister Jensen"));
     const all = g.join("\n");
@@ -52,8 +57,11 @@ describe("the event card", () => {
   it("H16: a role line appears only when Liz checked it and recorded what she checked", () => {
     expect(guestBlock(person({ roleText: "premarital counsellor" })).join(" ")).not.toContain("counsellor");
     expect(guestBlock(person({ roleText: "premarital counsellor", roleChecked: "practice website" })).join(" ")).not.toContain("counsellor");
-    const shown = guestBlock(person({ roleText: "premarital counsellor", roleChecked: "practice website", roleCheckedAt: Date.UTC(2026, 10, 20) }))[1];
-    expect(shown).toBe("Sister Jensen, premarital counsellor, checked by the studio on november 20, 2026 is a guest at this meetup. if you both want to talk your game through with Sister Jensen, you can make a share code for Sister Jensen. Sister Jensen sees nothing else about this meetup.");
+    // S3-2: checked at 23:03 Pacific on november 23 (07:03 UTC on the 24th) is dated the 23rd. S3-1: the
+    // checked item is shown, and the clause is closed with a comma.
+    const shown = guestBlock(person({ roleText: "premarital counsellor", roleChecked: "practice website", roleCheckedAt: Date.UTC(2026, 10, 24, 7, 3) }))[1];
+    expect(shown).toBe("Sister Jensen, premarital counsellor (checked by the studio on november 23, 2026: practice website), is a guest at this meetup. if you both want to talk your game through with Sister Jensen, you can make a share code for Sister Jensen. Sister Jensen sees nothing else about this meetup.");
+    expect(cardDate(Date.UTC(2026, 6, 4, 6, 59))).toBe("july 3, 2026");
   });
 
   it("H16 over HTTP: role_text is absent from the card payload unless it was checked", async () => {
@@ -93,13 +101,35 @@ describe("the event card", () => {
     expect(flat).toContain("it's free at this meetup.");
     expect(flat).toContain("about two and a half hours. you'll raise one child from birth to 25");
     expect(flat).toContain(STUDIO_BLOCK);
+    // S3-1 / 19: five plain lines first, then the detail.
+    expect(card.sections[0]).toEqual({ heading: "in short", bullets: [
+      "who sees your game: your co-parent, who plays it with you, and the studio, which runs it.",
+      "no host: the studio runs this meetup, and nobody else here sees your game.",
+      "AI companies: what you type, to write your child's replies and check it for safety. not your account or your ID.",
+      "your ID: checked by Stripe. we keep the answer, the check's id and a coded fingerprint, never your ID or selfie.",
+      "the details are below.",
+    ] });
+    // Item 7: the card and the consent screen say the same about the ID check, every kept field named.
+    expect(flat).toContain(ID_LINE);
+    expect(ID_LINE).toContain("the id of Stripe's check");
+    expect(ID_LINE).toContain("a coded fingerprint of your ID's number and issuing country");
+    expect(ID_LINE).toContain("no way yet to ask for them to be deleted");
+    expect(flat).not.toContain("we keep only");
+    // Item 9: every outside party that gets typed text, by name (moderation goes to OpenAI directly), and the
+    // name you give your co-parent is not hidden from them.
+    expect(flat).toContain(AI_LINE);
+    expect(AI_LINE).toContain("through OpenRouter");
+    expect(AI_LINE).toContain("to OpenAI, which checks it for safety");
+    expect(AI_LINE).toContain("including the name you give your co-parent");
+    expect(flat).not.toContain("they don't get your name");
+    expect(flat).not.toContain("Matrix handle");
     expect(flat).toContain("it's kept on the studio's own servers until the studio deletes it, and there's no way yet to ask for that. taking a game off your account (on your account page) takes your name off your co-parent's copy, but deletes neither the game nor this record.");
     // Unlink and purge delete no game data: nothing on the card may suggest the account page deletes the record.
     expect(flat).not.toContain("you can ask the studio to take your game off your account");
     // Attendance is a record of its own, disclosed with how long it's kept and how to delete it.
     expect(flat).toContain("the studio records that your account came to this meetup, and which card you agreed to, until a year after the meetup closes.");
     expect(flat).toContain("games from this meetup are never used in the studio's blog posts, research or AI training.");
-    expect(flat).toContain("if you both say yes, you'll each see the other's Matrix handle");
+    expect(flat).toContain("if you both say yes, you'll each see the other's multiversegames.ai username");
     expect(card.hostName).toBeNull();
     expect(card.notForMe).toEqual(notForMeLines(false));
     expect(card.invite).toContain("it's free. invite prices can change.");

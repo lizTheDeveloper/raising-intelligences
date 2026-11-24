@@ -198,9 +198,9 @@ export function StrangerMode({ meetup, consentVersion, onBack, renderEligible, p
         <p>to keep children out of stranger mode, every player shows an ID and takes a live selfie. no exceptions, including for whoever pays.</p>
         <ul className="dim">
           <li>the check is run by Stripe Identity, our ID-check provider. it compares your face in the selfie with the photo on your ID. that comparison uses biometric data (a face geometry template).</li>
-          <li>we ask Stripe one thing: is this person 18 or over? we store only that answer. we never store your ID, your selfie, your name or your date of birth.</li>
+          <li>we ask Stripe one thing: is this person 18 or over? we never store your ID, your selfie, your name or your date of birth.</li>
           <li>once we have the answer we ask Stripe to delete (redact) the check. Stripe may keep some records for a time where the law requires it.</li>
-          <li>we keep that one answer (18+ or not) against your account, so you don't have to show your ID again. the answer itself is not biometric data.</li>
+          <li>we keep three things against your account: the answer (18+ or not), so you don't have to show your ID again; the id of Stripe's check, to match Stripe's reply to you and limit how often checks are started; and a coded fingerprint of your ID's number and issuing country, made with a secret key, so one ID can't open two accounts. none of these is biometric data. there's no end date on them yet, and no way yet to ask for them to be deleted.</li>
           <li>if the check says you are under 18, this account can't use stranger mode. solo play and invite play stay open to you.</li>
           <li>the other parent never sees any of this. they only learn that you passed.</li>
         </ul>

@@ -82,10 +82,12 @@ export function reconcileTerms(frozen: FrozenTerms, live: LiveSettings):
   return terms === frozen ? { action: "keep" } : { action: "update", terms };
 }
 
-const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+/** The studio's own day: a check made on a Pacific evening is dated that evening, not the next UTC day. */
+export const STUDIO_TIME_ZONE = "America/Los_Angeles";
 export function cardDate(ms: number): string {
-  const d = new Date(ms);
-  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: STUDIO_TIME_ZONE, year: "numeric", month: "long", day: "numeric" }).formatToParts(new Date(ms));
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("month").toLowerCase()} ${get("day")}, ${get("year")}`;
 }
 
 /** The role line is shown only if Liz checked it and recorded what she checked (H16). */
@@ -115,12 +117,24 @@ export const ATTENDANCE_LINE =
   "the studio records that your account came to this meetup, and which card you agreed to, until a year after the meetup closes. \"remove from my list\" on your account page deletes that record sooner. a game you play here is a separate record.";
 
 const HANDLE_LINE = {
-  on: "if you both say yes, you'll each see the other's Matrix handle (not a phone number or email). if either says no, nothing is shared.",
+  on: "if you both say yes, you'll each see the other's multiversegames.ai username (not a phone number or email). if either says no, nothing is shared.",
   off: "there's no contact swap at this meetup.",
 };
 
 export const STUDIO_BLOCK =
-  "this meetup is run by the studio that makes the game. the studio holds your game the way it holds every game: to run it, keep it safe and review reports. nobody outside the studio sees it.";
+  "this meetup is run by the studio that makes the game. the studio holds your game the way it holds every game: to run it, keep it safe and review reports. nobody at this meetup sees it. outside the studio, the AI companies that write your child's replies and check what you type for safety get what you type (see what the studio keeps, below).";
+
+/** At a studio event with a guest reader: the same, except a share code you both make. */
+export const STUDIO_BLOCK_GUEST =
+  "this meetup is run by the studio that makes the game. the studio holds your game the way it holds every game: to run it, keep it safe and review reports. nobody else at this meetup sees it unless you both make a share code and give it to them. outside the studio, the AI companies that write your child's replies and check what you type for safety get what you type (see what the studio keeps, below).";
+
+/** What a player types goes here, in production: the reply models via OpenRouter, and OpenAI's moderation check. */
+export const AI_LINE =
+  "the game runs on the studio's servers. what you type is sent to AI companies: through OpenRouter to the companies whose models write your child's replies, and to OpenAI, which checks it for safety. they get what you type, including the name you give your co-parent, but not your account or your ID.";
+
+/** The ID check, as stored (stranger/identity.ts, stranger_* tables): nothing here is ever deleted yet. */
+export const ID_LINE =
+  "a photo ID and a live selfie, checked by Stripe, to prove you're 18 or over. we never keep your ID, your selfie, your name or your date of birth. we do keep three things: the answer (18+ or not); the id of Stripe's check; and a coded fingerprint of your ID's number and issuing country, so one ID can't open two accounts. there's no end date on these yet, and no way yet to ask for them to be deleted. Stripe deletes the check itself once we have the answer, apart from what the law makes it keep.";
 
 export function l0Block(host: string): string[] {
   return [`${host} can't see anything about you or your game. they only know whether the meetup is open.`];
@@ -137,7 +151,7 @@ export function l3Block(host: string): string[] {
   return [
     `${host} only sees your game if **you two** give them a share code. at the end you'll each be asked, on your own, and you'll see exactly what it shows first. if you both say yes, a code appears on your account page, and you decide whether and when to give it to ${host}. ${host} can open a code for 14 days after it appears, then read it for 30 days after opening it.`,
     `RI never gives ${host} a list of who played or who made a code. but ${host} may know you came, and may notice that no code came from your pair. they can't tell why. games end up without a code when they don't finish, when either of you says no or waits, when you keep the code to yourselves, or for reasons RI doesn't share.`,
-    `a code shows: part of your report card (your child's personality, strengths and struggles) and your child's epilogue. both were written from your whole game, including your private talks with your child, so they can reflect them. we take out every sentence that quotes anyone or repeats five or more of your words in a row, and we try to take out every name either of you typed and anything that retells your private talks. your names become "Parent 1" and "Parent 2". you'll read exactly what ${host} would see before you choose.`,
+    `a code shows: part of your report card (your child's personality, strengths and struggles) and your child's epilogue. both were written from your whole game, including what each of you said in private, so they can reflect it. we take out every sentence that quotes anyone or repeats five or more of your words in a row, and we try to take out every name either of you typed and anything that retells what you said in private. your names become "Parent 1" and "Parent 2". you'll read exactly what ${host} would see before you choose.`,
     "if you both say yes but no code appears, your game couldn't make one. RI doesn't say why.",
     `you can stop a code from your account page at any time. that stops ${host} opening it again; it can't make ${host} forget what they've already read. if you stop it, ${host} will see that it no longer opens, and might say so in front of your co-parent.`,
   ];
@@ -146,9 +160,9 @@ export function l3Block(host: string): string[] {
 export function guestBlock(guest: HostPerson): string[] {
   const role = roleShown(guest);
   const name = guest.displayName;
-  const roleClause = role ? `, ${role}, checked by the studio on ${cardDate(guest.roleCheckedAt!)}` : "";
+  const roleClause = role ? `, ${role} (checked by the studio on ${cardDate(guest.roleCheckedAt!)}: ${guest.roleChecked}),` : "";
   return [
-    STUDIO_BLOCK,
+    STUDIO_BLOCK_GUEST,
     `${name}${roleClause} is a guest at this meetup. if you both want to talk your game through with ${name}, you can make a share code for ${name}. ${name} sees nothing else about this meetup.`,
     ...l3Block(name),
   ];
@@ -177,6 +191,23 @@ export function notForMeLines(paywallOn: boolean): string[] {
   return ["that's fine. nothing about this is counted or passed on.", `you can raise a child on your own, free${clause}.`];
 }
 
+/** Five plain lines on top (persona tests S3-1, 19): who sees what, before the detail. */
+export function summaryLines(event: HostEvent, name: string | null): string[] {
+  const reader = name ?? "the host";
+  const level = event.kind === "studio"
+    ? (event.level === 3 && name ? `${reader}: nothing, unless you both make a share code and give it to ${reader}.` : "no host: the studio runs this meetup, and nobody else here sees your game.")
+    : event.level === 0 ? `${reader}: nothing about you or your game.`
+    : event.level === 1 ? `${reader}: only rough totals for the whole meetup, never your game.`
+    : `${reader}: rough totals, and your game only if you both make a share code and give it to ${reader}.`;
+  return [
+    "who sees your game: your co-parent, who plays it with you, and the studio, which runs it.",
+    level,
+    "AI companies: what you type, to write your child's replies and check it for safety. not your account or your ID.",
+    "your ID: checked by Stripe. we keep the answer, the check's id and a coded fingerprint, never your ID or selfie.",
+    "the details are below.",
+  ];
+}
+
 export function buildCard(input: {
   event: HostEvent;
   terms: FrozenTerms;
@@ -196,16 +227,16 @@ export function buildCard(input: {
     : `hosted by ${name ?? "the host"} · ID-checked host, approved by the studio`;
   const play = "you'll raise one child from birth to 25 with one other adult at this meetup. you won't know who until you're in the game, and you'll only see each other's choices as parents.";
   const asks = [
-    "a multiversegames.ai (Matrix) account.",
-    "a photo ID and a live selfie, checked by Stripe, to prove you're 18 or over. we keep only \"18+: yes\" and a coded fingerprint of your document number, so one ID can't open two accounts. Stripe deletes the check once we have the answer, apart from what the law makes it keep.",
+    "a multiversegames.ai account (the site's chat account, also called Matrix).",
+    ID_LINE,
     event.lengthText ? `about ${event.lengthText}. ${play}` : play,
     COST_LINE[terms.cost],
   ];
   const privacy = name
-    ? `your age check, your ID and your Matrix account are never shown to ${name}. if you report someone, the report goes to the studio, not to ${name}, and ${name} isn't told.`
-    : "your age check, your ID and your Matrix account are never shown to anyone at this meetup. if you report someone, the report goes to the studio.";
+    ? `your age check, your ID and your multiversegames.ai account are never shown to ${name}. if you report someone, the report goes to the studio, not to ${name}, and ${name} isn't told.`
+    : "your age check, your ID and your multiversegames.ai account are never shown to anyone at this meetup. if you report someone, the report goes to the studio.";
   const keeps = [
-    "the game runs on the studio's servers. what you type is sent to AI providers, through OpenRouter, to write your child's replies. they don't get your name or your ID.",
+    AI_LINE,
     `the studio keeps a technical record of every game, including private talks, to fix problems and review reports. ${traceLine(terms)}`,
     terms.learning ? LEARNING_LINE.studio : LEARNING_LINE.never,
     ATTENDANCE_LINE,
@@ -221,6 +252,7 @@ export function buildCard(input: {
     hostLine,
     welcome: event.welcomeText,
     sections: [
+      { heading: "in short", bullets: summaryLines(event, name) },
       { heading: "what this asks of you", bullets: asks },
       { heading: "what's in the game", paragraphs: [CONTENT_NOTES] },
       {

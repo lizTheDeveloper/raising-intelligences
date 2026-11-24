@@ -13,7 +13,8 @@ import type { StrangerStore } from "./store.js";
  * Every stranger-mode player — host or not, payer or not — passes a Stripe
  * Identity check: a government ID plus a live selfie matched to it. We ask
  * Stripe for the date of birth on the document, compute 18+ on the spot, and
- * keep ONLY the outcome. Then we ask Stripe to redact the Identity session
+ * keep the outcome (plus the session id and the document hash below; the
+ * consent screen says so). Then we ask Stripe to redact the Identity session
  * (RI_IDENTITY_REDACT, on by default). Stripe redacts asynchronously (it can
  * take days) and may keep some records where the law requires.
  *
@@ -30,7 +31,7 @@ import type { StrangerStore } from "./store.js";
  * The biometric/ID consent text version. Bump it whenever the consent screen
  * (client/src/components/StrangerConsent.tsx) changes, so players re-consent.
  */
-export const CONSENT_VERSION = "2026-11-22.1";
+export const CONSENT_VERSION = "2026-11-24.1"; // 2.16.2: the screen names the Stripe check id and the document fingerprint
 
 /**
  * Age is computed on a clock 14 hours behind UTC. The UTC date can run ahead

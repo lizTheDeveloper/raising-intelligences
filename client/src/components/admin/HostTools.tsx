@@ -496,7 +496,7 @@ export function HostTools({ token }: { token: string }) {
 
       <div className="detail-section">
         <h3>Analysis allow-list ({allowlist.length} {allowlist.length === 1 ? "game" : "games"})</h3>
-        <p className="dim" style={{ fontSize: 12 }}>Studio-event games where both parents said yes to studio learning (H18). Only these may be read by ri-devlog and model-search.</p>
+        <p className="dim" style={{ fontSize: 12 }}>Studio-event games where both parents said yes to studio learning (H18). Model-search and internal review only, never ri-devlog: no meetup game ever goes in a blog post, allow-listed or not. Model-search sends these prompts only to providers that don't store or train on them (OpenRouter data_collection: deny).</p>
         {allowlist.length === 0 ? (
           <p className="dim">None.</p>
         ) : (

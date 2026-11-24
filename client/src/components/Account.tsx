@@ -21,6 +21,7 @@ import {
   previewButton,
   previewTitle,
   reportHostName,
+  reportLabel,
   saveAccountPass,
   shareExplains,
   shareQuestion,
@@ -465,7 +466,7 @@ export function Account() {
       )}
 
       <p className="event-card-links">
-        <button className="btn-link" onClick={() => setView("report")} data-testid="btn-account-report">report this host</button>
+        <button className="btn-link" onClick={() => setView("report")} data-testid="btn-account-report">{reportLabel(reportHostName(page?.meetups ?? []))}</button>
       </p>
     </div>
   );

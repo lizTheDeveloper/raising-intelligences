@@ -48,14 +48,14 @@ export function HandleExchange({ state, onAnswer, onStatus }: { state: HandleSta
   if (state?.mine === "yes") {
     return (
       <div className="lobby stranger-mode handle-exchange" role="status" aria-live="polite">
-        <p className="dim">you said yes. if your co-parent says yes too, you'll each see the other's Matrix handle here. if not, nothing is shared, and they won't know you said yes. this can take a while.</p>
+        <p className="dim">you said yes. if your co-parent says yes too, you'll each see the other's multiversegames.ai username here. if not, nothing is shared, and they won't know you said yes. this can take a while.</p>
       </div>
     );
   }
   return (
     <div className="lobby stranger-mode handle-exchange">
       <h2>stay in touch?</h2>
-      <p>if you both say yes, you'll each see the other's Matrix handle. if either says no, nothing is shared, and neither of you learns what the other said.</p>
+      <p>if you both say yes, you'll each see the other's multiversegames.ai username. if either says no, nothing is shared, and neither of you learns what the other said.</p>
       <div className="safety-notice">
         <p><strong>before you say yes</strong></p>
         <ul>

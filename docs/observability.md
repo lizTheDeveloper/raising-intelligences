@@ -93,6 +93,8 @@ Everything that runs from there (awaits, timers, fire-and-forget work such as th
 
 **Before 2.12.2** no trace carried `game_id` (the shared client had empty metadata and nothing scoped it), so neither `hosted_no_analysis` nor `child_safety_hold` was ever applied. Bulk readers (`scripts/model-search.ts`, the ri-devlog skill) therefore use only traces that carry a `game_id:<id>` tag (`gameTaggedTraceIds`).
 
+**Where the readers may use hosted games (2.16.2).** The ri-devlog skill drops every `hosted_no_analysis` trace, allow-listed or not: no meetup game is ever in a blog post. `scripts/model-search.ts` may use allow-listed games, and sends every replayed prompt with OpenRouter's `provider: {data_collection: "deny"}` (`benchmarkRequest` in `hosted-analysis.ts`), so the prompts go only to providers that don't store or train on them, as the studio-learning card promises.
+
 ### Shutdown flushing
 
 `flushLangfuse()` is called on `SIGTERM` and `SIGINT` in `server/src/index.ts` so buffered traces aren't dropped on container restart.

@@ -125,7 +125,7 @@ describe("stranger matching", () => {
     const a = await adult(ALICE);
     expect((await queue(a)).status).toBe(200);
     expect((await queue(a)).status).toBe(200);
-    expect((await poll(a)).body).toMatchObject({ status: "waiting", count: 1 });
+    expect((await poll(a)).body).toMatchObject({ status: "waiting", others: false });
   });
 
   it("pairs the first two; the first queued hosts, names the child, sits as parent1", async () => {
@@ -245,7 +245,7 @@ describe("stranger matching", () => {
     await adult(ALICE, "minor");
     const b = await adult(BOB);
     await queue(b);
-    expect((await poll(b)).body).toMatchObject({ status: "waiting", count: 1 });
+    expect((await poll(b)).body).toMatchObject({ status: "waiting", others: false });
   });
 
   it("a blocked pair is never matched", async () => {
@@ -254,7 +254,7 @@ describe("stranger matching", () => {
     await repo.stranger.addBlock(await stranger.age.subjectHash(ALICE), await stranger.age.subjectHash(BOB));
     await queue(a);
     await queue(b);
-    expect((await poll(a)).body).toMatchObject({ status: "waiting", count: 2 });
+    expect((await poll(a)).body).toMatchObject({ status: "waiting", others: true });
   });
 
   // Privacy review F2: a suspended (reported) player is held as "waiting" and
@@ -272,8 +272,8 @@ describe("stranger matching", () => {
     await queue(b);
     const baseline = [(await poll(a)).body, (await poll(b)).body];
     expect(baseline).toEqual([
-      { status: "waiting", position: 1, count: 2 },
-      { status: "waiting", position: 2, count: 2 },
+      { status: "waiting", others: true },
+      { status: "waiting", others: true },
     ]);
     await post("/stranger/queue/leave", { pass: a });
     await post("/stranger/queue/leave", { pass: b });
@@ -289,7 +289,7 @@ describe("stranger matching", () => {
     // A third arrives and is paired with Bob; Alice is still "1 of 1", as anyone alone would be.
     await queue(c);
     expect((await poll(c)).body).toMatchObject({ status: "matched" });
-    expect((await poll(a2)).body).toEqual({ status: "waiting", position: 1, count: 1 });
+    expect((await poll(a2)).body).toEqual({ status: "waiting", others: false });
   });
 
   // Privacy review F5: a meetup code names the event (and can name the host's
@@ -331,7 +331,7 @@ describe("stranger matching", () => {
     await sit(b, mb);
     expect((await poll(a)).body).toMatchObject({ status: "none" });
     await queue(a);
-    expect((await poll(a)).body).toMatchObject({ status: "waiting", count: 1 });
+    expect((await poll(a)).body).toMatchObject({ status: "waiting", others: false });
   });
 
   it("a reserved seat is no seat until its adult arrives; REST can't act in a stranger game", async () => {
@@ -387,7 +387,7 @@ describe("stranger matching", () => {
   it("queueing twice at once is still one place in the queue", async () => {
     const a = await adult(ALICE);
     await Promise.all([queue(a), queue(a), queue(a)]);
-    expect((await poll(a)).body).toMatchObject({ status: "waiting", count: 1 });
+    expect((await poll(a)).body).toMatchObject({ status: "waiting", others: false });
   });
 
   it("someone who stops polling leaves the queue (a closed tab is never matched)", async () => {
@@ -397,7 +397,7 @@ describe("stranger matching", () => {
     await queue(a);
     await wait(1800);
     await queue(b);
-    expect((await poll(b)).body).toMatchObject({ status: "waiting", count: 1 });
+    expect((await poll(b)).body).toMatchObject({ status: "waiting", others: false });
   });
 
   it("a seated stranger later found to be a minor is put out at their next action", async () => {
@@ -451,6 +451,6 @@ describe("stranger matching", () => {
     }) as typeof repo.saveGame;
     await queue(b);
     repo.saveGame = saveGame;
-    expect((await poll(b)).body).toMatchObject({ status: "waiting", count: 1 });
+    expect((await poll(b)).body).toMatchObject({ status: "waiting", others: false });
   });
 });

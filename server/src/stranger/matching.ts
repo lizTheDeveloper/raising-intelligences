@@ -109,7 +109,7 @@ interface Run {
 }
 
 export type PollResult =
-  | { status: "waiting"; position: number; count: number }
+  | { status: "waiting"; others: boolean }
   | { status: "matched"; gameId: string; slot: StrangerSlot; playerToken: string; partnerName: string }
   | { status: "none" }
   /** Host tools: the meetup closed while waiting. Neutral: no reason given. */
@@ -266,8 +266,10 @@ export class StrangerMatching {
     // exactly like a waiting one, in their own count and in everyone else's.
     // Leaving them out made the difference between phones (or a host watching
     // the room) show who had been reported.
+    // Persona tests 15: no live headcount or place in line, only whether
+    // anyone else is waiting, so a code-holder can't watch the room's numbers.
     const seen = this.visibleQueue(mine.meetupCode);
-    return { status: "waiting", position: seen.indexOf(mine) + 1, count: seen.length };
+    return { status: "waiting", others: seen.length > 1 };
   }
 
   /** Everyone who looks like they're waiting at a meetup: the queue plus the held, in arrival order. */
