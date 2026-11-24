@@ -41,7 +41,9 @@ export function devMockLlm(): MockLLMClient {
   mock.reportCardText = [
     "# Report card",
     "## Pivotal Moments",
-    "They talked it through at the kitchen table.",
+    "They talked it through at the kitchen table, more than once, and nobody stormed off for good.",
+    "A bad winter at school turned into a long spring of walks after dinner.",
+    "By sixteen the arguments were about curfews and music, which felt like a kind of peace.",
     "## The Voices in Their Head",
     "### Parent 1",
     "Steady, mostly.",
@@ -49,7 +51,19 @@ export function devMockLlm(): MockLLMClient {
     "Funny when it counted.",
     "## Notable Quotes That Stuck",
     "\"we'll figure it out.\"",
+    "## Where They Landed",
+    "At twenty-five they keep a small garden and call home on Sundays.",
   ].join("\n");
+  mock.identityUpdates = ["Core beliefs: the world is mostly safe; grown-ups can be asked things.", "Core beliefs: being wrong out loud is survivable."];
+  const epilogue = "At twenty-five they live near the water and work odd, satisfying hours. They still burn the toast. Most Sundays they call home, and the calls run long.";
+  // The endgame roles get their own text, as a real model's would differ from the psychologist's notes.
+  const complete = mock.completeResponse.bind(mock);
+  mock.completeResponse = async (system, user, maxTokens, role, onChunk) => {
+    const text = role === "epilogue" ? epilogue : role === "report_card" ? mock.reportCardText : null;
+    if (text === null) return complete(system, user, maxTokens, role, onChunk);
+    for (const ch of text) onChunk?.(ch);
+    return text;
+  };
   const scenes: GameEvent[] = [];
   for (let i = 0; i < 2000; i++) {
     const age = (i % 13) * 2;
