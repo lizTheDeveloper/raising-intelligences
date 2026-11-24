@@ -8,7 +8,7 @@ import { buildCard, liveTerms, reconcileTerms, termsFor, type CardPayload, type 
 import { ackTokenHash, eventCodeHash, newAckToken, newEventCode, opaqueRef, shareCodeHash } from "./codes.js";
 import { MAX_EVENT_MS, readHostToolsConfig, type HostToolsConfig } from "./config.js";
 import type { HostStore, PurgeRules } from "./store.js";
-import type { EventStatus, HostEvent, HostPerson, Level } from "./types.js";
+import { HOST_TYPES, type EventStatus, type HostEvent, type HostPerson, type HostType, type Level } from "./types.js";
 
 export interface HostToolsDeps {
   store: HostStore;
@@ -200,7 +200,7 @@ export class HostTools implements StrangerHostTools {
         logger.info("host_env_event_new_period", { retiredEventId: existing.id });
       }
       const e: HostEvent = {
-        id: randomUUID(), codeHash: hash, source: "env", name: ENV_EVENT_NAME, kind: "studio", hostPersonId: null, guestReaderId: null,
+        id: randomUUID(), codeHash: hash, source: "env", name: ENV_EVENT_NAME, kind: "studio", hostPersonId: null, guestReaderId: null, promoterIds: [],
         sensitive: false, authority: false, eventsBusiness: false, level: 0, shareCodes: false, studioLearning: false, handleExchange: true,
         welcomeText: "", lengthText: null, conductUrl: null, capacity: 500, joinWindowMs: this.stranger.config().joinWindowMs,
         opensAt: now, closesAt: now + MAX_EVENT_MS, paused: false, pausedBy: null, closedAt: null, cardVersion: 1, frozenTerms: null, firstAckAt: null,
@@ -371,9 +371,9 @@ export class HostTools implements StrangerHostTools {
     return { ok: false, card: await this.cardFor(e) };
   }
 
-  /** Is this subject the event's host or guest reader (H12)? */
+  /** Is this subject the event's host, guest reader or a promoter (H12)? */
   async isHostOrGuest(e: HostEvent, subject: string): Promise<boolean> {
-    for (const id of [e.hostPersonId, e.guestReaderId]) {
+    for (const id of [e.hostPersonId, e.guestReaderId, ...(e.promoterIds ?? [])]) {
       if (!id) continue;
       const p = await this.store.getPerson(id);
       if (p && p.subject === subject) return true;
@@ -415,7 +415,7 @@ export class HostTools implements StrangerHostTools {
     return "ok";
   }
 
-  /** At JOIN_GAME: the host or guest reader never sits in a game at their own event (H12). */
+  /** At JOIN_GAME: the host, guest reader or a promoter never sits in a game at their own event (H12). */
   async refusedSeat(eventId: string | null | undefined, subject: string): Promise<boolean> {
     const e = this.eventById(eventId);
     return !!e && (await this.isHostOrGuest(e, subject));
@@ -448,13 +448,16 @@ export class HostTools implements StrangerHostTools {
 
   // ---- Admin ----
 
-  async createPerson(input: { matrixId?: unknown; displayName?: unknown; roleText?: unknown; roleChecked?: unknown; agreementVersion?: unknown }): Promise<AdminResult<HostPerson>> {
+  async createPerson(input: { matrixId?: unknown; displayName?: unknown; roleText?: unknown; roleChecked?: unknown; agreementVersion?: unknown; hostType?: unknown; organisation?: unknown }): Promise<AdminResult<HostPerson>> {
     const mxid = typeof input.matrixId === "string" ? input.matrixId.trim() : "";
     if (!/^@[^:\s]+:[^\s]+$/.test(mxid)) return { ok: false, status: 400, error: "matrixId must look like @name:server" };
     const displayName = typeof input.displayName === "string" ? input.displayName.trim() : "";
     if (!displayName || displayName.length > 60) return { ok: false, status: 400, error: "displayName: 1 to 60 characters" };
     const roleText = typeof input.roleText === "string" && input.roleText.trim() ? input.roleText.trim().slice(0, 80) : null;
     const roleChecked = typeof input.roleChecked === "string" && input.roleChecked.trim() ? input.roleChecked.trim().slice(0, 300) : null;
+    const hostType = parseHostType(input.hostType);
+    if (!hostType) return { ok: false, status: 400, error: HOST_TYPE_REQUIRED };
+    const organisation = typeof input.organisation === "string" && input.organisation.trim() ? input.organisation.trim().slice(0, 60) : null;
     if (!(await this.stranger.age.adultForPool(mxid)).ok) {
       return { ok: false, status: 409, error: "This account hasn't passed the 18+ check. They can do it from any meetup link with \"get ready early\"." };
     }
@@ -463,12 +466,31 @@ export class HostTools implements StrangerHostTools {
       id: randomUUID(), subject: await this.stranger.age.subjectHash(mxid), displayName, roleText, roleChecked,
       roleCheckedAt: roleText && roleChecked ? now : null,
       agreementVersion: typeof input.agreementVersion === "string" && input.agreementVersion.trim() ? input.agreementVersion.trim().slice(0, 40) : this.config().agreementVersion,
-      agreementAt: now, status: "approved", createdAt: now,
+      agreementAt: now, status: "approved", createdAt: now, hostType, organisation,
     };
     if (!(await this.store.createPerson(p))) return { ok: false, status: 409, error: "This account is already a host or guest reader." };
     this.names.set(p.id, p.displayName);
     logger.info("host_person_created", { id: p.id });
     return { ok: true, value: p };
+  }
+
+  /**
+   * The host type, set once. A person from before host types (null) gets one
+   * here; after that it changes only while they're on no event that is still
+   * running, so no live event's ceiling shifts under it.
+   */
+  async setPersonType(id: string, input: { hostType?: unknown; organisation?: unknown }): Promise<AdminResult<HostPerson>> {
+    const hostType = parseHostType(input.hostType);
+    if (!hostType) return { ok: false, status: 400, error: HOST_TYPE_REQUIRED };
+    const p = await this.store.getPerson(id);
+    if (!p) return { ok: false, status: 404, error: "No such person" };
+    if (p.hostType !== null && p.hostType !== hostType) {
+      const live = this.listCached().some((e) => this.status(e) !== "closed" && [e.hostPersonId, e.guestReaderId, ...(e.promoterIds ?? [])].includes(id));
+      if (live) return { ok: false, status: 409, error: "a host type is set once. it can change only when they're on no meetup that's still running." };
+    }
+    const organisation = typeof input.organisation === "string" ? (input.organisation.trim().slice(0, 60) || null) : p.organisation;
+    await this.store.updatePerson(id, { hostType, organisation });
+    return { ok: true, value: { ...p, hostType, organisation } };
   }
 
   async setPersonStatus(id: string, status: unknown): Promise<AdminResult<HostPerson>> {
@@ -490,7 +512,11 @@ export class HostTools implements StrangerHostTools {
     if (!Number.isFinite(e.opensAt) || !Number.isFinite(e.closesAt) || e.closesAt <= e.opensAt) return "closesAt must be after opensAt";
     if (e.closesAt - e.opensAt > MAX_EVENT_MS) return "an event ends within 14 days of opening";
     if (![0, 1, 3].includes(e.level)) return "level: 0, 1 or 3";
-    if (e.sensitive) return "a sensitive community can't host (Q4); its member can be a guest reader at a studio event";
+    if (e.sensitive) {
+      return e.kind === "studio"
+        ? "a studio event can't be for a sensitive community yet (Q4). leave this unticked if the event is open to anyone, and make the community's member a guest reader."
+        : "a sensitive community can't host (Q4); its member can be a guest reader at a studio event";
+    }
     if (e.eventsBusiness && e.kind === "outside") return "a dating or events business can't host until Q8a; it can promote a studio event";
     if (e.eventsBusiness && e.handleExchange) return "the handle exchange is off at an event a dating or events business promotes";
     if (e.authority && e.level === 3) return "a host with authority over attendees gets L1 at most, never share codes";
@@ -505,13 +531,59 @@ export class HostTools implements StrangerHostTools {
       if (e.studioLearning) return "studio learning is for studio events only (H18)";
     }
     if (e.hostPersonId && e.hostPersonId === e.guestReaderId) return "host and guest reader must differ";
-    for (const id of [e.hostPersonId, e.guestReaderId]) {
+    const promoters = e.promoterIds ?? [];
+    if (promoters.length > 10) return "at most 10 promoters";
+    for (const id of [e.hostPersonId, e.guestReaderId, ...promoters]) {
       if (!id) continue;
       const p = people.get(id);
-      if (!p) return "no such host or guest reader";
-      if (p.status !== "approved") return "that host or guest reader isn't approved";
+      if (!p) return "no such host, guest reader or promoter";
+      if (p.status !== "approved") return "that host, guest reader or promoter isn't approved";
+    }
+    if (promoters.some((id) => id === e.hostPersonId || id === e.guestReaderId)) return "a promoter can't also host or read for the same event";
+    return this.validateTypes(e, people);
+  }
+
+  /** §9.1 from the person (persona tests, Dev): the ceiling can't be forgotten on an event. */
+  private validateTypes(e: HostEvent, people: Map<string, HostPerson>): string | null {
+    const host = e.hostPersonId ? people.get(e.hostPersonId) : undefined;
+    const guest = e.guestReaderId ? people.get(e.guestReaderId) : undefined;
+    const promoters = (e.promoterIds ?? []).map((id) => people.get(id)!);
+    for (const p of [host, guest, ...promoters]) {
+      if (p && p.hostType === null) return `set ${p.displayName}'s host type first (people list, "set type")`;
+    }
+    if (host) {
+      switch (host.hostType) {
+        case "events_business": return "a dating or events business can't host until Q8a; it can promote a studio event";
+        case "sensitive": return `${host.displayName} is a faith or sensitive-community counsellor: they can't host yet (Q4), but they can be the guest reader at a studio event`;
+        case "studio": return "studio staff don't host outside events: make it a studio event";
+        case "authority": if (e.level === 3) return `${host.displayName} has authority over attendees: L1 at most, never share codes`; break;
+      }
+    }
+    if (guest && (guest.hostType === "authority" || guest.hostType === "events_business")) {
+      return guest.hostType === "authority"
+        ? `${guest.displayName} has authority over attendees, so can't read share codes`
+        : "a dating or events business can't be a guest reader";
+    }
+    const business = promoters.filter((p) => p.hostType === "events_business");
+    if (business.length) {
+      if (e.kind !== "studio") return "a dating or events business can only promote a studio event";
+      const text = `${e.name}\n${e.welcomeText}`.toLowerCase();
+      for (const p of business) {
+        for (const term of businessNames(p)) {
+          if (text.includes(term.toLowerCase())) return `the card doesn't name a promoting business: take "${term}" out of the name and welcome text`;
+        }
+      }
     }
     return null;
+  }
+
+  /** The flags an event takes from its people, on top of anything ticked (never fewer). */
+  private derived(e: HostEvent, people: Map<string, HostPerson>): Pick<HostEvent, "authority" | "eventsBusiness"> {
+    const type = (id: string | null) => (id ? people.get(id)?.hostType ?? null : null);
+    return {
+      authority: e.authority || type(e.hostPersonId) === "authority",
+      eventsBusiness: e.eventsBusiness || (e.promoterIds ?? []).some((id) => type(id) === "events_business"),
+    };
   }
 
   private async peopleMap(): Promise<Map<string, HostPerson>> {
@@ -527,19 +599,23 @@ export class HostTools implements StrangerHostTools {
     const kind = input.kind === "outside" ? "outside" : input.kind === "studio" ? "studio" : null;
     if (!kind) return { ok: false, status: 400, error: "kind: studio or outside" };
     const level = Number(input.level) as Level;
+    const promoterIds = parsePromoters(input.promoterIds);
+    if (!promoterIds) return { ok: false, status: 400, error: "promoterIds: a list of people ids" };
+    const people = await this.peopleMap();
+    const fromPeople = this.derived({ hostPersonId: str(input.hostPersonId), promoterIds, authority: bool(input.authority), eventsBusiness: bool(input.eventsBusiness) } as HostEvent, people);
     const code = newEventCode();
     const e: HostEvent = {
       id: randomUUID(), codeHash: eventCodeHash(this.pepper, code), source: "admin", name: (str(input.name) ?? "").trim(), kind,
-      hostPersonId: str(input.hostPersonId), guestReaderId: str(input.guestReaderId),
-      sensitive: bool(input.sensitive), authority: bool(input.authority), eventsBusiness: bool(input.eventsBusiness),
+      hostPersonId: str(input.hostPersonId), guestReaderId: str(input.guestReaderId), promoterIds,
+      sensitive: bool(input.sensitive), authority: fromPeople.authority, eventsBusiness: fromPeople.eventsBusiness,
       level, shareCodes: level === 3, studioLearning: bool(input.studioLearning),
-      handleExchange: input.handleExchange === undefined ? !bool(input.eventsBusiness) : bool(input.handleExchange),
+      handleExchange: input.handleExchange === undefined ? !fromPeople.eventsBusiness : bool(input.handleExchange),
       welcomeText: (str(input.welcomeText) ?? "").trim(), lengthText: str(input.lengthText)?.trim() || null, conductUrl: str(input.conductUrl)?.trim() || null,
       capacity: num(input.capacity, 100), joinWindowMs: num(input.joinWindowMs, this.stranger.config().joinWindowMs),
       opensAt: num(input.opensAt, now), closesAt: num(input.closesAt, NaN), paused: false, pausedBy: null, closedAt: null, cardVersion: 1,
       frozenTerms: null, firstAckAt: null, publishedFunnel: null, publishedAt: null, createdAt: now,
     };
-    const problem = this.validate(e, await this.peopleMap());
+    const problem = this.validate(e, people);
     if (problem) return { ok: false, status: 400, error: problem };
     if (e.closesAt <= now) return { ok: false, status: 400, error: "closesAt is in the past" };
     if (e.shareCodes && !this.config().shareCodeSecret) {
@@ -576,6 +652,13 @@ export class HostTools implements StrangerHostTools {
       const v = patch[k];
       if (k === "paused") { update.paused = v === true; update.pausedBy = v === true ? actor : null; continue; }
       if (k === "closed") { if (v === true && e.closedAt === null) update.closedAt = this.now(); continue; }
+      if (k === "promoterIds") {
+        // Allowed at any time (it only keeps someone out of the queue), but see the checks below.
+        const ids = parsePromoters(v);
+        if (!ids) return { ok: false, status: 400, error: "promoterIds: a list of people ids" };
+        update.promoterIds = ids;
+        continue;
+      }
       if (k === "level") {
         const lv = Number(v);
         if (frozen) {
@@ -597,9 +680,23 @@ export class HostTools implements StrangerHostTools {
       (update as Record<string, unknown>)[field] = v;
     }
     const next: HostEvent = { ...e, ...update };
-    if (frozen && update.level !== undefined && update.level < e.level) next.cardVersion = e.cardVersion + 1;
-    if (!frozen || update.level !== undefined) {
-      const problem = this.validate(next.kind === "studio" && next.level === 0 ? { ...next, guestReaderId: frozen ? null : next.guestReaderId } : next, await this.peopleMap());
+    const people = await this.peopleMap();
+    // The flags that come from the people (host type), never fewer than were ticked.
+    const fromPeople = this.derived(next, people);
+    if (fromPeople.authority !== next.authority) { next.authority = update.authority = fromPeople.authority; }
+    if (fromPeople.eventsBusiness !== next.eventsBusiness) {
+      // A business promoter turns the handle exchange off: before the first acknowledgement
+      // that just happens; after it, the card's terms are frozen (H17), so it's refused.
+      if (frozen && (e.frozenTerms?.handleExchange ?? e.handleExchange)) {
+        return { ok: false, status: 409, error: "a dating or events business can't be added as a promoter after the first acknowledgement: the card promised the handle exchange" };
+      }
+      next.eventsBusiness = update.eventsBusiness = true;
+      if (!frozen && patch.handleExchange === undefined) next.handleExchange = update.handleExchange = false;
+    }
+    const promotersChanged = update.promoterIds !== undefined && (update.promoterIds.length > 0) !== ((e.promoterIds ?? []).length > 0);
+    if (frozen && ((update.level !== undefined && update.level < e.level) || promotersChanged)) next.cardVersion = e.cardVersion + 1;
+    if (!frozen || update.level !== undefined || update.promoterIds !== undefined) {
+      const problem = this.validate(next.kind === "studio" && next.level === 0 ? { ...next, guestReaderId: frozen ? null : next.guestReaderId } : next, people);
       if (problem) return { ok: false, status: 400, error: problem };
     }
     const saved = this.remember(await this.store.updateEvent(id, { ...update, ...(next.cardVersion !== e.cardVersion ? { cardVersion: next.cardVersion } : {}) }))!;
@@ -612,4 +709,25 @@ export class HostTools implements StrangerHostTools {
     const { codeHash: _h, ...rest } = e;
     return { ...rest, status: await this.statusNow(e), joined: await this.store.countQueued(e.id) };
   }
+}
+
+const HOST_TYPE_REQUIRED = `host type: one of ${HOST_TYPES.join(", ")} (club: no authority over attendees, not a business, not a sensitive community)`;
+
+function parseHostType(v: unknown): HostType | null {
+  return typeof v === "string" && (HOST_TYPES as readonly string[]).includes(v) ? (v as HostType) : null;
+}
+
+/** A list of person ids, deduplicated; null when it isn't one. */
+function parsePromoters(v: unknown): string[] | null {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v) || v.some((x) => typeof x !== "string" || !x || x.length > 100)) return null;
+  return [...new Set(v as string[])];
+}
+
+/** The names a promoting business goes by: its organisation, and its display name with any "(…)" part. */
+export function businessNames(p: Pick<HostPerson, "displayName" | "organisation">): string[] {
+  const out = new Set<string>();
+  if (p.organisation && p.organisation.trim().length >= 3) out.add(p.organisation.trim());
+  for (const m of p.displayName.matchAll(/\(([^)]+)\)/g)) if (m[1].trim().length >= 3) out.add(m[1].trim());
+  return [...out];
 }

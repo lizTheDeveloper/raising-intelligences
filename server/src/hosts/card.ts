@@ -154,6 +154,9 @@ export function guestBlock(guest: HostPerson): string[] {
   ];
 }
 
+/** When the admin recorded who promoted the meetup: they're kept out of the queue (H12) and see nothing. */
+export const PROMOTER_LINE = "the business or group that sent you this link can't play at this meetup, and sees nothing about who came or how it went.";
+
 /** The "who sees what" level block (spec §3.4). */
 export function levelBlock(event: HostEvent, host: HostPerson | null, guest: HostPerson | null): string[] {
   if (event.kind === "studio") return guest && event.level === 3 ? guestBlock(guest) : [STUDIO_BLOCK];
@@ -224,6 +227,7 @@ export function buildCard(input: {
         heading: "who sees what",
         paragraphs: [
           ...levelBlock(event, host, guest),
+          ...((event.promoterIds ?? []).length ? [PROMOTER_LINE] : []),
           "your co-parent sees everything the two of you do together, and can tell anyone about it. no other player and no host ever sees your private talks with your child, though your child may bring up what you told them.",
           privacy,
         ],

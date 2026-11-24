@@ -87,6 +87,11 @@ export function createHostToolsAdminRoutes(hosts: HostTools): Router {
     if (!hosts.active()) return void res.status(503).json({ error: "host tools are off (RI_STRANGER_MODE isn't meetup)" });
     send(res, await hosts.createPerson((req.body ?? {}) as Record<string, unknown>), (p) => personView(p as never));
   });
+  // The host type (§9.1), set once: {hostType, organisation?}. See HostTools.setPersonType.
+  router.post("/admin/host-tools/hosts/:id/type", async (req: Request, res: Response) => {
+    await hosts.ready;
+    send(res, await hosts.setPersonType(String(req.params.id), (req.body ?? {}) as Record<string, unknown>), (p) => personView(p as never));
+  });
   router.post("/admin/host-tools/hosts/:id/status", async (req: Request, res: Response) => {
     send(res, await hosts.setPersonStatus(String(req.params.id), (req.body as { status?: unknown } | undefined)?.status), (p) => personView(p as never));
   });

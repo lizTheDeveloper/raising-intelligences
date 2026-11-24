@@ -3,6 +3,13 @@ export type EventKind = "studio" | "outside";
 export type EventStatus = "open" | "paused" | "closed" | "full" | "not_open_yet";
 export type Slot = "parent1" | "parent2";
 
+/**
+ * What kind of host a person is (§9.1), set once by the admin. Every event's
+ * allowed levels and naming derive from it. See migration 036.
+ */
+export const HOST_TYPES = ["club", "authority", "events_business", "sensitive", "studio"] as const;
+export type HostType = (typeof HOST_TYPES)[number];
+
 export interface HostPerson {
   id: string;
   /** HMAC of the Matrix id, as every stranger record. */
@@ -15,6 +22,10 @@ export interface HostPerson {
   agreementAt: number;
   status: "approved" | "suspended" | "closed";
   createdAt: number;
+  /** null: added before host types; can't go on a new event until set. */
+  hostType: HostType | null;
+  /** The business or group's name (never shown to players). */
+  organisation: string | null;
 }
 
 /** The card's computed lines, frozen at the first acknowledgement (H17). */
@@ -35,6 +46,8 @@ export interface HostEvent {
   kind: EventKind;
   hostPersonId: string | null;
   guestReaderId: string | null;
+  /** People who promote this event: refused at the queue and at JOIN_GAME like the host (H12). */
+  promoterIds: string[];
   sensitive: boolean;
   authority: boolean;
   eventsBusiness: boolean;

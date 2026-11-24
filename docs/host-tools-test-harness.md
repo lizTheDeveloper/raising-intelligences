@@ -38,13 +38,23 @@ BASE=http://localhost:5173; AUTH="Authorization: Bearer $ADMIN_TOKEN"
 # Is it on? (active, share-code secret present, trace settings, paywall)
 curl -s -H "$AUTH" $BASE/api/admin/host-tools/status
 
-# A host or guest reader. They must already have passed the 18+ check: they do it
+# A host, guest reader or promoter. They must already have passed the 18+ check: they do it
 # from any meetup link with "get ready early". Locally that's one click.
 # Only a keyed hash of the Matrix id is stored.
+# hostType is required and set once (§9.1 lives on the person, not the event):
+#   club             no authority over attendees, not a business, not sensitive: hosts at L0, L1 or L3
+#   authority        authority over likely attendees: hosts at L0 or L1, never share codes, never a guest reader
+#   events_business  a dating or events business: never hosts; may promote a studio event (unnamed, exchange off)
+#   sensitive        a faith or sensitive-community counsellor: never hosts; guest reader at a studio event
+#   studio           studio staff: guest reader at a studio event
 curl -s -H "$AUTH" -H 'Content-Type: application/json' $BASE/api/admin/host-tools/hosts \
-  -d '{"matrixId":"@dev:local","displayName":"Dev"}'
+  -d '{"matrixId":"@kofi:local","displayName":"Kofi","hostType":"club"}'
 # A guest reader with a checked role (the role shows on the card only with roleChecked):
-#   -d '{"matrixId":"@jensen:local","displayName":"Sister Jensen","roleText":"premarital counsellor","roleChecked":"practice website"}'
+#   -d '{"matrixId":"@jensen:local","displayName":"Sister Jensen","hostType":"sensitive","roleText":"premarital counsellor","roleChecked":"practice website"}'
+# A promoting business: its organisation name is kept off the card (refused in the event's name or welcome).
+#   -d '{"matrixId":"@dev:local","displayName":"Dev (Spark Night)","hostType":"events_business","organisation":"Spark Night"}'
+# Someone added before host types shows hostType null and can't go on a new event until it's set (once):
+#   curl -s -X POST -H "$AUTH" -H 'Content-Type: application/json' $BASE/api/admin/host-tools/hosts/<id>/type -d '{"hostType":"club"}'
 
 # An event. The plaintext code comes back ONCE, here, and is never stored or shown again.
 NOW=$(($(date +%s)*1000)); CLOSE=$((NOW + 3*24*3600*1000))
@@ -53,6 +63,8 @@ curl -s -H "$AUTH" -H 'Content-Type: application/json' $BASE/api/admin/host-tool
 # → {"event":{...},"code":"word-word-word-word","link":"?meetup=word-word-word-word"}
 # An outside host at level 1:   "kind":"outside","level":1,"hostPersonId":"<id from /hosts>","handleExchange":false
 # A studio event with a guest:  "kind":"studio","level":3,"guestReaderId":"<id>"   (needs RI_SHARE_CODE_SECRET)
+# Promoted by someone:          "promoterIds":["<id>"]   (refused at the queue and at JOIN_GAME like the host; an events
+#                               business promoter turns the handle exchange off and is never named on the card)
 
 # Pause, resume, close, or lower the level. After the first player acknowledges
 # the card, these are the only changes allowed.
@@ -63,7 +75,7 @@ curl -s -X PATCH -H "$AUTH" -H 'Content-Type: application/json' $BASE/api/admin/
 curl -s -H "$AUTH" $BASE/api/admin/host-tools/host-reports
 ```
 
-The server refuses what §9.1 of the spec rules out. For example: a host with authority over attendees can't run share codes, a dating or events business can't host, a sensitive community can't host, an event can run at most 14 days, and a level-3 event can't be created without `RI_SHARE_CODE_SECRET`. The error message says which rule applied.
+The server refuses what §9.1 of the spec rules out, from each person's host type (the per-event boxes can only add to it). For example: a host with authority over attendees can't run share codes, a dating or events business can't host (only promote a studio event that doesn't name it), a sensitive-community counsellor can't host, an event can run at most 14 days, and a level-3 event can't be created without `RI_SHARE_CODE_SECRET`. The error message says which rule applied.
 
 ## 3. Drive two players through a game cheaply
 
@@ -74,7 +86,7 @@ Each player needs their own browser storage. Use a normal window and a private w
 3. **Each player:** read the event card, then choose **sounds good, continue**. Then agree to the ID check (it returns at once), name the child, and join the queue.
 4. **The pair:** both land in the same game. With `RI_DEV_MOCK_LLM=true`, every scene and reply is canned, so playing to the report card costs nothing.
 
-To check the host side: a host who joins their own event's queue gets "stranger mode isn't available here."
+To check the host side: a host, guest reader or promoter who joins their own event's queue gets "stranger mode isn't available here."
 
 ## 3b. The host portal and the deck
 
