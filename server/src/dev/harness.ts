@@ -58,6 +58,12 @@ export function devMockLlm(): MockLLMClient {
   mock.kidResponses = ["okay.", "why though?", "I didn't do it.", "can we go to the park?"];
   mock.reportCardText = [
     "# Report card",
+    "## Personality",
+    "Curious and a little stubborn. Slow to warm up, then loyal for good.",
+    "## Strengths",
+    "- Keeps going when things get hard.",
+    "## Struggles",
+    "- Finds it hard to ask for help.",
     "## Pivotal Moments",
     "They talked it through at the kitchen table, more than once, and nobody stormed off for good.",
     "A bad winter at school turned into a long spring of walks after dinner.",

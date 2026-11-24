@@ -170,7 +170,7 @@ As v2:
 >
 > RI never gives {host} a list of who played or who made a code. but {host} may know you came, and may notice that no code came from your pair. they can't tell why. games end up without a code when they don't finish, when either of you says no or waits, when you keep the code to yourselves, or for reasons RI doesn't share.
 >
-> a code shows: your report card (without its quotes) and your child's epilogue. both were written from your whole game, including your private talks with your child. they don't show those talks, but they can reflect them. you'll read exactly what {host} would see before you choose.
+> a code shows: part of your report card (your child's personality, strengths and struggles) and your child's epilogue. both were written from your whole game, including your private talks with your child, so they can reflect them. we take out every sentence that quotes anyone or repeats five or more of your words in a row, and we try to take out every name either of you typed and anything that retells your private talks. your names become "Parent 1" and "Parent 2". you'll read exactly what {host} would see before you choose.
 >
 > if you both say yes but no code appears, your game couldn't make one. RI doesn't say why.
 >
@@ -227,7 +227,7 @@ At every level, the host sees only whether the event is **open, paused, closed o
 3. **Preview.** Tapping "show me exactly what {host} would see" renders the trimmed content (§5.3). It is deterministic, there is no LLM call, and excluded games are rendered too.
 4. **Decision screen copy:**
    > **make a share code for {host}?**
-   > a share code lets {host} read your report card (without its quotes) and your child's epilogue. both were written from your whole game, including your private talks with your child. they don't show those talks, but they can reflect them.
+   > a share code lets {host} read part of your report card (your child's personality, strengths and struggles) and your child's epilogue. both were written from your whole game, including your private talks with your child, so they can reflect them. we take out every sentence that quotes anyone or repeats five or more of your words in a row, and we try to take out every name either of you typed and anything that retells your private talks. your names become "Parent 1" and "Parent 2".
    > [ show me exactly what {host} would see ]
    > RI won't tell your co-parent what you chose. if one of you says yes and no code appears, that can mean the other said no, or is deciding later, or that this game can't make a code. RI never says which.
    > [ yes ]   [ no ]   [ decide later, on my own ]
@@ -253,6 +253,8 @@ At every level, the host sees only whether the event is **open, paused, closed o
 - **Failed redemptions:** the host sees **"this code isn't available."** That one line covers a wrong code, an expired one, a stopped one, one for another host, one that never existed, or one that was rate-limited. Every failure gets the same status, body and timing.
 
 ### 5.3 Trimming and the quote scrub (B2)
+
+> Superseded in 2.14.1: see "As built: the fail-safe scrub (2.14.1)" at the end. The original rule is kept below for the record.
 
 The snapshot is built by a pure function, `buildShareSnapshot(reportCard, epilogue, parentMessages)`:
 
@@ -924,3 +926,20 @@ Two persona tests of 2.12.0 found player-facing sentences that the code didn't k
 - **Report card on reopen (2.12.1).** The report card is server-owned state (`GameState.reportCard`), on every STATE and `GET /state`; rehydration restores it and the epilogue from the `endgames` row.
 - **Host type on the person (2.14.0).** §9.1 is recorded once per person (`host_people.host_type`: club, authority, events_business, sensitive, studio), not per event. Each event's `authority` and `events_business` flags are derived from its people (the per-event boxes can only add to them). An events business never hosts and can only promote a studio event; its `organisation` (and any "(…)" in its display name) is refused in the event's name and welcome. A sensitive-community counsellor or studio staff can be a guest reader, never a host; an authority host gets L1 at most and is never a guest reader. People from before migration 036 are backfilled only where an event already says what they are (an authority outside host → authority, any other outside host → club); the rest stay unset and can't go on a new event until the admin sets the type, once.
 - **Promoters (2.14.0).** `host_events.promoter_ids`. A promoter is refused at the queue and at JOIN_GAME exactly like the host (H12, the same neutral copy), sees nothing in the portal, and the card says "the business or group that sent you this link can't play at this meetup, and sees nothing about who came or how it went." Promoters can be added after the first acknowledgement (a new card version), except an events business when the card promised the handle exchange.
+
+# As built: the fail-safe scrub (2.14.1)
+
+The 2.12 persona tests got third-party names (a bishop, a grandfather, a mission companion, a town), a paraphrased sidebar line, curly-single-quoted speech, quotes split across sentences and lines, and the players' nicknames through the §5.3 scrub. The rule is now: **a shared artifact never quotes or describes private-talk content, and never names anyone a player typed.** `buildShareSnapshot(reportCard, epilogue, sources)` (`server/src/hosts/share-snapshot.ts`) fails safe:
+
+- **Sources, by kind.** `typed`: every parent message in every chat, confessionals, therapy lines. `privateTalk`: every non-shared message from either side (private and debrief, the child's private replies too) and confessionals. `derived`: the identity document, its snapshots, the memory summary. `scenes` and `childLines`: text the world generated (event description/setting/trigger, the child's shared lines). `childName`, `players`.
+- **Report card: an allow-list, not a deny-list.** Only the title (rewritten to the child's name), `## Personality`, `## Strengths` and `## Struggles` are kept. Pivotal Moments (the section that retold scenes), Voices, Quotes and any unknown section never go. A missing Voices or Quotes heading still leaves out the whole card.
+- **A sentence goes when it:**
+  - overlaps a quoted span of **2+ words**, in any style (“” "" ‘’ '' «» „“ ‹› 「」 『』), where spans are found on the whole text so they cross sentences and lines, and an unclosed quote runs to the end of its paragraph. Apostrophes and one-word scare quotes stay;
+  - shares a **5-word run** with `typed` or `privateTalk`, or a **6-word run** with `derived`, checked on the whole text so a run crossing a sentence or line break still counts. A run of only common words doesn't count;
+  - shares **3 distinctive stems** (4+ letters, not a common or family word, not the child's or players' names) with one sentence of private talk (a paraphrase: the purple giraffe);
+  - mentions secrets or confidences;
+  - **names someone the game didn't generate.** A capitalised word mid-sentence must be the child's name, a name in `scenes`/`childLines` that no player also typed, a day, month, holiday or family word, or a player's name or nickname. A capitalised word at the start of a sentence goes if it's a title (Bishop, Elder, Aunt…), is written capitalised mid-sentence in what was typed or in the text itself, or was typed and is never an ordinary lowercase word in the generated text (so "gary" typed in lower case is still a name).
+- **40% rule** per part, as before.
+- **Names (H5).** The players' names, diminutives (Rebecca → Becca, Becky; Tom → Tommy, Thomas) and nicknames built on them become "Parent 1"/"Parent 2". The child's name always wins.
+- **Copy.** The card and the share step say what a code carries: the child's personality, strengths and struggles plus the epilogue, with quotes and 5-word copies removed, and a best effort on typed names and retellings ("we try to"), because those two are heuristics.
+
