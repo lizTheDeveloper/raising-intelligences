@@ -59,7 +59,9 @@ RI_LOG_ARCHIVE=/var/log/raising-intelligences
 OLD_LOG="$(docker inspect --format '{{.LogPath}}' raising-intelligences 2>/dev/null || true)"
 if [ -n "$OLD_LOG" ]; then
   STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-  if [ -f "$OLD_LOG" ] && mkdir -p "$RI_LOG_ARCHIVE" && gzip -c "$OLD_LOG" > "$RI_LOG_ARCHIVE/container-$STAMP.json.log.gz.part" \
+  # RI logs hold player text: the folder is root-only and each archive is 0600.
+  if [ -f "$OLD_LOG" ] && install -d -m 0700 -o root -g root "$RI_LOG_ARCHIVE" \
+     && ( umask 077; gzip -c "$OLD_LOG" > "$RI_LOG_ARCHIVE/container-$STAMP.json.log.gz.part" ) \
      && mv "$RI_LOG_ARCHIVE/container-$STAMP.json.log.gz.part" "$RI_LOG_ARCHIVE/container-$STAMP.json.log.gz"; then
     echo "[deploy] archived old container log to $RI_LOG_ARCHIVE/container-$STAMP.json.log.gz"
     docker rm raising-intelligences 2>/dev/null || true
