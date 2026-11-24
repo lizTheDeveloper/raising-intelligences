@@ -11,6 +11,7 @@ export { getSavedKids, saveKid, mergeKids } from "../localStore";
 export type { SavedKid } from "../localStore";
 import { getSavedKids, saveKid } from "../localStore";
 import type { SavedKid } from "../localStore";
+import { restoredEndgame } from "../endgameRestore";
 
 interface GameEvent {
   eventNumber: number;
@@ -223,6 +224,11 @@ export function useGame() {
       setMessagesRemaining(data.messagesRemaining ?? 12 - (data.parentMessageCount ?? 0));
       setInterventionText(data.interventionText ?? null);
       setTherapyMessages(data.therapyMessages ?? []);
+      // A finished game reopened (a reload, the saved-kids list): its report
+      // card and epilogue come with the state now.
+      const restored = restoredEndgame(data);
+      if (restored.epilogue) setEpilogue(restored.epilogue);
+      if (restored.reportCard) setReportCard(restored.reportCard);
       // Only a debrief screen shows the memory. Resuming into one has no
       // earlier summary to compare against, so the server's is taken as is.
       const resumedSummary = typeof data.memorySummary === "string" ? data.memorySummary : "";

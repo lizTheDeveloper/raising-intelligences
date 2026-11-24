@@ -81,6 +81,7 @@ const PARTNER_TYPING_TTL = 5000;
 // The resume credential lives in localStore.ts (guarded: storage can throw).
 export { loadResume, clearResume } from "../localStore";
 import { loadResume, saveResume, clearResume, type ResumeData } from "../localStore";
+import { restoredEndgame } from "../endgameRestore";
 import { campusIdentity, campusIdentityUnknown } from "../campusCabinet";
 
 /**
@@ -258,6 +259,10 @@ interface ViewerState {
    * confident empty string.
    */
   epilogue?: string;
+  /** The report card, "" before it exists. Rides on STATE so a seat that
+   * reloads or comes back later can read it again (it used to arrive only in
+   * the one-shot REPORT_CARD_READY). Optional like the fields above. */
+  reportCard?: string;
   /** Has THIS seat's guardian-quiz answer reached the server? Optional for
    * the same reason as the fields above. */
   yourPersonalitySubmitted?: boolean;
@@ -681,7 +686,11 @@ export function useMultiplayer() {
       // the game up on a second device after it fired. Only a non-empty value
       // is honoured: every STATE before the epilogue exists carries "", and
       // taking those would clobber an EPILOGUE event that arrived first.
-      if (typeof s.epilogue === "string" && s.epilogue !== "") setEpilogue(s.epilogue);
+      // The report card the same way: a seat reopening a finished game gets
+      // it here, where it used to see "No report card was generated."
+      const restored = restoredEndgame(s);
+      if (restored.epilogue) setEpilogue(restored.epilogue);
+      if (restored.reportCard) setReportCard(restored.reportCard);
       if (s.phase !== phaseRef.current) {
         phaseRef.current = s.phase;
         clearPartnerTyping();

@@ -284,6 +284,7 @@ function viewerState(state: GameState, slot: Sender, generating: boolean): Viewe
     partnerPersonalitySubmitted: !!state.parentPersonalities[otherSlot],
     yourPersonalitySubmitted: slot !== "kid" && !!state.parentPersonalities[slot],
     epilogue: state.epilogue,
+    reportCard: state.reportCard ?? "",
     payment: null,
   };
 }

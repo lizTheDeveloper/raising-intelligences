@@ -148,6 +148,12 @@ export interface ViewerState {
    */
   epilogue: string;
   /**
+   * The report card, or "" before it exists. Both seats get the same card (it
+   * was always broadcast to the whole game); carrying it here is what lets a
+   * seat that reloads or comes back later read it again.
+   */
+  reportCard: string;
+  /**
    * The $20 per-child partner payment, for this seat. Null when nothing is
    * due (solo, AI co-parent, paywall off, or before the partner has joined).
    * `youPay` is true on the host's (parent1's) view only.

@@ -92,6 +92,7 @@ export function createGame(childName: string, relationshipType = "co-parents"): 
     therapyMessages: [],
     cpsOutcome: null,
     epilogue: "",
+    reportCard: "",
     pendingGuidance: null,
     lastActivityAt: Date.now(),
   };
@@ -398,6 +399,7 @@ function applyTransition(state: GameState, action: GameAction): GameState {
       return {
         ...state,
         phase: "report_card",
+        reportCard: action.reportCard,
       };
 
     case "TRAJECTORY_CHECKED": {
