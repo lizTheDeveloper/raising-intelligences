@@ -5,7 +5,7 @@ import { normalizeMeetupCode, readStrangerConfig } from "../stranger/config.js";
 import type { StrangerService, StrangerHostTools } from "../stranger/service.js";
 import type { PartnerPayments } from "../payments/partner-payments.js";
 import { buildCard, liveTerms, reconcileTerms, termsFor, type CardPayload, type LiveSettings } from "./card.js";
-import { ackTokenHash, eventCodeHash, newAckToken, newEventCode, opaqueRef, shareCodeHash } from "./codes.js";
+import { ackTokenHash, deriveEventCode, eventCodeHash, newAckToken, opaqueRef, shareCodeHash } from "./codes.js";
 import { MAX_EVENT_MS, readHostToolsConfig, type HostToolsConfig } from "./config.js";
 import type { HostStore, PurgeRules } from "./store.js";
 import { HOST_TYPES, type EventStatus, type HostEvent, type HostPerson, type HostType, type Level } from "./types.js";
@@ -200,7 +200,7 @@ export class HostTools implements StrangerHostTools {
         logger.info("host_env_event_new_period", { retiredEventId: existing.id });
       }
       const e: HostEvent = {
-        id: randomUUID(), codeHash: hash, source: "env", name: ENV_EVENT_NAME, kind: "studio", hostPersonId: null, guestReaderId: null, promoterIds: [],
+        id: randomUUID(), codeHash: hash, source: "env", name: ENV_EVENT_NAME, kind: "studio", hostPersonId: null, guestReaderId: null, promoterIds: [], codeSeq: null,
         sensitive: false, authority: false, eventsBusiness: false, level: 0, shareCodes: false, studioLearning: false, handleExchange: true,
         welcomeText: "", lengthText: null, conductUrl: null, capacity: 500, joinWindowMs: this.stranger.config().joinWindowMs,
         opensAt: now, closesAt: now + MAX_EVENT_MS, paused: false, pausedBy: null, closedAt: null, cardVersion: 1, frozenTerms: null, firstAckAt: null,
@@ -603,10 +603,11 @@ export class HostTools implements StrangerHostTools {
     if (!promoterIds) return { ok: false, status: 400, error: "promoterIds: a list of people ids" };
     const people = await this.peopleMap();
     const fromPeople = this.derived({ hostPersonId: str(input.hostPersonId), promoterIds, authority: bool(input.authority), eventsBusiness: bool(input.eventsBusiness) } as HostEvent, people);
-    const code = newEventCode();
+    const id = randomUUID();
+    const code = deriveEventCode(this.pepper, id, 0);
     const e: HostEvent = {
-      id: randomUUID(), codeHash: eventCodeHash(this.pepper, code), source: "admin", name: (str(input.name) ?? "").trim(), kind,
-      hostPersonId: str(input.hostPersonId), guestReaderId: str(input.guestReaderId), promoterIds,
+      id, codeHash: eventCodeHash(this.pepper, code), source: "admin", name: (str(input.name) ?? "").trim(), kind,
+      hostPersonId: str(input.hostPersonId), guestReaderId: str(input.guestReaderId), promoterIds, codeSeq: 0,
       sensitive: bool(input.sensitive), authority: fromPeople.authority, eventsBusiness: fromPeople.eventsBusiness,
       level, shareCodes: level === 3, studioLearning: bool(input.studioLearning),
       handleExchange: input.handleExchange === undefined ? !fromPeople.eventsBusiness : bool(input.handleExchange),
@@ -626,6 +627,46 @@ export class HostTools implements StrangerHostTools {
     logger.info("host_event_created", { eventId: e.id, kind: e.kind, level: e.level });
     // The plaintext code goes back once, here, and is never stored.
     return { ok: true, value: { event: e, code } };
+  }
+
+  // ---- The event's link (persona tests, Kofi) ----
+
+  /** The meetup link for a code: where the game lives, with ?meetup=. */
+  linkFor(code: string): string {
+    return `${this.stranger.config().publicBaseUrl}/?meetup=${code}`;
+  }
+
+  /**
+   * An admin event's current code, derived again, or null: a closed or
+   * finished meetup, an env code, or a random code from before migration 037.
+   */
+  codeFor(e: HostEvent): { code: string; link: string } | null {
+    if (e.source !== "admin" || e.codeSeq === null) return null;
+    const code = deriveEventCode(this.pepper, e.id, e.codeSeq);
+    return { code, link: this.linkFor(code) };
+  }
+
+  /**
+   * "get a new link": the old code stops at once, for everyone (the card,
+   * the acknowledgement and sign-in all answer as for a code never made, so
+   * anyone still on the card gets the neutral ending). Anyone already past the
+   * card keeps going: their passes move to the new code, and the queue and the
+   * games are kept by event id.
+   */
+  async newCode(id: string): Promise<AdminResult<{ code: string; link: string }>> {
+    const e = this.byId.get(id) ?? (await this.store.getEvent(id));
+    if (!e || e.source !== "admin") return { ok: false, status: 404, error: "No such event" };
+    if (this.status(e) === "closed") return { ok: false, status: 409, error: "this meetup is closed." };
+    const seq = (e.codeSeq ?? -1) + 1;
+    const code = deriveEventCode(this.pepper, e.id, seq);
+    const oldHash = e.codeHash;
+    const updated = this.remember(await this.store.updateEvent(e.id, { codeHash: eventCodeHash(this.pepper, code), codeSeq: seq }));
+    if (!updated) return { ok: false, status: 404, error: "No such event" };
+    const wasOld = (c: string) => eventCodeHash(this.pepper, c) === oldHash;
+    this.stranger.passes.moveMeetup(wasOld, code);
+    this.stranger.matching?.moveMeetup(wasOld, code);
+    logger.info("host_event_new_code", { eventId: e.id });
+    return { ok: true, value: { code, link: this.linkFor(code) } };
   }
 
   /**

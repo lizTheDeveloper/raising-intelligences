@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { track } from "../analytics";
-import { asCard, loadAck, type MeetupCard } from "../meetupCard";
+import { asCard, loadAck, neverBuilt, type MeetupCard } from "../meetupCard";
 import { MINOR_OTHER_WAYS } from "../strangerCopy";
 
 const API = import.meta.env.BASE_URL + "api";
@@ -94,7 +94,7 @@ export function StrangerMode({ meetup, consentVersion, onBack, renderEligible, p
         "/stranger/pass",
         { openIdToken: tok.access_token, meetup, ...(ack ? { ackToken: ack.ackToken } : {}) },
       );
-      if (r.status === 404) return setStep("closed");
+      if (neverBuilt(r.status, r.body)) return setStep("closed");
       const card = r.status === 409 ? asCard(r.body.card) : null;
       if (card && onCardChanged) return onCardChanged(card, () => void signIn());
       if (!r.body.pass) return setError(r.body.error ?? "that didn't work. try again.");

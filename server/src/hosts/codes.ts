@@ -39,6 +39,15 @@ export function deriveShareWords(secret: string, codeId: string): string {
   return wordsFrom(hmac(secret, `share-code:${codeId}`)).join(" ");
 }
 
+/**
+ * An event's code, derived (never stored) from the pepper, the event id and
+ * how many times it was replaced: four words joined with hyphens. The host
+ * can be shown it again; "get a new link" bumps `seq`.
+ */
+export function deriveEventCode(pepper: string, eventId: string, seq: number): string {
+  return wordsFrom(hmac(pepper, `event-code-words:${eventId}:${seq}`)).join("-");
+}
+
 /** A fresh event code: four random words joined with hyphens (a valid ?meetup= value). */
 export function newEventCode(): string {
   const out: string[] = [];

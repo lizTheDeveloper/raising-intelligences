@@ -107,6 +107,18 @@ export function createHostToolsAdminRoutes(hosts: HostTools): Router {
     if (!r.ok) return void res.status(r.status).json({ error: r.error });
     res.json({ event: await hosts.adminView(r.value.event), code: r.value.code, link: `?meetup=${r.value.code}` });
   });
+
+  // The event's link again, and a new one (the old code stops at once).
+  router.get("/admin/host-tools/events/:id/link", async (req: Request, res: Response) => {
+    await hosts.ready;
+    const e = hosts.eventById(String(req.params.id));
+    if (!e) return void res.status(404).json({ error: "No such event" });
+    res.json(hosts.codeFor(e) ?? { link: null, code: null });
+  });
+  router.post("/admin/host-tools/events/:id/new-link", async (req: Request, res: Response) => {
+    await hosts.ready;
+    send(res, await hosts.newCode(String(req.params.id)));
+  });
   router.patch("/admin/host-tools/events/:id", async (req: Request, res: Response) => {
     await hosts.ready;
     const r = await hosts.patchEvent(String(req.params.id), (req.body ?? {}) as Record<string, unknown>);

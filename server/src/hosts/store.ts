@@ -279,14 +279,14 @@ function toPerson(r: Record<string, unknown>): HostPerson {
 
 const EVENT_COLS: Array<[keyof HostEvent, string]> = [
   ["id", "id"], ["codeHash", "code_hash"], ["source", "source"], ["name", "name"], ["kind", "kind"],
-  ["hostPersonId", "host_person_id"], ["guestReaderId", "guest_reader_id"], ["promoterIds", "promoter_ids"], ["sensitive", "sensitive"], ["authority", "authority"],
+  ["hostPersonId", "host_person_id"], ["guestReaderId", "guest_reader_id"], ["promoterIds", "promoter_ids"], ["codeSeq", "code_seq"], ["sensitive", "sensitive"], ["authority", "authority"],
   ["eventsBusiness", "events_business"], ["level", "level"], ["shareCodes", "share_codes"], ["studioLearning", "studio_learning"],
   ["handleExchange", "handle_exchange"], ["welcomeText", "welcome_text"], ["lengthText", "length_text"], ["conductUrl", "conduct_url"],
   ["capacity", "capacity"], ["joinWindowMs", "join_window_ms"], ["opensAt", "opens_at"], ["closesAt", "closes_at"], ["paused", "paused"], ["pausedBy", "paused_by"],
   ["closedAt", "closed_at"], ["cardVersion", "card_version"], ["frozenTerms", "frozen_terms"], ["firstAckAt", "first_ack_at"],
   ["publishedFunnel", "published_funnel"], ["publishedAt", "published_at"], ["createdAt", "created_at"],
 ];
-const NUMERIC_EVENT = new Set<keyof HostEvent>(["level", "capacity", "joinWindowMs", "opensAt", "closesAt", "closedAt", "cardVersion", "firstAckAt", "publishedAt", "createdAt"]);
+const NUMERIC_EVENT = new Set<keyof HostEvent>(["level", "codeSeq", "capacity", "joinWindowMs", "opensAt", "closesAt", "closedAt", "cardVersion", "firstAckAt", "publishedAt", "createdAt"]);
 const JSON_EVENT = new Set<keyof HostEvent>(["frozenTerms", "publishedFunnel"]);
 
 function toEvent(r: Record<string, unknown>): HostEvent {

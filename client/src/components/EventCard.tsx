@@ -4,6 +4,7 @@ import {
   asCard,
   boldRuns,
   currentStrangerPass,
+  neverBuilt,
   safeHttpsUrl,
   saveAck,
   statusNote,
@@ -172,7 +173,7 @@ export function EventCard({ card, meetup, changed, onCardReplaced, onAcked, onNo
           return;
         }
       }
-      if (r.status === 404) return setError("this meetup isn't open anymore.");
+      if (neverBuilt(r.status, r.body)) return setError("this meetup isn't open anymore.");
       setError(r.body.error ?? "that didn't work. try again.");
     } catch {
       setError("that didn't work. try again.");

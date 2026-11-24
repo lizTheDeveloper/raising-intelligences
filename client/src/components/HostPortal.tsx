@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  NUMBERS_LATER,
+  numbersNote,
   asPortalEvents,
   dateRange,
   funnelLine,
@@ -16,6 +16,7 @@ import {
 } from "../hostPortal";
 import { Deck } from "./Deck";
 import { HostCodes } from "./HostCodes";
+import { HostEventLink } from "./HostEventLink";
 
 /**
  * The meetup host portal (host tools spec §4, B.4, B.5), at `?host=1`. Hosts
@@ -208,8 +209,9 @@ export function HostPortal({ deck }: { deck: DeckData }) {
       <section key={e.ref} className="event-card-section host-event" data-testid="host-event">
         <h2><strong>{e.name}</strong> · {statusLabel(e.status)}</h2>
         <p className="dim">{dateRange(e.opensAt, e.closesAt)}</p>
-        <p className="dim">{NUMBERS_LATER}</p>
+        {numbersNote(e.status, !!line) && <p className="dim">{numbersNote(e.status, !!line)}</p>}
         {line && <p>{line}</p>}
+        <HostEventLink pass={pass} eventRef={e.ref} closed={e.status === "closed"} onSignedOut={() => signedOut("you were signed out. sign in again.")} />
         {(a.toggle || a.close || a.lower) && (
           <div className="event-card-actions host-event-actions">
             {a.toggle && (

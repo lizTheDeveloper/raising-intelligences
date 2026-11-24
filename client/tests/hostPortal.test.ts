@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import {
   HOST_PASS_KEY,
   TOO_SMALL,
+  numbersNote,
+  NUMBERS_LATER,
+  asHostLink,
+  NEW_LINK_WARNING,
   asDeck,
   asPortalEvents,
   dateRange,
@@ -176,4 +180,20 @@ test("hostRoute: ?host=1 and ?deck=1 only", () => {
   assert.equal(hostRoute("?host=0"), null);
   assert.equal(hostRoute("?host"), null);
   assert.equal(hostRoute(""), null);
+});
+
+test("the numbers note fits the meetup's state: never 'while your meetup is open' once it's closed", () => {
+  assert.equal(numbersNote("open", false), NUMBERS_LATER);
+  assert.equal(numbersNote("paused", false), NUMBERS_LATER);
+  assert.equal(numbersNote("closed", false), "this meetup is closed. numbers, if there are any, appear a day after it closed.");
+  assert.equal(numbersNote("closed", true), null);
+});
+
+test("Kofi's link: a link and its code, or none for an old meetup", () => {
+  assert.deepEqual(asHostLink({ link: "https://x/?meetup=a-b-c-d", code: "a-b-c-d" }), { link: "https://x/?meetup=a-b-c-d", code: "a-b-c-d" });
+  assert.deepEqual(asHostLink({ link: null, code: null }), { link: null, code: null });
+  assert.equal(asHostLink({ link: 3 }), null);
+  assert.equal(asHostLink(null), null);
+  assert.match(NEW_LINK_WARNING, /old link stops working at once/);
+  assert.match(NEW_LINK_WARNING, /already waiting or playing carry on/);
 });

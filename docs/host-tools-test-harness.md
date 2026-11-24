@@ -17,7 +17,7 @@ export RI_STRANGER_ALLOW_TEST_IDENTITY=true             # ...which is a test-mod
 export RI_DEV_MOCK_LLM=true                             # canned scenes and replies: no model calls
 # optional: export RI_MEETUP_CODES=tea-party            # listed codes become studio level-0 events
 # optional: export DATABASE_URL=postgres://…            # needed for the admin screen; keeps data across restarts
-# optional: export RI_PUBLIC_BASE_URL=http://localhost:5183   # only if the client isn't on :5173 (see notes)
+# optional: export RI_PUBLIC_BASE_URL=http://localhost:5183   # only if the client isn't on :5173 (see notes); also the base of the portal's meetup links
 npm run dev                                             # server :3000 (or $PORT), client :5173
 ```
 
@@ -59,7 +59,10 @@ curl -s -H "$AUTH" -H 'Content-Type: application/json' $BASE/api/admin/host-tool
 # Someone added before host types shows hostType null and can't go on a new event until it's set (once):
 #   curl -s -X POST -H "$AUTH" -H 'Content-Type: application/json' $BASE/api/admin/host-tools/hosts/<id>/type -d '{"hostType":"club"}'
 
-# An event. The plaintext code comes back ONCE, here, and is never stored or shown again.
+# An event. The code comes back here. It is derived from RI_STRANGER_PEPPER, the event id and a count of
+# replacements, so it is never stored in the clear (only its keyed hash), and can be shown again:
+#   curl -s -H "$AUTH" $BASE/api/admin/host-tools/events/<id>/link          → {"code","link"}  (null for an event from before 2.17.0)
+#   curl -s -X POST -H "$AUTH" $BASE/api/admin/host-tools/events/<id>/new-link  → a new code; the old one stops at once
 NOW=$(($(date +%s)*1000)); CLOSE=$((NOW + 3*24*3600*1000))
 curl -s -H "$AUTH" -H 'Content-Type: application/json' $BASE/api/admin/host-tools/events \
   -d "{\"name\":\"tuesday tea\",\"kind\":\"studio\",\"level\":0,\"opensAt\":$NOW,\"closesAt\":$CLOSE}"
@@ -94,6 +97,7 @@ To check the host side: a host, guest reader or promoter who joins their own eve
 ## 3b. The host portal and the deck
 
 - **Host portal:** `http://localhost:5173/?host=1&devmxid=@robin:local` (the `devmxid` stand-in is dev-only). Sign in. An approved host sees their events' status. Numbers appear only for level 1 and up, once, 24 hours after close. Hosts can pause, resume, close and lower their own events. A guest reader sees each event's name and dates.
+- **The host's link, card and new link** (each of the host's own events, not a guest reader's): "show the meetup link" shows the link to hand out, again, with "copy". "see the card your players see" shows the card exactly as `GET /events/card` gives it, read-only. "get a new link" warns, then replaces the code: the old code answers as for a code never made (the card, the acknowledgement and sign-in), so a player still on the card gets "this meetup isn't open anymore."; anyone already past the card (signed in, queued, playing) carries on, because their passes and queue entries move to the new code. A closed meetup shows only the card. An event made before 2.17.0 has no derivable code ("get a new link to see one here"). The routes: `POST /api/host/events/<ref>/link|card|new-link {pass}`.
 - **Studio pause:** a pause made through the admin PATCH is the studio's. The host can't resume it ("the studio paused this meetup…"); only the admin can.
 - **Every portal request re-checks the person.** The request is refused if the person is no longer approved by the admin, is no longer a verified adult, is on the ban list, or is suspended from stranger mode. Revoking the account's stranger passes also revokes its host pass.
 - **Publish a funnel early** (for testing, once the event has been closed for 24 hours): `curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" $BASE/api/admin/host-tools/events/<id>/publish`

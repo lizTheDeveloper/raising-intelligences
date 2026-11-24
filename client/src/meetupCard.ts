@@ -45,6 +45,17 @@ function isSection(v: unknown): v is CardSection {
 }
 
 /** A card the client can render, or null: anything else means "no card" and the app behaves as before. */
+/**
+ * The server answered as for a path that was never built: the meetup's code
+ * was replaced, or the meetup closed or was switched off. With host tools'
+ * routes falling through, that's a 404 or the admin catch-all's bare
+ * {"error":"Unauthorized"}; a deliberate refusal always has its own words.
+ */
+export function neverBuilt(status: number, body: unknown): boolean {
+  if (status === 404) return true;
+  return status === 401 && !!body && typeof body === "object" && (body as { error?: unknown }).error === "Unauthorized";
+}
+
 export function asCard(v: unknown): MeetupCard | null {
   if (!v || typeof v !== "object") return null;
   const c = v as Record<string, unknown>;

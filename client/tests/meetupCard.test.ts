@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  neverBuilt,
   ACK_KEY,
   ackBody,
   asCard,
@@ -144,4 +145,14 @@ import { untrackedLanding } from "../src/meetupCard.ts";
 test("untrackedLanding: the meetup card, the host portal, the deck and the account page load with nothing counted", () => {
   for (const q of ["?meetup=tea-party", "?x=1&meetup=a", "?host=1", "?deck=1", "?stranger=account"]) assert.equal(untrackedLanding(q), true, q);
   for (const q of ["", "?game=abc", "?devmxid=@a:local", "?hosted=1", "?meetups=1", "?stranger=identity", "?stranger=queue", "?account=1"]) assert.equal(untrackedLanding(q), false, q);
+});
+
+test("neverBuilt: a 404, or the admin catch-all's bare 401, is a meetup that isn't there any more (a new link, a close)", () => {
+  assert.equal(neverBuilt(404, {}), true);
+  assert.equal(neverBuilt(401, { error: "Unauthorized" }), true);
+  // A real refusal with its own words is not.
+  assert.equal(neverBuilt(401, { error: "Sign in with your multiversegames.ai account first." }), false);
+  assert.equal(neverBuilt(409, { error: "Please read the meetup card first." }), false);
+  assert.equal(neverBuilt(200, {}), false);
+  assert.equal(neverBuilt(401, null), false);
 });
