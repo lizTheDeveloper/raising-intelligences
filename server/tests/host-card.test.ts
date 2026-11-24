@@ -14,7 +14,7 @@ const JENSEN = "@jensen:multiversegames.ai";
 function person(over: Partial<HostPerson> = {}): HostPerson {
   return {
     id: "p1", subject: "s", displayName: "Sister Jensen", roleText: null, roleChecked: null, roleCheckedAt: null,
-    agreementVersion: "v", agreementAt: 0, status: "approved", createdAt: 0, ...over,
+    agreementVersion: "v", agreementAt: 0, status: "approved", createdAt: 0, hostType: "sensitive", organisation: null, ...over,
   };
 }
 

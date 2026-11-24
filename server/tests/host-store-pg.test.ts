@@ -30,12 +30,12 @@ describe.skipIf(!process.env.DATABASE_URL)("host tools store on Postgres", () =>
 
   const person = (over: Partial<HostPerson> = {}): HostPerson => ({
     id: randomUUID(), subject: `s-${randomUUID()}`, displayName: "Dev", roleText: null, roleChecked: null, roleCheckedAt: null,
-    agreementVersion: "short-form-1", agreementAt: Date.now(), status: "approved", createdAt: Date.now(), ...over,
+    agreementVersion: "short-form-1", agreementAt: Date.now(), status: "approved", createdAt: Date.now(), hostType: "club", organisation: null, ...over,
   });
   const event = (over: Partial<HostEvent> = {}): HostEvent => {
     const t = Date.now();
     return {
-      id: randomUUID(), codeHash: `h-${randomUUID()}`, source: "admin", name: "tuesday tea", kind: "studio", hostPersonId: null, guestReaderId: null,
+      id: randomUUID(), codeHash: `h-${randomUUID()}`, source: "admin", name: "tuesday tea", kind: "studio", hostPersonId: null, guestReaderId: null, promoterIds: [],
       sensitive: false, authority: false, eventsBusiness: false, level: 0, shareCodes: false, studioLearning: false, handleExchange: true,
       welcomeText: "", lengthText: null, conductUrl: null, capacity: 100, joinWindowMs: 180_000, opensAt: t, closesAt: t + 86_400_000,
       paused: false, pausedBy: null, closedAt: null, cardVersion: 1, frozenTerms: null, firstAckAt: null, publishedFunnel: null, publishedAt: null, createdAt: t, ...over,
@@ -199,5 +199,21 @@ describe.skipIf(!process.env.DATABASE_URL)("host tools store on Postgres", () =>
     expect(counts.share_decisions).toBeGreaterThanOrEqual(1);
     expect(counts.unlink_requests).toBeGreaterThanOrEqual(1);
     expect(await store.getUnlink(u.id)).toBeNull();
+  });
+
+  it("migration 036: host type, organisation and promoters round-trip; the type column refuses anything else", async () => {
+    const p = person({ hostType: "events_business", organisation: "Spark Night" });
+    await store.createPerson(p);
+    const got = await store.getPerson(p.id);
+    expect(got?.hostType).toBe("events_business");
+    expect(got?.organisation).toBe("Spark Night");
+    await store.updatePerson(p.id, { hostType: "club", organisation: null });
+    expect((await store.getPerson(p.id))?.hostType).toBe("club");
+    await expect(query(`UPDATE host_people SET host_type = 'wizard' WHERE id = $1`, [p.id])).rejects.toThrow();
+    const e = event({ promoterIds: [p.id] });
+    await store.createEvent(e);
+    expect((await store.getEvent(e.id))?.promoterIds).toEqual([p.id]);
+    await store.updateEvent(e.id, { promoterIds: [] });
+    expect((await store.getEvent(e.id))?.promoterIds).toEqual([]);
   });
 });

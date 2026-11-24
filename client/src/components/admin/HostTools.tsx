@@ -26,7 +26,22 @@ interface Person {
   roleCheckedAt: number | null;
   status: "approved" | "suspended" | "closed";
   createdAt?: number;
+  hostType: HostType | null;
+  organisation: string | null;
 }
+
+/** §9.1, on the person (set once). Every event's levels and naming come from it. */
+type HostType = "club" | "authority" | "events_business" | "sensitive" | "studio";
+const HOST_TYPE_LABEL: Record<HostType, string> = {
+  club: "club or group (no authority over attendees): host at L0, L1 or L3",
+  authority: "has authority over attendees (teacher, employer…): host at L0 or L1, never share codes",
+  events_business: "dating or events business: can't host; can promote a studio event, unnamed, handle exchange off",
+  sensitive: "faith or sensitive-community counsellor: can't host; guest reader at a studio event",
+  studio: "studio staff: guest reader at a studio event",
+};
+const HOST_TYPE_SHORT: Record<HostType, string> = {
+  club: "club", authority: "authority", events_business: "events business", sensitive: "sensitive", studio: "studio",
+};
 
 interface HostEventRow {
   id: string;
@@ -44,6 +59,7 @@ interface HostEventRow {
   capacity: number;
   hostPersonId: string | null;
   guestReaderId: string | null;
+  promoterIds?: string[];
   handleExchange: boolean;
   studioLearning: boolean;
 }
@@ -129,16 +145,20 @@ export function HostTools({ token }: { token: string }) {
   const [pName, setPName] = useState("");
   const [pRole, setPRole] = useState("");
   const [pChecked, setPChecked] = useState("");
+  const [pType, setPType] = useState<HostType | "">("");
+  const [pOrg, setPOrg] = useState("");
   const createPerson = (e: React.FormEvent) => {
     e.preventDefault();
     void act(async () => {
       await api("/hosts", "POST", {
         matrixId: pMxid.trim(),
         displayName: pName.trim(),
+        hostType: pType,
+        ...(pOrg.trim() ? { organisation: pOrg.trim() } : {}),
         ...(pRole.trim() ? { roleText: pRole.trim() } : {}),
         ...(pChecked.trim() ? { roleChecked: pChecked.trim() } : {}),
       });
-      setPMxid(""); setPName(""); setPRole(""); setPChecked("");
+      setPMxid(""); setPName(""); setPRole(""); setPChecked(""); setPType(""); setPOrg("");
     });
   };
 
@@ -150,6 +170,7 @@ export function HostTools({ token }: { token: string }) {
     level: 0,
     hostPersonId: "",
     guestReaderId: "",
+    promoterIds: [] as string[],
     authority: false,
     eventsBusiness: false,
     sensitive: false,
@@ -172,6 +193,7 @@ export function HostTools({ token }: { token: string }) {
         level: ev.level,
         ...(ev.kind === "outside" && ev.hostPersonId ? { hostPersonId: ev.hostPersonId } : {}),
         ...(ev.kind === "studio" && ev.guestReaderId ? { guestReaderId: ev.guestReaderId } : {}),
+        ...(ev.promoterIds.length ? { promoterIds: ev.promoterIds } : {}),
         authority: ev.authority,
         eventsBusiness: ev.eventsBusiness,
         sensitive: ev.sensitive,
@@ -195,6 +217,10 @@ export function HostTools({ token }: { token: string }) {
   };
 
   const patchEvent = (id: string, patch: Record<string, unknown>) => act(() => api(`/events/${id}`, "PATCH", patch));
+  const setType = (p: Person, t: HostType) => {
+    if (!window.confirm(`Set ${p.displayName} as: ${HOST_TYPE_LABEL[t]}? This is set once.`)) return;
+    void act(() => api(`/hosts/${p.id}/type`, "POST", { hostType: t }));
+  };
   const personName = (id: string | null) => (id ? people.find((p) => p.id === id)?.displayName ?? id.slice(0, 8) : "—");
   const approved = people.filter((p) => p.status === "approved");
   const openReports = reports.filter((r) => r.status === "open");
@@ -248,12 +274,20 @@ export function HostTools({ token }: { token: string }) {
       <div className="detail-section">
         <h3>People (hosts and guest readers)</h3>
         <table className="admin-table">
-          <thead><tr><th>Name</th><th>Role</th><th>Role checked</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Type</th><th>Role</th><th>Role checked</th><th>Status</th><th></th></tr></thead>
           <tbody>
-            {people.length === 0 && <tr><td colSpan={5} className="dim">No one yet.</td></tr>}
+            {people.length === 0 && <tr><td colSpan={6} className="dim">No one yet.</td></tr>}
             {people.map((p) => (
               <tr key={p.id}>
-                <td>{p.displayName}</td>
+                <td>{p.displayName}{p.organisation && !p.displayName.includes(p.organisation) ? <span className="dim"> ({p.organisation})</span> : null}</td>
+                <td title={p.hostType ? HOST_TYPE_LABEL[p.hostType] : undefined}>
+                  {p.hostType ? HOST_TYPE_SHORT[p.hostType] : (
+                    <select aria-label={`set ${p.displayName}'s host type`} value="" disabled={busy} onChange={(e) => e.target.value && setType(p, e.target.value as HostType)}>
+                      <option value="">set type…</option>
+                      {(Object.keys(HOST_TYPE_LABEL) as HostType[]).map((t) => <option key={t} value={t}>{HOST_TYPE_LABEL[t]}</option>)}
+                    </select>
+                  )}
+                </td>
                 <td>{p.roleText ?? "—"}</td>
                 <td>{p.roleChecked ? `${p.roleChecked} (${when(p.roleCheckedAt)})` : "—"}</td>
                 <td>{p.status}</td>
@@ -271,9 +305,16 @@ export function HostTools({ token }: { token: string }) {
           <label>Display name <input required maxLength={60} value={pName} onChange={(e) => setPName(e.target.value)} /></label>
           <label>Role (optional) <input maxLength={80} placeholder="e.g. family therapist" value={pRole} onChange={(e) => setPRole(e.target.value)} /></label>
           <label>What the studio checked (optional) <input maxLength={300} placeholder="e.g. licence on the state register" value={pChecked} onChange={(e) => setPChecked(e.target.value)} /></label>
+          <label>Host type (set once){" "}
+            <select required value={pType} onChange={(e) => setPType(e.target.value as HostType | "")}>
+              <option value="">(choose)</option>
+              {(Object.keys(HOST_TYPE_LABEL) as HostType[]).map((t) => <option key={t} value={t}>{HOST_TYPE_LABEL[t]}</option>)}
+            </select>
+          </label>
+          <label>Business or group name (optional, never shown to players) <input maxLength={60} placeholder="e.g. Spark Night" value={pOrg} onChange={(e) => setPOrg(e.target.value)} /></label>
           <button type="submit" disabled={busy}>Add person</button>
         </form>
-        <p className="dim" style={{ fontSize: 12 }}>They must have passed the 18+ check first (any meetup link, "get ready early"). Only a hash of the Matrix id is stored.</p>
+        <p className="dim" style={{ fontSize: 12 }}>They must have passed the 18+ check first (any meetup link, "get ready early"). Only a hash of the Matrix id is stored. A person added before host types shows "set type…": they can't go on a new event until it's set.</p>
       </div>
 
       <div className="detail-section">
@@ -298,7 +339,10 @@ export function HostTools({ token }: { token: string }) {
                   <td>{when(e.firstAckAt)}</td>
                   <td>{when(e.opensAt)}</td>
                   <td>{closed ? `closed ${when(e.closedAt)}` : when(e.closesAt)}</td>
-                  <td>{e.kind === "outside" ? personName(e.hostPersonId) : e.guestReaderId ? `guest: ${personName(e.guestReaderId)}` : "studio"}</td>
+                  <td>
+                    {e.kind === "outside" ? personName(e.hostPersonId) : e.guestReaderId ? `guest: ${personName(e.guestReaderId)}` : "studio"}
+                    {e.promoterIds && e.promoterIds.length > 0 && <div className="dim">promoted by {e.promoterIds.map((id) => personName(id)).join(", ")}</div>}
+                  </td>
                   <td style={{ whiteSpace: "nowrap" }}>
                     {!closed && (e.paused
                       ? <button disabled={busy} onClick={() => void patchEvent(e.id, { paused: false })}>resume</button>
@@ -351,6 +395,23 @@ export function HostTools({ token }: { token: string }) {
               </select>
             </label>
           )}
+          <fieldset style={{ border: "1px solid #444", padding: 8 }}>
+            <legend>Promoted by (they can't play at this meetup and see nothing)</legend>
+            {approved.length === 0 && <span className="dim">No one yet.</span>}
+            {approved.filter((p) => p.id !== ev.hostPersonId && p.id !== ev.guestReaderId).map((p) => (
+              <label key={p.id} style={{ display: "block" }}>
+                <input
+                  type="checkbox"
+                  checked={ev.promoterIds.includes(p.id)}
+                  onChange={(e) => setF("promoterIds", e.target.checked ? [...ev.promoterIds, p.id] : ev.promoterIds.filter((x) => x !== p.id))}
+                />{" "}
+                {p.displayName}{p.hostType ? ` (${HOST_TYPE_SHORT[p.hostType]})` : ""}
+              </label>
+            ))}
+          </fieldset>
+          <p className="dim" style={{ fontSize: 12, margin: 0 }}>
+            The ceilings come from each person's host type: a host with authority gets L1 at most, an events business never hosts and turns the handle exchange off when it promotes, and its name can't be in the event's name or welcome. The boxes below can only add to that.
+          </p>
           <label><input type="checkbox" checked={ev.authority} onChange={(e) => setF("authority", e.target.checked)} /> host has authority over attendees</label>
           <label><input type="checkbox" checked={ev.eventsBusiness} onChange={(e) => setF("eventsBusiness", e.target.checked)} /> promoted by a dating or events business</label>
           <label><input type="checkbox" checked={ev.sensitive} onChange={(e) => setF("sensitive", e.target.checked)} /> sensitive community</label>

@@ -13,7 +13,7 @@ export interface HostStore {
   getPerson(id: string): Promise<HostPerson | null>;
   personBySubject(subject: string): Promise<HostPerson | null>;
   listPeople(): Promise<HostPerson[]>;
-  updatePerson(id: string, patch: Partial<Pick<HostPerson, "status" | "displayName" | "roleText" | "roleChecked" | "roleCheckedAt">>): Promise<void>;
+  updatePerson(id: string, patch: Partial<Pick<HostPerson, "status" | "displayName" | "roleText" | "roleChecked" | "roleCheckedAt" | "hostType" | "organisation">>): Promise<void>;
 
   createEvent(e: HostEvent): Promise<void>;
   getEvent(id: string): Promise<HostEvent | null>;
@@ -273,12 +273,13 @@ function toPerson(r: Record<string, unknown>): HostPerson {
     roleText: (r.role_text as string | null) ?? null, roleChecked: (r.role_checked as string | null) ?? null, roleCheckedAt: n(r.role_checked_at),
     agreementVersion: String(r.agreement_version), agreementAt: Number(r.agreement_at),
     status: r.status as HostPerson["status"], createdAt: Number(r.created_at),
+    hostType: (r.host_type as HostPerson["hostType"]) ?? null, organisation: (r.organisation as string | null) ?? null,
   };
 }
 
 const EVENT_COLS: Array<[keyof HostEvent, string]> = [
   ["id", "id"], ["codeHash", "code_hash"], ["source", "source"], ["name", "name"], ["kind", "kind"],
-  ["hostPersonId", "host_person_id"], ["guestReaderId", "guest_reader_id"], ["sensitive", "sensitive"], ["authority", "authority"],
+  ["hostPersonId", "host_person_id"], ["guestReaderId", "guest_reader_id"], ["promoterIds", "promoter_ids"], ["sensitive", "sensitive"], ["authority", "authority"],
   ["eventsBusiness", "events_business"], ["level", "level"], ["shareCodes", "share_codes"], ["studioLearning", "studio_learning"],
   ["handleExchange", "handle_exchange"], ["welcomeText", "welcome_text"], ["lengthText", "length_text"], ["conductUrl", "conduct_url"],
   ["capacity", "capacity"], ["joinWindowMs", "join_window_ms"], ["opensAt", "opens_at"], ["closesAt", "closes_at"], ["paused", "paused"], ["pausedBy", "paused_by"],
@@ -291,6 +292,7 @@ const JSON_EVENT = new Set<keyof HostEvent>(["frozenTerms", "publishedFunnel"]);
 function toEvent(r: Record<string, unknown>): HostEvent {
   const e: Record<string, unknown> = {};
   for (const [k, c] of EVENT_COLS) e[k] = NUMERIC_EVENT.has(k) ? n(r[c]) : (r[c] ?? null);
+  if (!Array.isArray(e.promoterIds)) e.promoterIds = [];
   return e as unknown as HostEvent;
 }
 
@@ -320,9 +322,9 @@ export class PgHostStore implements HostStore {
 
   async createPerson(p: HostPerson) {
     const r = await this.db.query(
-      `INSERT INTO host_people (id, subject, display_name, role_text, role_checked, role_checked_at, agreement_version, agreement_at, status, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (subject) DO NOTHING RETURNING id`,
-      [p.id, p.subject, p.displayName, p.roleText, p.roleChecked, p.roleCheckedAt, p.agreementVersion, p.agreementAt, p.status, p.createdAt],
+      `INSERT INTO host_people (id, subject, display_name, role_text, role_checked, role_checked_at, agreement_version, agreement_at, status, created_at, host_type, organisation)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (subject) DO NOTHING RETURNING id`,
+      [p.id, p.subject, p.displayName, p.roleText, p.roleChecked, p.roleCheckedAt, p.agreementVersion, p.agreementAt, p.status, p.createdAt, p.hostType, p.organisation],
     );
     return r.rows.length > 0;
   }
@@ -338,7 +340,7 @@ export class PgHostStore implements HostStore {
     return (await this.db.query(`SELECT * FROM host_people ORDER BY created_at`)).rows.map(toPerson);
   }
   async updatePerson(id: string, patch: Partial<HostPerson>) {
-    const map: Array<[keyof HostPerson, string]> = [["status", "status"], ["displayName", "display_name"], ["roleText", "role_text"], ["roleChecked", "role_checked"], ["roleCheckedAt", "role_checked_at"]];
+    const map: Array<[keyof HostPerson, string]> = [["status", "status"], ["displayName", "display_name"], ["roleText", "role_text"], ["roleChecked", "role_checked"], ["roleCheckedAt", "role_checked_at"], ["hostType", "host_type"], ["organisation", "organisation"]];
     const sets: string[] = [];
     const vals: unknown[] = [];
     for (const [k, c] of map) if (k in patch) { vals.push(patch[k]); sets.push(`${c} = $${vals.length}`); }

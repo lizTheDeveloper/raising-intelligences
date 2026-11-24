@@ -22,19 +22,19 @@ describe("host tools admin and entry", () => {
 
   it("admin routes need the admin token", async () => {
     expect((await h.get("/admin/host-tools/events")).status).toBe(401);
-    expect((await h.post("/admin/host-tools/hosts", { matrixId: DEV, displayName: "Dev" })).status).toBe(401);
+    expect((await h.post("/admin/host-tools/hosts", { matrixId: DEV, displayName: "Dev", hostType: "club" })).status).toBe(401);
   });
 
   it("a host must have passed the 18+ check; only the subject is stored, never the Matrix id", async () => {
-    const r = await h.post("/admin/host-tools/hosts", { matrixId: DEV, displayName: "Dev" }, ADMIN);
+    const r = await h.post("/admin/host-tools/hosts", { matrixId: DEV, displayName: "Dev", hostType: "club" }, ADMIN);
     expect(r.status).toBe(409);
     await h.verify(DEV);
-    const ok = await h.post("/admin/host-tools/hosts", { matrixId: DEV, displayName: "Dev" }, ADMIN);
+    const ok = await h.post("/admin/host-tools/hosts", { matrixId: DEV, displayName: "Dev", hostType: "club" }, ADMIN);
     expect(ok.status).toBe(200);
     expect(ok.text).not.toContain(DEV);
     expect(ok.body.subject).toBeUndefined();
     expect(JSON.stringify([...(h.repo.hosts as any).people.values()])).not.toContain("@dev");
-    expect((await h.post("/admin/host-tools/hosts", { matrixId: DEV, displayName: "Dev again" }, ADMIN)).status).toBe(409);
+    expect((await h.post("/admin/host-tools/hosts", { matrixId: DEV, displayName: "Dev again", hostType: "club" }, ADMIN)).status).toBe(409);
   });
 
   it("the event code is returned once, at creation, and never again (not even its hash)", async () => {
