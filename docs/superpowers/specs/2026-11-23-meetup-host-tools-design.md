@@ -936,10 +936,11 @@ The 2.12 persona tests got third-party names (a bishop, a grandfather, a mission
 - **A sentence goes when it:**
   - overlaps a quoted span of **2+ words**, in any style (“” "" ‘’ '' «» „“ ‹› 「」 『』), where spans are found on the whole text so they cross sentences and lines, and an unclosed quote runs to the end of its paragraph. Apostrophes and one-word scare quotes stay;
   - shares a **5-word run** with `typed` or `privateTalk`, or a **6-word run** with `derived`, checked on the whole text so a run crossing a sentence or line break still counts. A run of only common words doesn't count;
-  - shares **3 distinctive stems** (4+ letters, not a common or family word, not the child's or players' names) with one sentence of private talk (a paraphrase: the purple giraffe);
+  - shares **3 distinctive stems** (4+ letters, not a common or family word, not the child's or players' names) with one sentence of private talk (a paraphrase: the purple giraffe), or **2 private-only stems**: stems of one private sentence that appear nowhere in the open (shared chat, scenes, the child's shared lines). The real-model check game needed this: its epilogue said the child's red door "reminds her of Daddy's attic kite", from a sidebar about a kite hidden in the attic;
   - mentions secrets or confidences;
   - **names someone the game didn't generate.** A capitalised word mid-sentence must be the child's name, a name in `scenes`/`childLines` that no player also typed, a day, month, holiday or family word, or a player's name or nickname. A capitalised word at the start of a sentence goes if it's a title (Bishop, Elder, Aunt…), is written capitalised mid-sentence in what was typed or in the text itself, or was typed and is never an ordinary lowercase word in the generated text (so "gary" typed in lower case is still a name).
 - **40% rule** per part, as before.
+- **Debugging.** `buildShareSnapshot(..., explain)` fills `explain` with each dropped sentence and its reason (quote, copied run, secret, name, paraphrase, private-only words).
 - **Names (H5).** The players' names, diminutives (Rebecca → Becca, Becky; Tom → Tommy, Thomas) and nicknames built on them become "Parent 1"/"Parent 2". The child's name always wins.
 - **Copy.** The card and the share step say what a code carries: the child's personality, strengths and struggles plus the epilogue, with quotes and 5-word copies removed, and a best effort on typed names and retellings ("we try to"), because those two are heuristics.
 

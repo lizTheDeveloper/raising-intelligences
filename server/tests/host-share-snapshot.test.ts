@@ -164,6 +164,32 @@ describe("the share snapshot", () => {
     expect(s.epilogue).not.toContain("giraffe");
   });
 
+  it("real-LLM game 2.14.1: two words found only in private talk are enough (the attic kite)", () => {
+    const priv = "the silver kite with the torn red tail is hidden in the attic because daddy lost his job, so please don't tell anyone, okay?";
+    const text = "Her studio is a sanctuary of order, and her front door is painted a vibrant red that reminds her of Daddy’s attic kite. She ran. She hid. She slept. She woke. She sang.";
+    const s = buildShareSnapshot(null, text, sources({ childName: "Juniper", typed: [priv], privateTalk: [priv], derived: [], scenes: ["Juniper lines up her shoes by the front door."] }));
+    expect(s.epilogue).not.toContain("kite");
+    // A word the shared scene also uses isn't private-only: one private-only word is not enough.
+    const ok = buildShareSnapshot(null, "Her studio is a sanctuary of order by the front door, and her shoes still line up. She ran. She hid. She slept. She woke.", sources({ childName: "Juniper", typed: [priv], privateTalk: [priv], derived: [], scenes: ["Juniper lines up her shoes by the front door."] }));
+    expect(ok.epilogue).toContain("sanctuary of order");
+  });
+
+  it("real-LLM game 2.14.1: Title Case bold labels after a bullet are labels, not names", () => {
+    const c = [
+      "# Juniper", "## Personality",
+      "*   **Meticulously Orderly:** She needs broken things put back in their right spots.",
+      "*   **Masking Her Own Needs:** Her habit of smiling hides what she wants.",
+      "## Strengths", "- **Fearless Problem-Solving:** She rolls up her sleeves.",
+      "## Struggles", "- Her friends rely on her as their steady rock.",
+      "## The Voices in Their Head", "x", "## Notable Quotes That Stuck", "x",
+    ].join("\n");
+    const explain: Array<{ reason: string; sentence: string }> = [];
+    const s = buildShareSnapshot(c, null, sources({ childName: "Juniper", typed: [], privateTalk: [], derived: [] }), explain);
+    expect(explain).toEqual([]);
+    expect(s.reportCard).toContain("**Masking Her Own Needs:** Her habit of smiling hides what she wants.");
+    expect(s.reportCard).toContain("Her friends rely on her as their steady rock.");
+  });
+
   it("a sentence that retells a secret or a confidence is dropped", () => {
     const s = buildShareSnapshot(null, "She kept her mother's secret for years. She confided in her father once. She ran. She hid. She slept. She woke. She sang. She left.", sources({ typed: [], privateTalk: [], derived: [] }));
     expect(s.epilogue).not.toContain("secret");

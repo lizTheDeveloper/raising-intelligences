@@ -23,7 +23,8 @@ import type { ShareSnapshot } from "./types.js";
  *      (identity document, snapshots, memory summary), where the run may
  *      cross sentences and lines;
  *    - shares 3 distinctive word stems with one sentence of private talk (a
- *      paraphrase);
+ *      paraphrase), or 2 stems that one private sentence has and nothing said
+ *      in the open (shared chat, scenes, the child's shared lines) has;
  *    - talks about secrets or confidences;
  *    - names someone the game didn't generate (see `nameProblem`).
  * 3. A part that loses more than 40% of its sentences is left out.
@@ -35,6 +36,7 @@ export const TYPED_RUN = 5;
 export const DERIVED_RUN = 6;
 export const QUOTED_WORDS = 2;
 export const PARAPHRASE_STEMS = 3;
+export const PRIVATE_ONLY_STEMS = 2;
 export const MAX_DROPPED = 0.4;
 const VOICES = "## The Voices in Their Head";
 const QUOTES = "## Notable Quotes That Stuck";
@@ -75,7 +77,7 @@ export function normaliseWords(text: string): string[] {
 }
 
 const STOP = new Set(`a about above after again against all almost also always am an and any are around as at away back be became because become been before being below between both but by came can could did didnt do does doesnt doing done dont down during each even ever every few for from get gets getting go goes going gone got had has have having he her here hers herself him himself his how however i if in into is isnt it its itself just keep kept know knew known later least less let like little made make makes making many may me might more most much must my myself never no nor not nothing now of off often on once one only or other others our ours out over own quite rather really said same say says see seems she should since so some something sometimes still such take than that thats the their theirs them themselves then there these they thing things think this those though through time times to together too told toward under until up upon us very was wasnt way we well went were what whatever when where whether which while who whom whose why will with without would wouldnt yet you your yours yourself years year day days life people every everything someone anyone always also
-mother father mom mum dad mama papa parent parents child children kid kids family home house love loved loves loving son daughter baby grandma grandpa brother sister boy girl man woman`.split(/\s+/));
+mother father mom mum dad mama papa mommy mummy daddy momma parent parents child children kid kids family home house love loved loves loving son daughter baby grandma grandpa granny nana grandmother grandfather aunt uncle brother sister boy girl man woman`.split(/\s+/));
 
 /** A light Porter-style stem: enough to match "lullabies"/"lullaby" and "nights"/"night". */
 function stem(w: string): string {
@@ -230,6 +232,9 @@ function stripPossessive(w: string): string {
   return w.replace(/['’]s$/i, "");
 }
 
+/** A token's lookup form: possessive dropped from the raw word, then normalised ("Daddy’s" → "daddy"). */
+const baseNorm = (raw: string) => stripPossessive(raw).toLowerCase().replace(/['’]/g, "");
+
 function nameCore(w: string): string {
   let s = w.toLowerCase();
   for (const suf of ["ie", "ey", "y", "a", "o", "s", "i"]) {
@@ -271,11 +276,11 @@ const isAllCaps = (w: string) => w.length >= 2 && w === w.toUpperCase() && /\p{L
 /** Tokens of a sentence, each marked as in an initial-like position (start, after ":" or a dash, in a leading bold label). */
 function positioned(text: string): Array<Tok & { initial: boolean }> {
   const toks = tokens(text);
-  const bold = /^\s*\*\*([^*]+)\*\*/.exec(text);
+  const bold = /^\s*(?:(?:[-*]|\d+\.)\s+)?\*\*([^*]+)\*\*/.exec(text);
   const boldEnd = bold ? bold[0].length : -1;
   return toks.map((t, i) => {
     const gap = text.slice(i === 0 ? 0 : toks[i - 1].end, t.start);
-    const initial = i === 0 || t.end <= boldEnd || /[:;—–(\[“"‘«„]|\s-\s/.test(gap);
+    const initial = i === 0 || t.end <= boldEnd || /[:;—–(\[“"‘«„]|\s-\s|\*\*/.test(gap);
     return { ...t, initial };
   });
 }
@@ -285,7 +290,7 @@ function capsMid(texts: readonly string[]): Set<string> {
   for (const text of texts) {
     for (const line of text.split("\n")) {
       for (const s of sentences(line)) {
-        for (const t of positioned(s)) if (!t.initial && isCap(t.raw) && !isAllCaps(t.raw)) out.add(stripPossessive(t.norm));
+        for (const t of positioned(s)) if (!t.initial && isCap(t.raw) && !isAllCaps(t.raw)) out.add(baseNorm(t.raw));
       }
     }
   }
@@ -312,7 +317,7 @@ function lowerWords(texts: readonly string[]): Set<string> {
 function nameProblem(sentence: string, ctx: NameContext): boolean {
   for (const t of positioned(sentence)) {
     if (!isCap(t.raw) || isAllCaps(t.raw)) continue;
-    const w = stripPossessive(t.norm);
+    const w = baseNorm(t.raw);
     if (ctx.child.has(w) || FIXED_ALLOW.has(w) || ctx.allowed.has(w)) continue;
     if (ctx.players.some(([p]) => isVariant(t.raw, p))) continue;
     if (!t.initial) return true;
@@ -330,11 +335,16 @@ interface Checks {
   typedRuns: Set<string>;
   derivedRuns: Set<string>;
   privateStems: Set<string>[];
+  /** Per private sentence, its stems found nowhere in shared chat or generated text. */
+  privateOnly: Set<string>[];
   stemExclude: Set<string>;
   names: NameContext;
+  /** When set, each dropped sentence is reported with its reason (for tests and local debugging). */
+  explain?: Array<{ reason: string; sentence: string }>;
 }
 
 const overlaps = (a: Span, b: Span) => a.start < b.end && b.start < a.end;
+const shared = (a: Set<string>, b: Set<string>) => { let n = 0; for (const x of a) if (b.has(x)) n++; return n; };
 
 /**
  * Scrubs one part. Headings are structural: kept, not counted, and dropped if
@@ -353,21 +363,21 @@ function scrubPart(text: string, checks: Checks): string | null {
     if (l.heading || l.end === l.start) return;
     for (const s of sentenceSpans(text, l.start + l.bullet.length, l.end)) units.push({ ...s, line: i });
   });
-  const bad: Span[] = [
-    ...quoteSpans(text),
-    ...copiedSpans(text, checks.typedRuns, TYPED_RUN),
-    ...copiedSpans(text, checks.derivedRuns, DERIVED_RUN),
-  ];
+  const quotes = quoteSpans(text);
+  const copied = [...copiedSpans(text, checks.typedRuns, TYPED_RUN), ...copiedSpans(text, checks.derivedRuns, DERIVED_RUN)];
   const dropped = new Set<Unit>();
   for (const u of units) {
     const s = text.slice(u.start, u.end);
-    if (bad.some((b) => overlaps(b, u))) dropped.add(u);
-    else if (SECRET.test(s)) dropped.add(u);
-    else if (nameProblem(s, checks.names)) dropped.add(u);
-    else {
-      const mine = stems(s, checks.stemExclude);
-      if (checks.privateStems.some((p) => { let n = 0; for (const x of mine) if (p.has(x)) n++; return n >= PARAPHRASE_STEMS; })) dropped.add(u);
-    }
+    const mine = stems(s, checks.stemExclude);
+    const reason =
+      quotes.some((b) => overlaps(b, u)) ? "quote"
+      : copied.some((b) => overlaps(b, u)) ? "copied run"
+      : SECRET.test(s) ? "secret"
+      : nameProblem(s, checks.names) ? "name"
+      : checks.privateStems.some((p) => shared(mine, p) >= PARAPHRASE_STEMS) ? "paraphrase"
+      : checks.privateOnly.some((p) => shared(mine, p) >= PRIVATE_ONLY_STEMS) ? "private-only words"
+      : null;
+    if (reason) { dropped.add(u); checks.explain?.push({ reason, sentence: s }); }
   }
   if (units.length === 0 || dropped.size / units.length > MAX_DROPPED) return null;
 
@@ -434,12 +444,17 @@ export function redactNames(text: string, players: ReadonlyArray<readonly [strin
   return out;
 }
 
-export function buildShareSnapshot(reportCard: string | null, epilogue: string | null, src: SnapshotSources): ShareSnapshot {
+export function buildShareSnapshot(
+  reportCard: string | null,
+  epilogue: string | null,
+  src: SnapshotSources,
+  explain?: Array<{ reason: string; sentence: string }>,
+): ShareSnapshot {
   const child = new Set(normaliseWords(src.childName));
   const typedTokens = new Set(src.typed.flatMap((t) => normaliseWords(t)));
   const generated = new Set<string>();
   for (const t of [...src.scenes, ...src.childLines]) {
-    for (const k of tokens(t)) if (isCap(k.raw)) generated.add(stripPossessive(k.norm));
+    for (const k of tokens(t)) if (isCap(k.raw)) generated.add(baseNorm(k.raw));
   }
   for (const w of [...generated]) if (typedTokens.has(w)) generated.delete(w);
 
@@ -448,11 +463,18 @@ export function buildShareSnapshot(reportCard: string | null, epilogue: string |
   const playerWords = new Set(src.players.flatMap(([n]) => normaliseWords(n)));
   const privateSentences = src.privateTalk.flatMap((t) => t.split("\n").flatMap((l) => sentences(l)));
   const stemExclude = new Set([...child, ...playerWords]);
+  // Words the game says in the open: shared chat (typed lines that aren't private talk), scenes, the child's shared lines.
+  const privateSet = new Set(src.privateTalk);
+  const openStems = stems([...src.typed.filter((t) => !privateSet.has(t)), ...src.scenes, ...src.childLines].join("\n"), new Set());
   const checks: Checks = {
     typedRuns: runSet([...src.typed, ...src.privateTalk], TYPED_RUN),
     derivedRuns: runSet(src.derived, DERIVED_RUN),
     privateStems: privateSentences.map((s) => stems(s, stemExclude)).filter((s) => s.size >= PARAPHRASE_STEMS),
+    privateOnly: privateSentences
+      .map((s) => new Set([...stems(s, stemExclude)].filter((x) => !openStems.has(x))))
+      .filter((s) => s.size >= PRIVATE_ONLY_STEMS),
     stemExclude,
+    explain,
     names: {
       child,
       allowed: generated,
