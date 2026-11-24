@@ -112,7 +112,7 @@ export function asShareMessage(v: unknown): ShareMessage | null {
 
 export const shareQuestion = (host: string) => `make a share code for ${host}?`;
 export const shareExplains = (host: string) =>
-  `a share code lets ${host} read your report card (without its quotes) and your child's epilogue. both were written from your whole game, including your private talks with your child. they don't show those talks, but they can reflect them.`;
+  `a share code lets ${host} read part of your report card (your child's personality, strengths and struggles) and your child's epilogue. both were written from your whole game, including your private talks with your child, so they can reflect them. we take out every sentence that quotes anyone or repeats five or more of your words in a row, and we try to take out every name either of you typed and anything that retells your private talks. your names become "Parent 1" and "Parent 2".`;
 export const SHARE_SILENCE =
   "RI won't tell your co-parent what you chose. if one of you says yes and no code appears, that can mean the other said no, or is deciding later, or that this game can't make a code. RI never says which.";
 export const previewButton = (host: string) => `show me exactly what ${host} would see`;

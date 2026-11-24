@@ -176,19 +176,28 @@ export class ShareService {
     return (await stranger.age.adultForPool(mxid)).ok;
   }
 
-  /** §5.3 for this game: the stored report card and epilogue, scrubbed against everything the parents wrote. */
+  /** §5.3 for this game: the stored report card and epilogue, scrubbed against everything typed, said in private, or noted about the child. */
   async snapshot(gameId: string): Promise<ShareSnapshot | null> {
     const state = await this.state(gameId);
     const endgame = await this.deps.repo.loadEndgame(gameId);
     if (!state || !endgame) return null;
-    const corpus: string[] = [];
-    for (const m of state.messages ?? []) if (m.sender === "parent1" || m.sender === "parent2") corpus.push(m.content);
-    for (const p of [state.parentPersonalities?.parent1, state.parentPersonalities?.parent2]) {
-      if (p) corpus.push(p.confessional1, p.confessional2);
+    const typed: string[] = [];
+    const privateTalk: string[] = [];
+    const childLines: string[] = [];
+    for (const m of state.messages ?? []) {
+      const parent = m.sender === "parent1" || m.sender === "parent2";
+      if (parent) typed.push(m.content);
+      // Private talk is everything said outside the shared scene, by either side.
+      if (m.chatType !== "shared") privateTalk.push(m.content);
+      else if (!parent) childLines.push(m.content);
     }
-    corpus.push(state.identityDocument ?? "", state.memorySummary ?? "");
-    for (const s of state.identitySnapshots ?? []) corpus.push(s.document);
-    for (const t of state.therapyMessages ?? []) if (t.speaker === "parent") corpus.push(t.content);
+    for (const p of [state.parentPersonalities?.parent1, state.parentPersonalities?.parent2]) {
+      if (p) { typed.push(p.confessional1, p.confessional2); privateTalk.push(p.confessional1, p.confessional2); }
+    }
+    for (const t of state.therapyMessages ?? []) if (t.speaker === "parent") typed.push(t.content);
+    const derived = [state.identityDocument ?? "", state.memorySummary ?? "", ...(state.identitySnapshots ?? []).map((s) => s.document)];
+    const scenes: string[] = [];
+    for (const e of [...(state.events ?? []), ...(state.currentEvent ? [state.currentEvent] : [])]) scenes.push(e.description, e.setting, e.trigger);
     // H5: both players' names are replaced. Without both names, no snapshot (fail closed).
     const names: Partial<Record<Slot, string>> = { ...(this.deps.names?.(gameId) ?? {}) };
     for (const p of await this.deps.repo.loadPlayers(gameId).catch(() => [])) {
@@ -196,7 +205,9 @@ export class ShareService {
     }
     if (!names.parent1?.trim() || !names.parent2?.trim()) return null;
     const pairs: Array<[string, string]> = [[names.parent1, "Parent 1"], [names.parent2, "Parent 2"]];
-    return buildShareSnapshot(endgame.reportCard || null, endgame.epilogue || state.epilogue || null, corpus, pairs);
+    return buildShareSnapshot(endgame.reportCard || null, endgame.epilogue || state.epilogue || null, {
+      typed, privateTalk, derived, childName: state.childName ?? "", scenes, childLines, players: pairs,
+    });
   }
 
   /**
