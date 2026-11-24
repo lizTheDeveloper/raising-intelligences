@@ -1139,7 +1139,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           matching.markArrived(gameId, slot);
           if (strandedNoShow) {
             const me = getPlayerByToken(session, token);
-            if (me) matching.adoptStranded(seats, slot, { mxid: holder, displayName: me.displayName, childName: state.childName });
+            if (me) matching.adoptStranded(seats, slot, { mxid: holder, displayName: me.displayName, childName: state.childName, meetupCode: stranger.passes.resolve(payload.strangerPass)?.meetupCode ?? null });
           }
         }
       }

@@ -46,6 +46,12 @@ export interface QueueEntry {
   queuedAt: number;
   seq: number;
   lastSeen: number;
+  /**
+   * The host-tools event (one period of a meetup code) this entry acknowledged
+   * and joined under. Entries pair only within one event, so a game is always
+   * played on the terms both players accepted.
+   */
+  eventId?: string | null;
 }
 
 export interface StrangerRunSeats {
@@ -131,12 +137,14 @@ export class StrangerMatching {
     if (!pool.ok) return { ok: false, status: 403, error: "Pass the age check first." };
     const subject = await this.deps.age.subjectHash(mxid);
     const gate = this.deps.gate?.();
+    let eventId: string | null = null;
     if (gate) {
       const g = await gate.join(subject, meetupCode);
       if (!g.ok) return g;
+      eventId = gate.eventIdFor(meetupCode);
     }
     if (await this.deps.store.isSuspended(subject)) {
-      this.hold({ mxid, subject, meetupCode, displayName, childName, queuedAt: this.now(), seq: ++this.seq, lastSeen: this.now() });
+      this.hold({ mxid, subject, meetupCode, displayName, childName, queuedAt: this.now(), seq: ++this.seq, lastSeen: this.now(), eventId });
       return { ok: true };
     }
     if (this.matched.has(mxid)) return { ok: true };
@@ -145,10 +153,11 @@ export class StrangerMatching {
       existing.displayName = displayName;
       existing.childName = childName;
       existing.lastSeen = this.now();
+      if (gate) existing.eventId = eventId; // re-joined under a new card (a new period): its terms now
       return { ok: true };
     }
     const now = this.now();
-    this.queue.push({ mxid, subject, meetupCode, displayName, childName, queuedAt: now, seq: ++this.seq, lastSeen: now });
+    this.queue.push({ mxid, subject, meetupCode, displayName, childName, queuedAt: now, seq: ++this.seq, lastSeen: now, eventId });
     await this.runMatch(meetupCode);
     return { ok: true };
   }
@@ -222,11 +231,13 @@ export class StrangerMatching {
    * that had arrived is all that is left (the other's reservation was never
    * stored): treat it as a no-show now, so the one who came can requeue.
    */
-  adoptStranded(seats: StrangerRunSeats, present: StrangerSlot, entry: { mxid: string; displayName: string; childName: string }): void {
+  adoptStranded(seats: StrangerRunSeats, present: StrangerSlot, entry: { mxid: string; displayName: string; childName: string; meetupCode?: string | null }): void {
     if (this.runs.has(seats.gameId)) return;
     const now = this.now();
+    // At an event the run stores no code: the pass carries it, and the entry keeps the event.
     const mk = (mxid: string, subject: string, displayName: string): QueueEntry => ({
-      mxid, subject, meetupCode: seats.meetupCode, displayName, childName: entry.childName, queuedAt: now, seq: ++this.seq, lastSeen: now,
+      mxid, subject, meetupCode: entry.meetupCode ?? seats.meetupCode, displayName, childName: entry.childName, queuedAt: now, seq: ++this.seq, lastSeen: now,
+      eventId: seats.eventId ?? null,
     });
     const absent: StrangerSlot = present === "parent1" ? "parent2" : "parent1";
     const entries = {
@@ -325,6 +336,7 @@ export class StrangerMatching {
       outer: for (let i = 0; i < eligible.length; i++) {
         for (let j = i + 1; j < eligible.length; j++) {
           if (eligible[i].mxid === eligible[j].mxid || eligible[i].subject === eligible[j].subject) continue;
+          if ((eligible[i].eventId ?? null) !== (eligible[j].eventId ?? null)) continue;
           if (!(await this.deps.store.isBlocked(eligible[i].subject, eligible[j].subject))) {
             pair = [eligible[i], eligible[j]];
             break outer;
@@ -343,7 +355,7 @@ export class StrangerMatching {
     let gameId: string;
     let tokens: Record<StrangerSlot, string>;
     const gate = this.deps.gate?.() ?? null;
-    const eventId = gate?.eventIdFor(host.meetupCode) ?? null;
+    const eventId = host.eventId ?? gate?.eventIdFor(host.meetupCode) ?? null;
     // At an event, the run names the event, never its code.
     const storedCode = eventId ? null : host.meetupCode;
     try {

@@ -120,12 +120,38 @@ export class HostTools implements StrangerHostTools {
     if (this.active()) {
       await this.syncEnvEvents();
       await this.reconcileAll();
+      // A period can end between card reads: roll it then, too.
+      setInterval(() => {
+        if (this.active() && this.envPeriodOver()) void this.syncEnvEvents().catch(() => {});
+      }, 5 * 60_000).unref();
     }
     this.loaded = true;
   }
 
-  /** RI_MEETUP_CODES: each listed code is a studio L0 event, its close rolled forward at each start. */
-  private async syncEnvEvents(): Promise<void> {
+  private syncing: Promise<void> | null = null;
+
+  /**
+   * RI_MEETUP_CODES: each listed code is a studio L0 event, one 14-day period
+   * at a time. When a period ends, its event is retired (its row keeps the
+   * terms it froze, so every game started under them keeps them) and the code
+   * opens a new period: a fresh event, a fresh card, and terms frozen afresh
+   * at the next acknowledgement. Runs at start and, lazily, on card reads.
+   */
+  async syncEnvEvents(): Promise<void> {
+    if (!this.syncing) this.syncing = this.doSyncEnvEvents().finally(() => { this.syncing = null; });
+    return this.syncing;
+  }
+
+  private envPeriodOver(): boolean {
+    const now = this.now();
+    for (const c of this.envCodes) {
+      const e = this.byHash.get(eventCodeHash(this.pepper, c));
+      if (!e || (e.source === "env" && e.closedAt === null && now >= e.closesAt)) return true;
+    }
+    return false;
+  }
+
+  private async doSyncEnvEvents(): Promise<void> {
     const now = this.now();
     const listed = new Set(this.envCodes.map((c) => eventCodeHash(this.pepper, c)));
     for (const hash of listed) {
@@ -133,8 +159,10 @@ export class HostTools implements StrangerHostTools {
       if (existing && existing.source !== "env") continue; // an admin event already uses this code
       if (existing) {
         if (existing.closedAt !== null) continue; // closed by the admin: stays closed
-        this.remember(await this.store.updateEvent(existing.id, { opensAt: now, closesAt: now + MAX_EVENT_MS }));
-        continue;
+        if (now < existing.closesAt) continue; // still in its period: unchanged
+        // Period over: retire this event under a hash no code can produce, then open a new one.
+        this.remember(await this.store.updateEvent(existing.id, { codeHash: `retired:${existing.id}`, closedAt: existing.closesAt }));
+        logger.info("host_env_event_new_period", { retiredEventId: existing.id });
       }
       const e: HostEvent = {
         id: randomUUID(), codeHash: hash, source: "env", name: ENV_EVENT_NAME, kind: "studio", hostPersonId: null, guestReaderId: null,
@@ -243,6 +271,7 @@ export class HostTools implements StrangerHostTools {
 
   /** The card for a visible meetup code, or null (unknown, closed, off: all the same). */
   async card(code: unknown): Promise<CardPayload | null> {
+    if (this.active() && this.envPeriodOver()) await this.syncEnvEvents();
     if (!this.active() || !this.codeVisible(code)) return null;
     return this.cardFor(this.eventForCode(code)!);
   }
@@ -254,6 +283,7 @@ export class HostTools implements StrangerHostTools {
    */
   async acknowledge(code: unknown, cardVersion: unknown, subject: string | null = null):
     Promise<{ ok: true; ackToken: string } | { ok: false; status: 404 } | { ok: false; status: 409; card: CardPayload }> {
+    if (this.active() && this.envPeriodOver()) await this.syncEnvEvents();
     if (!this.active() || !this.codeVisible(code)) return { ok: false, status: 404 };
     let e = this.eventForCode(code)!;
     if (cardVersion !== e.cardVersion) return { ok: false, status: 409, card: await this.cardFor(e) };

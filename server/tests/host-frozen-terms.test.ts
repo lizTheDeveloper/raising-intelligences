@@ -114,4 +114,57 @@ describe("frozen terms", () => {
     expect(r.status).toBe(400);
     expect(r.body.error).toContain("14 days");
   });
+
+  describe("RI_MEETUP_CODES periods", () => {
+    let e: HostHarness;
+    beforeEach(async () => {
+      e = await new HostHarness({ paywallOn: false, clock: Date.now(), stranger: { meetupCodes: new Set(["tea-party"]) } }).boot();
+      e.mock.events = e.events(4);
+    });
+    afterEach(async () => { await e.close(); });
+
+    it("a free card frozen in one period doesn't carry into the next: after the roll, a new player sees and accepts the live (paid) terms", async () => {
+      await e.arrive("@alice:multiversegames.ai", "tea-party");
+      expect(JSON.stringify((await e.card("tea-party")).body.card)).toContain("it's free at this meetup.");
+      e.clock!.now += 15 * DAY;
+      e.paywall = { ...e.paywall, switchOn: true };
+      const c = (await e.card("tea-party")).body.card;
+      expect(JSON.stringify(c)).toContain("$20 per child, paid once by whoever is paired first");
+      expect(JSON.stringify(c)).not.toContain("it's free at this meetup.");
+      const events = [...(e.repo.hosts as any).events.values()];
+      expect(events).toHaveLength(2);
+      const fresh = events.find((x: any) => x.closedAt === null);
+      expect(fresh.frozenTerms).toBeNull();
+      await e.arrive("@carol:multiversegames.ai", "tea-party");
+      expect((await e.repo.hosts.getEvent(fresh.id))?.frozenTerms?.cost).toBe("first_parent");
+      // The old period keeps what it froze.
+      const old = events.find((x: any) => x.closedAt !== null);
+      expect((await e.repo.hosts.getEvent(old.id))?.frozenTerms?.cost).toBe("free");
+      // A period-1 acknowledgement isn't current for period 2.
+      const stale = await e.post("/stranger/pass", { openIdToken: "tok:@alice:multiversegames.ai", meetup: "tea-party" });
+      expect(stale.status).toBe(409);
+    });
+
+    it("a game started under a free card stays free when it carries on after the roll and the paywall comes on", async () => {
+      const { A, B, gameId } = await e.pair("tea-party");
+      e.clock!.now += 15 * DAY;
+      expect((await e.card("tea-party")).status).toBe(200); // the roll
+      e.paywall = { ...e.paywall, switchOn: true };
+      const scene = await openFirstScene(A, B);
+      expect(scene.payment).toBeNull();
+      expect(await e.repo.partnerPayments.get(gameId)).toBeNull();
+      expect(await e.built.payments.owes(gameId)).toBe(false);
+    });
+
+    it("a player queued in one period never pairs with one from the next", async () => {
+      const a = await e.arrive("@alice:multiversegames.ai", "tea-party");
+      expect((await e.queue(a)).status).toBe(200);
+      e.clock!.now += 15 * DAY;
+      e.paywall = { ...e.paywall, switchOn: true };
+      const c = await e.arrive("@carol:multiversegames.ai", "tea-party");
+      expect((await e.queue(c)).status).toBe(200);
+      const poll = (await e.post("/stranger/queue/poll", { pass: c }, e.ipFor(c))).body;
+      expect(poll.status).not.toBe("matched");
+    });
+  });
 });
