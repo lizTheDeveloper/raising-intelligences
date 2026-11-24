@@ -1,5 +1,5 @@
 import type { HandleState } from "../components/StrangerExchange";
-import { asShareMessage, type ShareMessage, type ShareSnapshot, type ShareView } from "../shareCodes";
+import { asLearningMessage, asShareMessage, type LearningMessage, type ShareMessage, type ShareSnapshot, type ShareView } from "../shareCodes";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import { track, mark, secondsSince, bucketSeconds } from "../analytics";
@@ -31,6 +31,10 @@ const E = {
   SHARE_DECISION: "share_decision",
   /** Server → this seat only: `{ view } | { preview } | { error }`. */
   SHARE_STATE: "share_state",
+  /** Host tools studio learning: client → server `{ answer: "yes" | "no" | "status" }`. */
+  STUDIO_LEARNING: "studio_learning",
+  /** Server → this seat only: `{ view: { answered } } | { error }`, the same whatever the answer. */
+  STUDIO_LEARNING_STATE: "studio_learning_state",
   STRANGER_REPORT: "stranger_report",
   STRANGER_REPORTED: "stranger_reported",
   STRANGER_GAME_ENDED: "stranger_game_ended",
@@ -264,7 +268,8 @@ interface ViewerState {
   strangerRun?: boolean;
   /**
    * A stranger game at a host-tools meetup: which end screens follow the
-   * report card (`handles`: the handle exchange; `share`: the share step).
+   * report card (`handles`: the handle exchange; `share`: the share step;
+   * `learning`: the studio-learning question).
    * `host` is the name the share step's copy uses.
    */
   meetupEnd?: { handles: boolean; share: boolean; learning: boolean; host?: string };
@@ -311,6 +316,11 @@ export function useMultiplayer() {
   const [sharePreview, setSharePreview] = useState<{ snapshot: ShareSnapshot | null } | null>(null);
   const [shareError, setShareError] = useState<string | null>(null);
   const [shareLatest, setShareLatest] = useState<ShareMessage | null>(null);
+  // Studio learning (host tools, studio events): whether this seat has
+  // answered (never what), and the last thing the server said (for the order).
+  const [learningView, setLearningView] = useState<{ answered: boolean } | null>(null);
+  const [learningError, setLearningError] = useState<string | null>(null);
+  const [learningLatest, setLearningLatest] = useState<LearningMessage | null>(null);
   const [strangerReported, setStrangerReported] = useState(false);
   const [strangerEnded, setStrangerEnded] = useState(false);
   const [inLobby, setInLobby] = useState(false);
@@ -598,6 +608,9 @@ export function useMultiplayer() {
         setSharePreview(null);
         setShareError(null);
         setShareLatest(null);
+        setLearningView(null);
+        setLearningError(null);
+        setLearningLatest(null);
         setStrangerReported(false);
         setStrangerNoShow(false);
         setStrangerEnded(false);
@@ -760,6 +773,20 @@ export function useMultiplayer() {
         setShareLatest((prev) => (prev && "view" in prev && prev.view.state !== "ask" ? prev : m));
       }
     });
+    socket.on(E.STUDIO_LEARNING_STATE, (raw: unknown) => {
+      const m = asLearningMessage(raw);
+      if (!m) return;
+      if ("view" in m) {
+        setLearningView(m.view);
+        setLearningError(null);
+        setLearningLatest(m);
+      } else {
+        setLearningError(m.error);
+        // An answer stands; otherwise the refusal is the latest word, so the
+        // handle exchange after this step is never held back by it.
+        setLearningLatest((prev) => (prev && "view" in prev && prev.view.answered ? prev : m));
+      }
+    });
     socket.on(E.STRANGER_REPORTED, () => setStrangerReported(true));
     socket.on(E.STRANGER_GAME_ENDED, () => setStrangerEnded(true));
 
@@ -827,6 +854,11 @@ export function useMultiplayer() {
     if (answer === "preview") setSharePreview(null);
     setShareError(null);
     socketRef.current?.emit(E.SHARE_DECISION, { answer });
+  }, []);
+  /** Host tools studio learning: an answer, or "status" (a reload). Nothing here is tracked. */
+  const studioLearning = useCallback((answer: "yes" | "no" | "status") => {
+    setLearningError(null);
+    socketRef.current?.emit(E.STUDIO_LEARNING, { answer });
   }, []);
   const reportStranger = useCallback((reason: string) => {
     socketRef.current?.emit(E.STRANGER_REPORT, { reason });
@@ -1093,6 +1125,10 @@ export function useMultiplayer() {
     shareError,
     shareLatest,
     shareDecision,
+    learningView,
+    learningError,
+    learningLatest,
+    studioLearning,
     strangerReported,
     reportStranger,
     strangerEnded,

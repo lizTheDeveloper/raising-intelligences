@@ -20,6 +20,8 @@ import type { LLMClient } from "../llm/client.js";
 import { type LLMRole, type ModelTier, selectModel } from "../llm/model-config.js";
 import { ChildSeedClient } from "../llm/child-seed-client.js";
 import { CHILD_SAFETY_HOLD_TAG, isGameHeldInProcess } from "./child-safety-exclusion.js";
+import { HOSTED_NO_ANALYSIS_TAG, isGameHosted } from "./hosted-analysis.js";
+import { PRESSURE_POINT_HEADER, PRESSURE_POINT_OPEN, PRESSURE_POINT_CLOSE } from "../game/pressure-point.js";
 
 /**
  * Metadata carried by a traced client. Used both for trace tags
@@ -137,6 +139,23 @@ function redactIfConfessional(role: LLMRole | undefined, text: string): string {
 }
 
 /**
+ * The world manager's prompt can carry one parent confessional, verbatim, in
+ * its "pressure point" section (context-assembler.ts buildLandmineSection).
+ * Whatever the role, a traced system prompt never keeps it: everything from
+ * the section's opening line to its closing line goes. Fails closed: with no
+ * opening line, from the header; with no closing line, to the end.
+ */
+function redactPressurePoint(text: string): string {
+  const header = text.indexOf(PRESSURE_POINT_HEADER);
+  if (header === -1) return text;
+  const open = text.indexOf(PRESSURE_POINT_OPEN, header);
+  const start = open !== -1 ? open + PRESSURE_POINT_OPEN.length : header + PRESSURE_POINT_HEADER.length;
+  const close = text.indexOf(PRESSURE_POINT_CLOSE, start);
+  const end = close !== -1 ? close : text.length;
+  return `${text.slice(0, start)}\n\n[redacted, ${end - start} chars]\n\n${text.slice(end)}`;
+}
+
+/**
  * Exported for tests only — exercises the redaction regex directly without
  * needing a configured Langfuse client.
  * @internal
@@ -151,6 +170,7 @@ function buildTags(metadata: TraceMetadata): string[] {
   if (metadata.eventNumber !== undefined) tags.push(`event_number:${metadata.eventNumber}`);
   if (metadata.role) tags.push(`llm_role:${metadata.role}`);
   if (isGameHeldInProcess(metadata.gameId)) tags.push(CHILD_SAFETY_HOLD_TAG);
+  if (isGameHosted(metadata.gameId)) tags.push(HOSTED_NO_ANALYSIS_TAG);
   return tags;
 }
 
@@ -245,7 +265,7 @@ export class TracedLLMClient implements LLMClient {
       generation = trace.generation({
         name: metadata.role ?? "llm",
         input: {
-          system,
+          system: redactPressurePoint(system),
           messages: messages.map((m) => ({ ...m, content: redactIfConfessional(role, m.content) })),
         },
         ...(model ? { model } : {}),
@@ -289,7 +309,7 @@ export class TracedLLMClient implements LLMClient {
       });
       generation = trace.generation({
         name: metadata.role ?? "llm",
-        input: { system, userMessage: redactIfConfessional(role, userMessage) },
+        input: { system: redactPressurePoint(system), userMessage: redactIfConfessional(role, userMessage) },
         ...(model ? { model } : {}),
         metadata: { ...metadata, maxTokens },
       });
@@ -325,7 +345,7 @@ export class TracedLLMClient implements LLMClient {
       });
       generation = trace.generation({
         name: metadata.role ?? "llm",
-        input: { system, userMessage: redactIfConfessional(role, userMessage) },
+        input: { system: redactPressurePoint(system), userMessage: redactIfConfessional(role, userMessage) },
         ...(model ? { model } : {}),
         metadata: { ...metadata },
       });

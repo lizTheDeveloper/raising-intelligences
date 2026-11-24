@@ -856,3 +856,51 @@ The deck is checked against Liz's spoiler rules with the content notes. Every be
 - [ ] Can a came-together game be linked to the event?
 - [ ] Can a guest reader open anything except a code made for them?
 - [ ] With no database events and the flag in meetup mode, does stranger mode behave as 2.8.4, apart from the card?
+
+---
+
+# As built (prototype, 2.9.0–2.12.0)
+
+The prototype shipped in four PRs: 2.9.0 (data model, admin, card, freeze, host-never-plays, came-together), 2.10.0 (host portal, funnel, deck), 2.11.0 (share step, codes, account page) and 2.12.0 (studio learning, unlink, purge, trace tagging). Local harness: `docs/host-tools-test-harness.md`. Where the build differs from the text above:
+
+- **On only in meetup mode.** §B.2 says the feature is on whenever `RI_STRANGER_MODE !== "off"`. As built, it's on only when `RI_STRANGER_MODE=meetup`. In every other mode, every host-tools route falls through like a path that was never built.
+- **Migrations** are `034-host-tools.sql` and `035-host-event-paused-by.sql`, not `032`.
+- **The studio's pause wins.** `host_events.paused_by` records who paused an event. A host can't resume a pause the studio made.
+- **The host portal re-checks each request.** Every request re-checks that the person is approved, a verified adult, not banned and not suspended. Revoking a stranger pass also revokes the host and account passes.
+- **Env-code events** run in rolling 14-day periods, as §B.1 says. Queue entries follow the event: a paused, closed or re-carded event ends or re-shows the card for players already queued.
+- **The free opening gate** goes through `payments.exemptWhen`: a game whose event froze "free" is never charged.
+- **The share snapshot's corpus is broader than §5.3.** Besides parent chat lines, the scrub covers:
+  - every chat type;
+  - confessionals;
+  - the identity document and its snapshots;
+  - `memorySummary`;
+  - therapy messages.
+
+  Player names are replaced with "Parent 1" and "Parent 2". Without both names the snapshot isn't made (fail closed).
+- **The adult check works at the account level after a restart.** When no Matrix id is in memory for a seat, the code path checks the stored verification and hashes the ban list's Matrix ids against the seat's subject. If the ban list can't be read, no code is made.
+- **Reveal times are whole milliseconds.** The Postgres columns are BIGINT, and a fractional delay failed there.
+- **Untracked pages.** The meetup card, the portal, the deck and the account page send no Umami pageview and start no session beats.
+- **The account-page probe** checks the deck endpoint, because a JSON 401 can't tell "off" from "signed out".
+- **"Report this host" from the account page** doesn't attach the event.
+- **"everything the studio keeps"** on the card isn't built (no page exists to link to).
+- **Studio learning.** The first answer stands. The socket reply is `{answered}` and never carries the answer. The account page shows a player only their own answer.
+- **Trace tagging (H18).** `hosted_no_analysis` is added to every trace of a game whose run has an event. The game is marked when it's matched, when its seats are read, and at boot from every event's runs, so a restart doesn't lose it. `scripts/model-search.ts` and the ri-devlog skill drop hosted traces unless the game is on the allow-list. With no allow-list (no `RI_ADMIN_URL`/`ADMIN_TOKEN`), they drop every hosted trace.
+- **Unlink (§6).** A request voids the code at once, using a stop by that seat, so the co-parent's row doesn't change. When the admin marks it done, these are deleted:
+  - the requester's acknowledgements at the event;
+  - their share decision;
+  - their learning choice.
+
+  The run's seat subject becomes `unlinked:<request id>`, the seat cache is dropped, and the seat's sockets are disconnected, so the seat can't be taken again. Rather than keeping the subject in the run "when a report or block needs it", the request row maps the placeholder back: a report the co-parent files later still reaches the original account. Blocks already store subjects on their own.
+- **Retention periods (§10).** The v2 §10 table isn't in the repo, so these were chosen:
+  - acknowledgements, frozen terms and the published funnel: 1 year after close;
+  - share decisions: when the window closes (or the code is made);
+  - a code's snapshot: cleared when it stops opening;
+  - the code's row and access log: 30 days later;
+  - done unlink requests: 1 year.
+
+  Learning choices aren't purged while traces are kept until the studio deletes them (`RI_HOSTED_TRACE_RETENTION_DAYS` unset). Liz runs the purge from the admin; there's no scheduled job.
+- **The `world_manager` confessional redaction** shipped here, because the hotfix agent hadn't taken it. The world manager's "pressure point" carries one parent confessional verbatim. Every traced system prompt now redacts that section, failing closed to the end of the text.
+- **Shipped-copy fixes.**
+  - The under-18 screen no longer says "both are free". It now says "you can still raise a child on your own for free, or with someone you invite."
+  - The README no longer mentions an AI co-parent, because there isn't one.
+- **Still open:** §13 ("Liz decides") is unchanged; those are Liz's decisions.

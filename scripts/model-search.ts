@@ -7,6 +7,8 @@
  *
  * Requires: OPENROUTER_API_KEY env var
  * Optional: DATABASE_URL (for storing results in kid_model_benchmarks)
+ * Optional: RI_ADMIN_URL + ADMIN_TOKEN (the host-tools analysis allow-list;
+ *   without them every trace from a meetup game is dropped)
  *
  * Pulls 6 real kid_family_chat prompts from Langfuse (cached locally after
  * first run), runs each candidate model, scores responses for archetype
@@ -19,6 +21,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import OpenAI from "openai";
 import { fetchHeldTraceIds, filterHeldObservations } from "../server/src/observability/child-safety-exclusion.js";
+import { fetchAnalysisAllowlist, fetchHostedTraces, filterHostedObservations, hostedTraceIdsToDrop } from "../server/src/observability/hosted-analysis.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CACHE_DIR = join(__dirname, ".prompt-cache");
@@ -88,7 +91,12 @@ async function pullPrompts(): Promise<CachedPrompt[]> {
   // Child-safety hold: traces from a game with an evidence case are never
   // pulled into the benchmark corpus (see child-safety-exclusion.ts).
   const held = await fetchHeldTraceIds(langfuseGet);
-  const data = { data: filterHeldObservations(allObs, held) };
+  // Host-tools meetup games are never analysed unless both players said yes
+  // at a studio event (the admin allow-list). No RI_ADMIN_URL / ADMIN_TOKEN:
+  // every hosted trace is dropped.
+  const allowed = await fetchAnalysisAllowlist(process.env.RI_ADMIN_URL, process.env.ADMIN_TOKEN);
+  const dropHosted = hostedTraceIdsToDrop(await fetchHostedTraces(langfuseGet), allowed);
+  const data = { data: filterHostedObservations(filterHeldObservations(allObs, held), dropHosted) };
 
   for (const age of targetAges) {
     // Find observations where the system prompt mentions the target age

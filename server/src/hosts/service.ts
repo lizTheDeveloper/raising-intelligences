@@ -1,3 +1,4 @@
+import { markGameHosted } from "../observability/hosted-analysis.js";
 import { randomUUID } from "node:crypto";
 import { logger } from "../logger.js";
 import { normalizeMeetupCode, readStrangerConfig } from "../stranger/config.js";
@@ -6,7 +7,7 @@ import type { PartnerPayments } from "../payments/partner-payments.js";
 import { buildCard, liveTerms, reconcileTerms, termsFor, type CardPayload, type LiveSettings } from "./card.js";
 import { ackTokenHash, eventCodeHash, newAckToken, newEventCode, opaqueRef, shareCodeHash } from "./codes.js";
 import { MAX_EVENT_MS, readHostToolsConfig, type HostToolsConfig } from "./config.js";
-import type { HostStore } from "./store.js";
+import type { HostStore, PurgeRules } from "./store.js";
 import type { EventStatus, HostEvent, HostPerson, Level } from "./types.js";
 
 export interface HostToolsDeps {
@@ -54,6 +55,22 @@ const ENV_EVENT_NAME = "a studio meetup";
  * store (one process), so "is this meetup code visible?" stays synchronous,
  * as stranger mode needs it to be.
  */
+const DAY_MS = 24 * 3600_000;
+
+/**
+ * Retention (spec §10). The spec keeps frozen terms and the published funnel
+ * for a year; the acknowledgement that a player saw that card is kept as long.
+ * A share code's row and access log go 30 days after it stops opening (its
+ * snapshot is cleared the moment it stops). A done unlink request is kept a
+ * year, so a report filed after the unlink still reaches the right account.
+ */
+export const PURGE_RULES: PurgeRules = {
+  ackAfterCloseMs: 365 * DAY_MS,
+  eventRecordsAfterCloseMs: 365 * DAY_MS,
+  codeAfterLiveMs: 30 * DAY_MS,
+  unlinkDoneMs: 365 * DAY_MS,
+};
+
 export class HostTools implements StrangerHostTools {
   readonly store: HostStore;
   readonly stranger: StrangerService;
@@ -121,6 +138,8 @@ export class HostTools implements StrangerHostTools {
   private async init(): Promise<void> {
     for (const e of await this.store.listEvents()) this.remember(e);
     for (const p of await this.store.listPeople()) this.names.set(p.id, p.displayName);
+    // Before any play resumes: every game at an event is tagged in Langfuse (H18), whatever the mode now.
+    await this.markHostedGames();
     if (this.active()) {
       await this.syncEnvEvents();
       await this.reconcileAll();
@@ -130,6 +149,18 @@ export class HostTools implements StrangerHostTools {
       }, 5 * 60_000).unref();
     }
     this.loaded = true;
+  }
+
+  /** Runs the §10 retention schedule (POST /api/admin/host-tools/purge). Counts only. */
+  async purge(): Promise<Record<string, number>> {
+    return this.store.purge(this.now(), PURGE_RULES);
+  }
+
+  /** Tags every game at every event as hosted, in this process (boot, after a restart). */
+  async markHostedGames(): Promise<void> {
+    for (const e of this.byId.values()) {
+      for (const r of await this.stranger.store.runsForEvent(e.id)) markGameHosted(r.gameId);
+    }
   }
 
   private syncing: Promise<void> | null = null;
@@ -397,7 +428,7 @@ export class HostTools implements StrangerHostTools {
     const t = e.frozenTerms ?? liveTerms(e, this.live());
     const readerId = e.kind === "outside" ? e.hostPersonId : e.guestReaderId;
     const host = e.shareCodes && readerId ? this.names.get(readerId) : undefined;
-    return { handles: t.handleExchange, share: e.shareCodes && !!host, learning: false, ...(host ? { host } : {}) };
+    return { handles: t.handleExchange, share: e.shareCodes && !!host, learning: e.kind === "studio" && t.learning, ...(host ? { host } : {}) };
   }
 
   handleExchangeOn(eventId: string | null | undefined): boolean {

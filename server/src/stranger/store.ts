@@ -7,6 +7,9 @@ import type { Pool } from "pg";
  * outcome (adult / minor) and nothing it was computed from.
  */
 
+/** A run seat's subject after a host-tools unlink: this prefix plus the unlink request's id. */
+export const UNLINKED_SEAT_PREFIX = "unlinked:";
+
 export type AgeOutcome = "adult" | "minor";
 
 export interface AgeVerificationRow {
@@ -65,7 +68,7 @@ export interface StrangerStore {
   runsForEvent(eventId: string): Promise<EventRun[]>;
   /** Runs at any event where this subject holds a seat. */
   runsForSubject(subject: string): Promise<EventRun[]>;
-  /** Unlink (spec §6): this seat's subject is replaced, so the run no longer names them. */
+  /** Unlink (spec §6): this seat's subject is replaced (UNLINKED_SEAT_PREFIX + request id), so the run no longer names them. */
   unlinkRunSeat(gameId: string, slot: "parent1" | "parent2", replacement: string): Promise<void>;
   /** The match lapsed or was given up: the game never seats anyone again. */
   discardRun(gameId: string): Promise<void>;

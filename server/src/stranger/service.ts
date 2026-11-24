@@ -3,7 +3,7 @@ import type { ChildSafetyStore } from "../safety/child-safety/store.js";
 import { readStrangerConfig, strangerVisible, normalizeMeetupCode, pepperProblem, MIN_PEPPER_BYTES, type StrangerConfig } from "./config.js";
 import { AgeVerification, type CheckOutcome, type PoolRefusal } from "./identity.js";
 import { StrangerPasses, verifyOpenIdToken } from "./matrix-identity.js";
-import { UNRESOLVED_STATUSES, type StrangerStore } from "./store.js";
+import { UNLINKED_SEAT_PREFIX, UNRESOLVED_STATUSES, type StrangerStore } from "./store.js";
 import { randomUUID } from "node:crypto";
 
 export interface HandleState { mine: "yes" | "no" | null; closed: boolean; matrixId?: string; error?: string }
@@ -240,6 +240,13 @@ export class StrangerService {
   private stopped = new Map<string, number>(); // gameId -> when the ending is (or was) delivered
   /** Set by the socket layer: tell both seats the game has ended. */
   onGameEnded: ((gameId: string) => void) | null = null;
+  /** Host tools unlink (spec §6): this seat's own sockets are let go. Nothing is sent to the other seat. */
+  onSeatUnlinked: ((gameId: string, slot: StrangerSlot) => void) | null = null;
+  /**
+   * Host tools unlink: a seat unlinked from its account holds a placeholder
+   * subject. A report filed against it later still reaches the account it was.
+   */
+  resolveUnlinked: ((placeholder: string) => Promise<string | null>) | null = null;
 
   private stopGame(gameId: string): void {
     if (this.stopped.has(gameId)) return;
@@ -335,7 +342,8 @@ export class StrangerService {
     this.stopGame(gameId);
     const other: StrangerSlot = slot === "parent1" ? "parent2" : "parent1";
     const reporter = seats[slot];
-    const reported = seats[other];
+    let reported = seats[other];
+    if (reported.startsWith(UNLINKED_SEAT_PREFIX)) reported = (await this.resolveUnlinked?.(reported).catch(() => null)) ?? reported;
     // The reporter's identity is re-checked here; everything that depends on
     // OTHER reports (already reported in this game, suspended, the cap, an
     // unfounded report) is decided inside the store's one atomic step.

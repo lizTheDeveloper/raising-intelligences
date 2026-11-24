@@ -140,6 +140,54 @@ export function handlesAfterShare(shareOn: boolean, latest: ShareMessage | null)
   return false;
 }
 
+// ---- Studio learning (end screen, studio events) ----
+
+export type LearningMessage = { view: { answered: boolean } } | { error: string };
+
+/** A STUDIO_LEARNING_STATE payload, or null when it isn't one. */
+export function asLearningMessage(v: unknown): LearningMessage | null {
+  if (!isRec(v)) return null;
+  if ("view" in v) {
+    return isRec(v.view) && typeof v.view.answered === "boolean" ? { view: { answered: v.view.answered } } : null;
+  }
+  if (isStr(v.error)) return { error: v.error };
+  return null;
+}
+
+export const LEARNING_QUESTION = "can the studio learn from your game?";
+export const LEARNING_EXPLAINS =
+  "the studio would read your game, including private talks, to improve stranger mode. it's never published, never in a blog post and never used to train AI. it only happens if you both say yes, and RI won't tell your co-parent what you chose.";
+/** H20: two equal answers, in this order, and neither is the default. */
+export const LEARNING_ANSWERS: ReadonlyArray<{ answer: "yes" | "no"; label: string }> = [
+  { answer: "yes", label: "yes, let the studio learn from our game" },
+  { answer: "no", label: "no" },
+];
+/** The same line whatever was chosen. */
+export const LEARNING_NOTED = "thanks. that's noted.";
+
+/** Has the learning step let the screens after it show? An answer, or a refusal (which must never hide them). */
+function afterLearning(on: boolean, latest: LearningMessage | null): boolean {
+  if (!on) return true;
+  if (!latest) return false;
+  if ("error" in latest) return true;
+  return latest.view.answered;
+}
+
+/**
+ * The end screens after the report card (spec §5.1 step 2): share step →
+ * studio learning → handle exchange. Studio learning shows once the share
+ * step lets it; the handle exchange waits for both.
+ */
+export function endSteps(
+  shareOn: boolean,
+  shareLatest: ShareMessage | null,
+  learningOn: boolean,
+  learningLatest: LearningMessage | null,
+): { learning: boolean; handles: boolean } {
+  const shared = handlesAfterShare(shareOn, shareLatest);
+  return { learning: learningOn && shared, handles: shared && afterLearning(learningOn, learningLatest) };
+}
+
 // ---- The account page ----
 
 export type ShareRow =
@@ -150,7 +198,17 @@ export type ShareRow =
   | { state: "none" };
 
 export interface AccountMeetup { ref: string; name: string; at: number; card: MeetupCard | null }
-export interface AccountGame { ref: string; childName: string; eventName: string; share: ShareRow | null }
+/** This seat's own studio-learning answer; null when it wasn't offered at that event. */
+export type LearningRow = "yes" | "no" | "unanswered" | null;
+export interface AccountGame {
+  ref: string;
+  childName: string;
+  eventName: string;
+  share: ShareRow | null;
+  learning: LearningRow;
+  /** "requested": asked the studio to take this game off the account, not done yet. */
+  unlink: "requested" | null;
+}
 export type HostPanel = { kind: "nothing" } | { kind: "pending" } | { kind: "funnel"; funnel: PublishedFunnel };
 export interface HostSaw { name: string; panel: HostPanel }
 export interface AccountPage { meetups: AccountMeetup[]; games: AccountGame[]; hostSaw: HostSaw[] }
@@ -171,6 +229,27 @@ export function asShareRow(v: unknown): ShareRow | null | undefined {
     default: return undefined;
   }
 }
+
+/** A game row's learning answer; anything unknown is null (shown as nothing). */
+export function asLearningRow(v: unknown): LearningRow {
+  return v === "yes" || v === "no" || v === "unanswered" ? v : null;
+}
+
+/** The player's own studio-learning answer on the account page; null shows nothing. */
+export function learningLine(l: LearningRow): string | null {
+  switch (l) {
+    case "yes": return "studio learning: you said yes.";
+    case "no": return "studio learning: you said no.";
+    case "unanswered": return "studio learning: you didn't answer.";
+    default: return null;
+  }
+}
+
+/** "take this game off my account" (spec §6), exactly. */
+export const UNLINK_WARNING =
+  "the studio will take this game off your account and cancel any code. your co-parent keeps their copy of the game, which includes what you wrote, without your name.";
+export const UNLINK_REQUESTED =
+  "you asked the studio to take this game off your account. it will disappear from this page when that's done.";
 
 function asPanel(v: unknown): HostPanel | null {
   if (!isRec(v)) return null;
@@ -195,7 +274,11 @@ export function asAccountPage(v: unknown): AccountPage | null {
     if (!isRec(g) || !isStr(g.ref) || !g.ref || !isStr(g.childName) || !isStr(g.eventName)) continue;
     const share = asShareRow(g.share);
     if (share === undefined) continue;
-    games.push({ ref: g.ref, childName: g.childName, eventName: g.eventName, share });
+    games.push({
+      ref: g.ref, childName: g.childName, eventName: g.eventName, share,
+      learning: asLearningRow(g.learning),
+      unlink: g.unlink === "requested" ? "requested" : null,
+    });
   }
   const hostSaw: HostSaw[] = [];
   for (const h of v.hostSaw) {

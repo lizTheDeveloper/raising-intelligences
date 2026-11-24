@@ -427,7 +427,14 @@ export function App() {
             prepareOnly={prepareOnly}
             onCardChanged={cardChangedHandler}
             renderEligible={(pass) => (
-              <StrangerQueue pass={pass} meetup={meetup} onBack={strangerBack} onCardChanged={cardChangedHandler} />
+              <StrangerQueue
+                pass={pass}
+                meetup={meetup}
+                onBack={strangerBack}
+                onCardChanged={cardChangedHandler}
+                // Host tools are on for this entry only when its meetup has an event card.
+                accountLink={!!(card && meetup)}
+              />
             )}
           />
         </div>

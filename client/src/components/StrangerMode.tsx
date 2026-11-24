@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { track } from "../analytics";
 import { asCard, loadAck, type MeetupCard } from "../meetupCard";
+import { MINOR_OTHER_WAYS } from "../strangerCopy";
 
 const API = import.meta.env.BASE_URL + "api";
 const PASS_KEY = "ri_stranger_pass";
@@ -154,7 +155,7 @@ export function StrangerMode({ meetup, consentVersion, onBack, renderEligible, p
       <div className="lobby stranger-mode">
         <h1>this one is for adults</h1>
         <p className="dim">raising a child with someone you haven't met is only for people 18 and over.</p>
-        <p className="dim">you can still raise a child on your own, or with a co-parent you invite. both are free.</p>
+        <p className="dim">{MINOR_OTHER_WAYS}</p>
         {back}
       </div>
     );

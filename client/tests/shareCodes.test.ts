@@ -6,15 +6,25 @@ import {
   EPILOGUE_HEADING,
   PANEL_NOTHING,
   PANEL_PENDING,
+  LEARNING_ANSWERS,
+  LEARNING_EXPLAINS,
+  LEARNING_NOTED,
+  LEARNING_QUESTION,
+  UNLINK_REQUESTED,
+  UNLINK_WARNING,
   accountRouteOn,
   asAccountPage,
+  asLearningMessage,
+  asLearningRow,
   asCodeView,
   asShareMessage,
   asShareRow,
   formatDates,
+  endSteps,
   handlesAfterShare,
   hostForEvent,
   isAccountRoute,
+  learningLine,
   loadAccountPass,
   markdownBlocks,
   openUntil,
@@ -123,6 +133,59 @@ test("handlesAfterShare: the handle exchange waits for an answer, never for a re
 
 // ---- Account page ----
 
+test("studio learning copy: §B.5, exactly", () => {
+  assert.equal(LEARNING_QUESTION, "can the studio learn from your game?");
+  assert.equal(
+    LEARNING_EXPLAINS,
+    "the studio would read your game, including private talks, to improve stranger mode. it's never published, never in a blog post and never used to train AI. it only happens if you both say yes, and RI won't tell your co-parent what you chose.",
+  );
+  assert.equal(LEARNING_NOTED, "thanks. that's noted.");
+});
+
+test("studio learning answers (H20): two, in order, and nothing marks either as the default", () => {
+  assert.deepEqual(
+    LEARNING_ANSWERS.map((a) => [a.answer, a.label]),
+    [["yes", "yes, let the studio learn from our game"], ["no", "no"]],
+  );
+  for (const a of LEARNING_ANSWERS) assert.deepEqual(Object.keys(a).sort(), ["answer", "label"]);
+});
+
+test("asLearningMessage: answered views and errors; nothing else", () => {
+  assert.deepEqual(asLearningMessage({ view: { answered: true } }), { view: { answered: true } });
+  assert.deepEqual(asLearningMessage({ view: { answered: false } }), { view: { answered: false } });
+  assert.deepEqual(asLearningMessage({ error: "Not available in this game." }), { error: "Not available in this game." });
+  // Never what was chosen, and nothing that isn't the shape.
+  assert.deepEqual(asLearningMessage({ view: { answered: true, answer: "yes" } }), { view: { answered: true } });
+  for (const junk of [null, "x", [], {}, { view: null }, { view: { answered: "yes" } }, { error: 3 }]) {
+    assert.equal(asLearningMessage(junk), null);
+  }
+});
+
+test("endSteps: share step → studio learning → handle exchange, each waiting for the one before", () => {
+  const ask = { view: { state: "ask" as const } };
+  const said = { view: { state: "no" as const } };
+  const open = { view: { answered: false } };
+  const done = { view: { answered: true } };
+  const refused = { error: "Not available in this game." };
+  // Neither step: the handle exchange shows straight away; learning never does.
+  assert.deepEqual(endSteps(false, null, false, null), { learning: false, handles: true });
+  // Share only: as handlesAfterShare.
+  assert.deepEqual(endSteps(true, ask, false, null), { learning: false, handles: false });
+  assert.deepEqual(endSteps(true, said, false, null), { learning: false, handles: true });
+  // Learning only (no share step): learning straight after the report card.
+  assert.deepEqual(endSteps(false, null, true, null), { learning: true, handles: false });
+  assert.deepEqual(endSteps(false, null, true, open), { learning: true, handles: false });
+  assert.deepEqual(endSteps(false, null, true, done), { learning: true, handles: true });
+  // Both: learning waits for the share answer; the handle exchange waits for both.
+  assert.deepEqual(endSteps(true, null, true, null), { learning: false, handles: false });
+  assert.deepEqual(endSteps(true, ask, true, done), { learning: false, handles: false });
+  assert.deepEqual(endSteps(true, said, true, open), { learning: true, handles: false });
+  assert.deepEqual(endSteps(true, said, true, done), { learning: true, handles: true });
+  // A refusal never hides the screens after it.
+  assert.deepEqual(endSteps(true, refused, true, refused), { learning: true, handles: true });
+  assert.deepEqual(endSteps(false, null, true, refused), { learning: true, handles: true });
+});
+
 test("asShareRow: each state, null, and junk", () => {
   assert.equal(asShareRow(null), null);
   assert.deepEqual(asShareRow({ state: "waiting" }), { state: "waiting" });
@@ -159,8 +222,43 @@ test("asAccountPage: keeps good rows, drops malformed ones", () => {
   assert.ok(page);
   assert.deepEqual(page.meetups.map((m) => [m.ref, m.card?.hostName ?? null]), [["e1", "Sam"], ["e2", null]]);
   assert.deepEqual(page.games.map((g) => g.ref), ["g1", "g2"]);
+  // Rows from before learning and unlink: both null.
+  assert.deepEqual(page.games.map((g) => [g.learning, g.unlink]), [[null, null], [null, null]]);
   assert.deepEqual(page.hostSaw.map((h) => h.name), ["tea", "y"]);
   assert.equal(asAccountPage({ meetups: [] }), null);
+});
+
+test("asAccountPage: learning and unlink, with unknown values as null", () => {
+  const row = (learning: unknown, unlink: unknown) => ({ ref: "g", childName: "Ada", eventName: "tea", share: null, learning, unlink });
+  const page = asAccountPage({
+    meetups: [],
+    games: [
+      row("yes", null), row("no", "requested"), row("unanswered", null), row(null, null),
+      row("maybe", "done"), row(true, true), row(undefined, undefined),
+    ],
+    hostSaw: [],
+  });
+  assert.ok(page);
+  assert.deepEqual(page.games.map((g) => [g.learning, g.unlink]), [
+    ["yes", null], ["no", "requested"], ["unanswered", null], [null, null],
+    [null, null], [null, null], [null, null],
+  ]);
+  assert.equal(asLearningRow("YES"), null);
+});
+
+test("learningLine: the player's own answer; nothing when it wasn't offered", () => {
+  assert.equal(learningLine("yes"), "studio learning: you said yes.");
+  assert.equal(learningLine("no"), "studio learning: you said no.");
+  assert.equal(learningLine("unanswered"), "studio learning: you didn't answer.");
+  assert.equal(learningLine(null), null);
+});
+
+test("unlink copy: §6 and the requested line, exactly", () => {
+  assert.equal(
+    UNLINK_WARNING,
+    "the studio will take this game off your account and cancel any code. your co-parent keeps their copy of the game, which includes what you wrote, without your name.",
+  );
+  assert.equal(UNLINK_REQUESTED, "you asked the studio to take this game off your account. it will disappear from this page when that's done.");
 });
 
 test("formatDates: one per day, joined with commas and 'and'", () => {
