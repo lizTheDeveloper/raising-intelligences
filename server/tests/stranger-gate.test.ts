@@ -168,7 +168,21 @@ describe("age verification (Stripe Identity)", () => {
     expect(p["options[document][require_live_capture]"]).toBe(true);
     // No Matrix id or name goes to Stripe — only an opaque hash.
     expect(JSON.stringify(p)).not.toContain("alice");
-    expect(String(p.return_url)).toContain("meetup=tea-party");
+    // Privacy review F5: the meetup code never goes to Stripe. The return
+    // link carries an opaque reference only this server can resolve.
+    const back = new URL(String(p.return_url));
+    expect(String(p.return_url)).not.toMatch(/tea-party|meetup/);
+    expect(back.searchParams.get("stranger")).toBe("identity");
+    const ref = back.searchParams.get("ref");
+    expect(ref && ref.length >= 16).toBe(true);
+    expect(av.meetupForReturnRef(ref)).toBe("tea-party");
+    expect(av.meetupForReturnRef("not-a-ref")).toBeNull();
+  });
+
+  it("a check started outside a meetup carries no reference at all", async () => {
+    await av.recordConsent(ALICE, CONSENT_VERSION);
+    await av.start(ALICE, null);
+    expect(new URL(String(identity.created[0].return_url)).search).toBe("?stranger=identity");
   });
 
   it("an adult passes; the stored row has no date of birth", async () => {

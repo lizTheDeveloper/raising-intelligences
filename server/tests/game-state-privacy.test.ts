@@ -50,7 +50,7 @@ describe("GET /game/:id/state privacy (#139)", () => {
       headers: { "Content-Type": "application/json", "X-Forwarded-For": "203.0.113.10" },
       body: JSON.stringify({ childName: "Kai" }),
     });
-    const { gameId } = (await createRes.json()) as { gameId: string };
+    const { gameId, secret } = (await createRes.json()) as { gameId: string; secret: string };
 
     const personalityRes = await fetch(`${baseUrl}/game/${gameId}/personality`, {
       method: "POST",
@@ -64,7 +64,8 @@ describe("GET /game/:id/state privacy (#139)", () => {
     });
     expect(personalityRes.status).toBe(200);
 
-    const stateRes = await fetch(`${baseUrl}/game/${gameId}/state`);
+    // The game's own player (privacy review F1: nobody else can read it at all).
+    const stateRes = await fetch(`${baseUrl}/game/${gameId}/state`, { headers: { "x-game-secret": secret } });
     expect(stateRes.status).toBe(200);
     const raw = await stateRes.text();
 

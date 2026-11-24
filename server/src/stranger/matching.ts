@@ -154,16 +154,22 @@ export class StrangerMatching {
       this.matched.delete(mxid);
     }
     this.pruneIdle();
-    const held = this.held.get(mxid);
-    if (held) {
-      held.lastSeen = this.now();
-      return { status: "waiting", position: 1, count: 1 };
-    }
-    const mine = this.queue.find((e) => e.mxid === mxid);
+    const mine = this.held.get(mxid) ?? this.queue.find((e) => e.mxid === mxid);
     if (!mine) return { status: "none" };
     mine.lastSeen = this.now();
-    const same = this.sorted(mine.meetupCode);
-    return { status: "waiting", position: same.indexOf(mine) + 1, count: same.length };
+    // Privacy review F2: a held (suspended) player is counted, and placed,
+    // exactly like a waiting one, in their own count and in everyone else's.
+    // Leaving them out made the difference between phones (or a host watching
+    // the room) show who had been reported.
+    const seen = this.visibleQueue(mine.meetupCode);
+    return { status: "waiting", position: seen.indexOf(mine) + 1, count: seen.length };
+  }
+
+  /** Everyone who looks like they're waiting at a meetup: the queue plus the held, in arrival order. */
+  private visibleQueue(meetupCode: string | null): QueueEntry[] {
+    return [...this.queue, ...this.held.values()]
+      .filter((e) => e.meetupCode === meetupCode)
+      .sort((a, b) => a.queuedAt - b.queuedAt || a.seq - b.seq);
   }
 
   /** Is this a stranger game (as far as this process knows, without I/O)? */
@@ -351,7 +357,8 @@ export class StrangerMatching {
     this.runs.set(gameId, run);
     this.matched.set(host.mxid, { gameId, slot: "parent1" });
     this.matched.set(partner.mxid, { gameId, slot: "parent2" });
-    logger.info("stranger_matched", { gameId, meetup: host.meetupCode });
+    // Never the meetup code itself (privacy review F5): it names the event, and logs go to Loki.
+    logger.info("stranger_matched", { gameId, atMeetup: host.meetupCode !== null });
     return true;
   }
 

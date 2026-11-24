@@ -121,6 +121,27 @@ describe("stranger mode routes", () => {
     expect(checked.body).toMatchObject({ age: "adult", eligible: true });
   });
 
+  // Privacy review F5: coming back from Stripe, the page is reopened by an
+  // opaque reference, not the meetup code, and the code comes back only in a
+  // response body (never in a URL that analytics, Sentry or logs could keep).
+  it("back from the ID check: the opaque reference reopens the meetup; a bad one is an unknown path", async () => {
+    const pass = await passFor();
+    await post("/stranger/consent", { pass, version: CONSENT_VERSION });
+    await post("/stranger/identity/start", { pass });
+    const back = new URL(String(identity.created[0].return_url));
+    expect(back.search).not.toMatch(/tea-party|meetup/);
+    const ref = back.searchParams.get("ref")!;
+    const ok = await fetch(`${base}/stranger/status?ref=${encodeURIComponent(ref)}`);
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({ visible: true, consentVersion: CONSENT_VERSION, meetup: "tea-party" });
+    const u = await unknownGet();
+    const bad = await fetch(`${base}/stranger/status?ref=nope`);
+    expect({ status: bad.status, body: await bad.text() }).toEqual(u);
+    // A code that is delisted closes its references too.
+    cfg = strangerConfig({ meetupCodes: new Set(["other"]) });
+    expect((await fetch(`${base}/stranger/status?ref=${encodeURIComponent(ref)}`)).status).toBe(u.status);
+  });
+
   it("one pass per account: signing in again retires the old pass", async () => {
     const first = await passFor();
     const second = await passFor();

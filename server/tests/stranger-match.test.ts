@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { AddressInfo } from "net";
 import { buildServer, type BuiltServer } from "../src/app.js";
 import { InMemoryGameRepository } from "../src/db/repository.js";
@@ -255,6 +255,63 @@ describe("stranger matching", () => {
     await queue(a);
     await queue(b);
     expect((await poll(a)).body).toMatchObject({ status: "waiting", count: 2 });
+  });
+
+  // Privacy review F2: a suspended (reported) player is held as "waiting" and
+  // never matched. If the held player were left out of the count, comparing
+  // phones (or a host watching the room) would show who was reported. A held
+  // player and a waiting player must look identical in every count.
+  it("a held (suspended) player counts exactly like a waiting one, for everyone", async () => {
+    const a = await adult(ALICE);
+    const b = await adult(BOB);
+    const c = await adult(CAROL);
+    // Baseline: two waiting people who can't be paired (a blocked pair).
+    const blocked = { a: await stranger.age.subjectHash(ALICE), b: await stranger.age.subjectHash(BOB) };
+    await repo.stranger.addBlock(blocked.a, blocked.b);
+    await queue(a);
+    await queue(b);
+    const baseline = [(await poll(a)).body, (await poll(b)).body];
+    expect(baseline).toEqual([
+      { status: "waiting", position: 1, count: 2 },
+      { status: "waiting", position: 2, count: 2 },
+    ]);
+    await post("/stranger/queue/leave", { pass: a });
+    await post("/stranger/queue/leave", { pass: b });
+
+    // The same two, but Alice is suspended (held) instead of blocked.
+    await repo.stranger.suspend(blocked.a, "report");
+    const a2 = stranger.passes.issue(ALICE, "tea-party");
+    const b2 = stranger.passes.issue(BOB, "tea-party");
+    await queue(a2);
+    await queue(b2);
+    expect([(await poll(a2)).body, (await poll(b2)).body]).toEqual(baseline);
+
+    // A third arrives and is paired with Bob; Alice is still "1 of 1", as anyone alone would be.
+    await queue(c);
+    expect((await poll(c)).body).toMatchObject({ status: "matched" });
+    expect((await poll(a2)).body).toEqual({ status: "waiting", position: 1, count: 1 });
+  });
+
+  // Privacy review F5: a meetup code names the event (and can name the host's
+  // community). The server logs go to Loki, so no log line may carry it.
+  it("no log line carries the meetup code", async () => {
+    const lines: string[] = [];
+    const capture = (chunk: unknown) => { lines.push(String(chunk)); return true; };
+    const out = vi.spyOn(process.stdout, "write").mockImplementation(capture as never);
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(capture as never);
+    try {
+      const a = await adult(ALICE);
+      const b = await adult(BOB);
+      await queue(a);
+      await queue(b);
+      const ma = (await poll(a)).body;
+      expect(ma).toMatchObject({ status: "matched" });
+    } finally {
+      out.mockRestore();
+      err.mockRestore();
+    }
+    expect(lines.some((l) => l.includes("stranger_matched"))).toBe(true);
+    expect(lines.join("")).not.toContain("tea-party");
   });
 
   it("off: the queue doesn't exist", async () => {

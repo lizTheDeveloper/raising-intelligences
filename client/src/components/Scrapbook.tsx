@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { ReportCard } from "./ReportCard";
+import { matrixAuthHeaders } from "../gameAuth";
 
 const API = import.meta.env.BASE_URL + "api";
 const BASE = import.meta.env.BASE_URL;
@@ -39,7 +40,8 @@ export function Scrapbook({ userId, gameId, onBack }: Props) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`${API}/user/${encodeURIComponent(userId)}/album/kid/${gameId}`)
+    matrixAuthHeaders()
+      .then((headers) => fetch(`${API}/user/${encodeURIComponent(userId)}/album/kid/${gameId}`, { headers }))
       .then((r) => r.json())
       .then((d: any) => {
         setData({

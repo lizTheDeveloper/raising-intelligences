@@ -4,6 +4,7 @@ import { buildServer, type BuiltServer } from "../src/app.js";
 import { MockLLMClient } from "../src/llm/mock.js";
 import { InMemoryGameRepository } from "../src/db/repository.js";
 import { createGame } from "../src/game/state-machine.js";
+import { newGameSecret } from "../src/security/game-secret.js";
 import type { LLMRole } from "../src/llm/model-config.js";
 
 /**
@@ -65,12 +66,15 @@ describe("debrief state after end-chat", () => {
       ],
     };
     await repo.saveGame(state as never);
+    // GET /state needs the game's own secret (privacy review F1).
+    const { secret, hash } = newGameSecret();
+    await repo.recordAccessSecretHash(state.id, hash);
 
     const end = await fetch(`${baseUrl}/api/game/${state.id}/end-chat`, { method: "POST" });
     expect(end.status).toBe(200);
     await end.text();
 
-    const res = await fetch(`${baseUrl}/api/game/${state.id}/state`);
+    const res = await fetch(`${baseUrl}/api/game/${state.id}/state`, { headers: { "x-game-secret": secret } });
     expect(res.status).toBe(200);
     const raw = await res.text();
     const body = JSON.parse(raw) as Record<string, unknown>;

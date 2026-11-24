@@ -5,6 +5,7 @@ import { existsSync } from "fs";
 import path from "path";
 import { PORTRAITS_DIR } from "../portrait-gen.js";
 import { isValidUserId, UUID_RE } from "../lib/validation.js";
+import { requireMatrixUser, type MatrixVerifier } from "../security/game-read-access.js";
 
 const AGE_SLUGS = [
   { age: 3, slug: "age-03" },
@@ -20,10 +21,19 @@ function getPortraitUrls(gameId: string): Array<{ age: number; url: string }> {
     .map(({ age, slug }) => ({ age, url: `portraits/${gameId}/${slug}.png` }));
 }
 
-export function createAlbumRoutes(repo: GameRepository): Router {
+/**
+ * Privacy review F1: a user's album lists their kids, and a scrapbook carries
+ * a game's epilogue and report card. Both were open to anyone who knew a
+ * Matrix id. Now only that user, signed in, may read them, and a scrapbook
+ * opens only through a kid row written with proof of access to the game
+ * (repo.loadScrapbook), so listing someone else's game id under your own
+ * account opens nothing.
+ */
+export function createAlbumRoutes(repo: GameRepository, deps: { verifyMatrix: MatrixVerifier }): Router {
   const router = Router();
+  const owner = requireMatrixUser(deps.verifyMatrix);
 
-  router.get("/user/:userId/album", async (req: Request, res: Response) => {
+  router.get("/user/:userId/album", owner, async (req: Request, res: Response) => {
     const userId = req.params.userId as string;
     if (!isValidUserId(userId)) {
       res.status(400).json({ error: "Invalid userId format" });
@@ -33,7 +43,7 @@ export function createAlbumRoutes(repo: GameRepository): Router {
     res.json(album);
   });
 
-  router.get("/user/:userId/album/kid/:gameId", async (req: Request, res: Response) => {
+  router.get("/user/:userId/album/kid/:gameId", owner, async (req: Request, res: Response) => {
     const userId = req.params.userId as string;
     const gameId = req.params.gameId as string;
     if (!isValidUserId(userId) || !UUID_RE.test(gameId)) {

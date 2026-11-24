@@ -210,7 +210,7 @@ describe("parent context through the HTTP flow", () => {
     expect(p).toContain("WORRY-SENTINEL that he will be lonely");
     expect(p).toContain("Quiet, and hard to read");
     expect(p).not.toContain("MOMENT-SENTINEL");
-    const state = await (await fetch(`${baseUrl}/game/${g.gameId}/state`)).json();
+    const state = await (await fetch(`${baseUrl}/game/${g.gameId}/state`, { headers: { "x-game-secret": g.secret } })).json();
     expect(state).not.toHaveProperty("parentContext");
   });
 

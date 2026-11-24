@@ -17,6 +17,7 @@ describe("E2E: solo REST playthrough", () => {
   let server: TestServer;
   let api: RestClient;
   let gameId: string;
+  let gameSecret = "";
 
   beforeAll(async () => {
     server = await createTestServer("rest-playthrough");
@@ -31,13 +32,14 @@ describe("E2E: solo REST playthrough", () => {
   });
 
   it("creates a game", async () => {
-    const { status, json } = await api.post<{ gameId: string }>("/api/game", {
+    const { status, json } = await api.post<{ gameId: string; secret: string }>("/api/game", {
       childName: "Luna",
       relationshipType: "co-parents",
     });
     expect(status).toBe(200);
     expect(json.gameId).toBeTruthy();
     gameId = json.gameId;
+    gameSecret = json.secret;
   });
 
   it("generates the first event from the world manager", async () => {
@@ -80,7 +82,7 @@ describe("E2E: solo REST playthrough", () => {
     const { json } = await api.get<{
       messages: Array<{ sender: string }>;
       identityDocument?: string;
-    }>(`/api/game/${gameId}/state`);
+    }>(`/api/game/${gameId}/state`, { "x-game-secret": gameSecret });
     // 3 parent + 3 kid messages, and the identity doc must stay private.
     expect(json.messages.length).toBe(6);
     expect(json.identityDocument).toBeUndefined();

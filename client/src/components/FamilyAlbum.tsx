@@ -3,6 +3,7 @@ import { PartnerCards } from "./PartnerCards";
 import { KidsList } from "./KidsList";
 import { Scrapbook } from "./Scrapbook";
 import "../styles/album.css";
+import { matrixAuthHeaders } from "../gameAuth";
 
 const API = import.meta.env.BASE_URL + "api";
 
@@ -39,8 +40,10 @@ export function FamilyAlbum({ userId, onBack }: Props) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`${API}/user/${encodeURIComponent(userId)}/album`)
-      .then((r) => r.json())
+    matrixAuthHeaders()
+      .then((headers) => fetch(`${API}/user/${encodeURIComponent(userId)}/album`, { headers }))
+      // Refused (signed out, token expired): shown as an empty album, not a crash.
+      .then((r) => (r.ok ? r.json() : { partners: [], unlinkedKids: [] }))
       .then((data: AlbumData) => {
         setAlbum(data);
         setLoading(false);

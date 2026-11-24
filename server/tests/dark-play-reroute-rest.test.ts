@@ -75,13 +75,19 @@ describe("dark-play reroute (routing layer, via real REST routes)", () => {
     await built.close();
   });
 
+  // GET /state needs the game's own secret (privacy review F1).
+  const secrets = new Map<string, string>();
+  const readState = (gameId: string) =>
+    fetch(`${baseUrl}/api/game/${gameId}/state`, { headers: { "x-game-secret": secrets.get(gameId) ?? "" } });
+
   async function createGameAndReachFamilyChat(ip: string): Promise<string> {
     const createRes = await fetch(`${baseUrl}/api/game`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Forwarded-For": ip },
       body: JSON.stringify({ childName: "Kai" }),
     });
-    const { gameId } = (await createRes.json()) as { gameId: string };
+    const { gameId, secret } = (await createRes.json()) as { gameId: string; secret: string };
+    secrets.set(gameId, secret);
 
     const nextRes = await fetch(`${baseUrl}/api/game/${gameId}/next-event`, {
       method: "POST",
@@ -119,7 +125,7 @@ describe("dark-play reroute (routing layer, via real REST routes)", () => {
     expect(done!.kidResponse).toBe("ok");
     expect(lastFrames.some((f) => f.type === "terminated")).toBe(false);
 
-    const stateRes = await fetch(`${baseUrl}/api/game/${gameId}/state`);
+    const stateRes = await readState(gameId);
     const state = (await stateRes.json()) as { phase: string };
     expect(state.phase).not.toBe("ended"); // (b)
     expect(await repo.isIpBanned(ip)).toBe(false); // (a)
@@ -140,7 +146,7 @@ describe("dark-play reroute (routing layer, via real REST routes)", () => {
     expect(lastFrames.some((f) => f.type === "terminated")).toBe(true);
     expect(lastFrames.some((f) => f.type === "done")).toBe(false);
 
-    const stateRes = await fetch(`${baseUrl}/api/game/${gameId}/state`);
+    const stateRes = await readState(gameId);
     const state = (await stateRes.json()) as { phase: string };
     expect(state.phase).toBe("ended");
     // Scene-level block ends the session and files a review flag, but does NOT

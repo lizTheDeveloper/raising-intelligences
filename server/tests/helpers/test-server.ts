@@ -1,7 +1,7 @@
 import type { AddressInfo } from "net";
 import path from "path";
 import { fileURLToPath } from "url";
-import { buildServer, type BuiltServer } from "../../src/app.js";
+import { buildServer, type BuiltServer, type BuildServerOptions } from "../../src/app.js";
 import { RoutingLLMClient } from "../../src/llm/routing-client.js";
 import { InMemoryGameRepository } from "../../src/db/repository.js";
 import { InMemoryAdminQueries } from "../../src/db/admin-queries.js";
@@ -41,7 +41,7 @@ export interface TestServer extends BuiltServer {
  *
  * @param cassetteName  File under tests/fixtures/cassettes/ backing this run.
  */
-export async function createTestServer(cassetteName: string): Promise<TestServer> {
+export async function createTestServer(cassetteName: string, extra: Pick<BuildServerOptions, "verifyMatrix"> = {}): Promise<TestServer> {
   // Never spend on portrait image generation during tests.
   process.env.DISABLE_PORTRAITS = "1";
 
@@ -80,6 +80,7 @@ export async function createTestServer(cassetteName: string): Promise<TestServer
     // The test socket client dials the default path; pin it so the harness is
     // independent of NODE_ENV (which would otherwise switch to the prod subpath).
     socketPath: "/socket.io",
+    ...extra,
   });
 
   await new Promise<void>((resolve) => {

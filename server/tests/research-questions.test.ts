@@ -345,7 +345,9 @@ describe("research routes", () => {
       const g = await adult();
       const s = built.games.get(g.gameId)!;
       built.games.set(g.gameId, { ...s, parentContext: "SECRET-CTX", repairNote: "SECRET-NOTE" });
-      const text = await (await fetch(`${baseUrl}/game/${g.gameId}/state`)).text();
+      const res = await fetch(`${baseUrl}/game/${g.gameId}/state`, { headers: { "x-game-secret": g.secret } });
+      expect(res.status).toBe(200);
+      const text = await res.text();
       expect(text).not.toContain("SECRET-CTX");
       expect(text).not.toContain("SECRET-NOTE");
       expect(text).not.toContain("parentContext");

@@ -5,7 +5,10 @@ describe("Album API routes", () => {
   let server: TestServer;
 
   beforeAll(async () => {
-    server = await createTestServer("album-routes");
+    // A Matrix sign-in for "tok:<id>" is <id> (privacy review F1: album reads are the owner's own).
+    server = await createTestServer("album-routes", {
+      verifyMatrix: async (t) => (typeof t === "string" && t.startsWith("tok:") ? t.slice(4) : null),
+    });
   });
 
   afterAll(async () => {
@@ -13,13 +16,13 @@ describe("Album API routes", () => {
   });
 
   it("GET /api/user/:userId/album returns 400 for a malformed userId", async () => {
-    const res = await fetch(`${server.baseUrl}/api/user/unknown-user/album`);
+    const res = await fetch(`${server.baseUrl}/api/user/unknown-user/album`, { headers: { "x-matrix-openid": "tok:unknown-user" } });
     expect(res.status).toBe(400);
   });
 
   it("GET /api/user/:userId/album returns empty album for user with no games", async () => {
     const userId = "00000000-0000-0000-0000-000000000000";
-    const res = await fetch(`${server.baseUrl}/api/user/${userId}/album`);
+    const res = await fetch(`${server.baseUrl}/api/user/${userId}/album`, { headers: { "x-matrix-openid": `tok:${userId}` } });
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data).toEqual({ partners: [], unlinkedKids: [] });
@@ -28,18 +31,16 @@ describe("Album API routes", () => {
   it("GET /api/user/:userId/album/kid/:gameId returns 400 for a malformed userId or gameId", async () => {
     const validUserId = "00000000-0000-0000-0000-000000000001";
     const validGameId = "00000000-0000-0000-0000-0000000000aa";
-    const res1 = await fetch(`${server.baseUrl}/api/user/some-user/album/kid/${validGameId}`);
+    const res1 = await fetch(`${server.baseUrl}/api/user/some-user/album/kid/${validGameId}`, { headers: { "x-matrix-openid": "tok:some-user" } });
     expect(res1.status).toBe(400);
-    const res2 = await fetch(`${server.baseUrl}/api/user/${validUserId}/album/kid/not-a-uuid`);
+    const res2 = await fetch(`${server.baseUrl}/api/user/${validUserId}/album/kid/not-a-uuid`, { headers: { "x-matrix-openid": `tok:${validUserId}` } });
     expect(res2.status).toBe(400);
   });
 
   it("GET /api/user/:userId/album/kid/nonexistent returns 404", async () => {
     const userId = "00000000-0000-0000-0000-000000000002";
     const gameId = "00000000-0000-0000-0000-0000000000bb";
-    const res = await fetch(
-      `${server.baseUrl}/api/user/${userId}/album/kid/${gameId}`
-    );
+    const res = await fetch(`${server.baseUrl}/api/user/${userId}/album/kid/${gameId}`, { headers: { "x-matrix-openid": `tok:${userId}` } });
     expect(res.status).toBe(404);
     const data = await res.json();
     expect(data).toEqual({ error: "Kid not found" });
@@ -52,9 +53,7 @@ describe("Album API routes", () => {
     server.memRepo.addUserGame(userId, gameId, "Luna");
     await server.memRepo.saveEndgame(gameId, "Luna grew up well.", "# Report Card\nA+");
 
-    const res = await fetch(
-      `${server.baseUrl}/api/user/${userId}/album/kid/${gameId}`
-    );
+    const res = await fetch(`${server.baseUrl}/api/user/${userId}/album/kid/${gameId}`, { headers: { "x-matrix-openid": `tok:${userId}` } });
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.childName).toBe("Luna");
@@ -72,7 +71,7 @@ describe("Album API routes", () => {
     const gameId = "00000000-0000-0000-0000-0000000000dd";
     server.memRepo.addUserGame(userId, gameId, "Kai");
 
-    const res = await fetch(`${server.baseUrl}/api/user/${userId}/album`);
+    const res = await fetch(`${server.baseUrl}/api/user/${userId}/album`, { headers: { "x-matrix-openid": `tok:${userId}` } });
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.partners).toEqual([]);
@@ -95,7 +94,7 @@ describe("Album API routes", () => {
     });
     server.memRepo.addUserGame(userId, gameId, "Zoe", partnerId);
 
-    const res = await fetch(`${server.baseUrl}/api/user/${userId}/album`);
+    const res = await fetch(`${server.baseUrl}/api/user/${userId}/album`, { headers: { "x-matrix-openid": `tok:${userId}` } });
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.unlinkedKids).toEqual([]);

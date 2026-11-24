@@ -65,3 +65,26 @@ describe("scrubBreadcrumb", () => {
     expect(JSON.stringify(ev)).not.toMatch(/HC|s3cret|admin-tok/);
   });
 });
+
+// Privacy review F5: a meetup code names the event a player tried to attend.
+// Query strings were already cut from URLs; the code must not survive in any
+// other text an error report carries either.
+describe("meetup codes in error reports", () => {
+  it("are cut from the URL, the referer, breadcrumbs, the message and exception text", () => {
+    const ev = scrubEvent({
+      request: {
+        url: "https://multiversegames.ai/raising-intelligences/?meetup=lds-ward12-singles",
+        headers: { referer: "https://multiversegames.ai/raising-intelligences/?stranger=queue&meetup=lds-ward12-singles" },
+      },
+      message: "status failed for /api/stranger/status?meetup=lds-ward12-singles",
+      transaction: "/raising-intelligences/?meetup=lds-ward12-singles",
+      exception: { values: [{ type: "Error", value: "GET /api/stranger/status?x=1&meetup=lds-ward12-singles 500" }] },
+      breadcrumbs: [
+        { data: { url: "/api/stranger/status?meetup=lds-ward12-singles" } },
+        { message: "fetch /api/stranger/status?meetup=lds-ward12-singles" },
+      ],
+    });
+    expect(JSON.stringify(ev)).not.toContain("lds-ward12-singles");
+    expect(ev.exception.values[0].value).toContain("meetup=[scrubbed]");
+  });
+});

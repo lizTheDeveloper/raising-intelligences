@@ -195,23 +195,30 @@ export function App() {
   // Stranger mode is invisible unless the server says otherwise for this link
   // (RI_STRANGER_MODE, and in meetup mode a listed ?meetup= code). Coming
   // back from the Stripe ID check (?stranger=identity) reopens it.
-  const meetup = params.get("meetup");
+  // Back from Stripe, the link carries an opaque `ref`, never the meetup code
+  // (privacy review F5); the server answers the code in the status body.
+  const [meetup, setMeetup] = useState<string | null>(params.get("meetup"));
   const backFromIdCheck = params.get("stranger") === "identity" || params.get("stranger") === "queue";
+  const returnRef = params.get("stranger") === "identity" ? params.get("ref") : null;
   const [mode, setMode] = useState<Mode>(
     isSoloResume ? "solo" : joinGameId ? "multiplayer" : backFromIdCheck ? "stranger" : "choose",
   );
   const [stranger, setStranger] = useState<{ consentVersion: string } | null>(null);
   useEffect(() => {
     let live = true;
-    const q = meetup ? `?meetup=${encodeURIComponent(meetup)}` : "";
+    const q = meetup ? `?meetup=${encodeURIComponent(meetup)}` : returnRef ? `?ref=${encodeURIComponent(returnRef)}` : "";
     fetch(`${import.meta.env.BASE_URL}api/stranger/status${q}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((b: { visible?: boolean; consentVersion?: string } | null) => {
-        if (live && b?.visible && b.consentVersion) setStranger({ consentVersion: b.consentVersion });
+      .then((b: { visible?: boolean; consentVersion?: string; meetup?: string } | null) => {
+        if (!live) return;
+        if (!meetup && typeof b?.meetup === "string") setMeetup(b.meetup);
+        if (b?.visible && b.consentVersion) setStranger({ consentVersion: b.consentVersion });
       })
       .catch(() => {});
     return () => { live = false; };
-  }, [meetup]);
+    // Once, on arrival: the link's meetup (or its return ref) is fixed for this page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [theme, setTheme] = useState<Theme>("theme-ocean-grunge");
   const auth = useMatrixAuth();
   const titleSeenRef = useRef(false);

@@ -44,9 +44,13 @@ const post = (path: string, body: unknown) =>
     body: JSON.stringify(body),
   });
 
+// GET /state needs the game's own secret (privacy review F1).
+const secrets = new Map<string, string>();
 async function newSoloGame(): Promise<string> {
   const res = await post("/game", { childName: "Kai", relationshipType: "solo parent" });
-  return ((await res.json()) as { gameId: string }).gameId;
+  const { gameId, secret } = (await res.json()) as { gameId: string; secret: string };
+  secrets.set(gameId, secret);
+  return gameId;
 }
 
 describe("the child's personality is built once", () => {
@@ -102,7 +106,7 @@ describe("the child's personality is built once", () => {
     seedMock.mockResolvedValue("a COMPLETELY different child");
     await post(`/game/${id}/personality`, BODY);
 
-    const state = (await (await fetch(`${baseUrl}/game/${id}/state`)).json()) as {
+    const state = (await (await fetch(`${baseUrl}/game/${id}/state`, { headers: { "x-game-secret": secrets.get(id)! } })).json()) as {
       personalitySeed?: string;
     };
     // /state may not expose the seed; the call-count assertion above is the

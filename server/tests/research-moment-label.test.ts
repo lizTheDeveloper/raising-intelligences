@@ -323,9 +323,11 @@ describe("GET /state excludes labels", () => {
     try {
       const base = `http://127.0.0.1:${(built.httpServer.address() as AddressInfo).port}/api`;
       const res = await fetch(`${base}/game`, { method: "POST", headers: { "Content-Type": "application/json", "X-Forwarded-For": "203.0.113.77" }, body: JSON.stringify({ childName: "Kai" }) });
-      const { gameId } = (await res.json()) as { gameId: string };
+      const { gameId, secret } = (await res.json()) as { gameId: string; secret: string };
       await repo.saveMomentLabel(gameId, 1, { kind: "hope_vs_kept", label: "mismatch", rationale: "LABEL-SENTINEL" });
-      const text = await (await fetch(`${base}/game/${gameId}/state`)).text();
+      const stateRes = await fetch(`${base}/game/${gameId}/state`, { headers: { "x-game-secret": secret } });
+      expect(stateRes.status).toBe(200);
+      const text = await stateRes.text();
       expect(text).not.toContain("LABEL-SENTINEL");
       expect(text).not.toMatch(/mismatch|moment_label|hope_vs_kept/);
     } finally {

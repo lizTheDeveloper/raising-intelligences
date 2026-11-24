@@ -18,6 +18,9 @@ import { createCampusRoutes } from "./routes/campus.js";
 import { createChildSafetyAdminRoutes, createChildSafetyIngestRoutes, INGEST_PATH } from "./routes/child-safety.js";
 import { createStrangerRoutes, createStrangerAdminRoutes, createIdentityWebhookRoute, IDENTITY_WEBHOOK_PATH } from "./routes/stranger.js";
 import { StrangerService } from "./stranger/service.js";
+import { readStrangerConfig } from "./stranger/config.js";
+import { verifyOpenIdToken } from "./stranger/matrix-identity.js";
+import { cachedMatrixVerifier, type MatrixVerifier } from "./security/game-read-access.js";
 import { createPartnerPaymentRoutes, createStripeWebhookRoute, STRIPE_WEBHOOK_PATH, safeEqual, createRequirePaid } from "./routes/partner-payment.js";
 import { PartnerPayments } from "./payments/partner-payments.js";
 import type { AdminQueries } from "./db/admin-queries.js";
@@ -65,6 +68,12 @@ export interface BuildServerOptions {
   payments?: PartnerPayments;
   /** Stranger mode (Tier 4). Defaults to the env-configured service (off unless RI_STRANGER_MODE says otherwise). */
   stranger?: StrangerService;
+  /**
+   * Verifies a Matrix OpenID token to the Matrix id it stands for (kids,
+   * album, and reading your own game from another device). Defaults to
+   * Synapse's userinfo endpoint (RI_MATRIX_USERINFO_URL), cached briefly.
+   */
+  verifyMatrix?: MatrixVerifier;
 }
 
 /**
@@ -110,6 +119,8 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   } = options;
   const payments = options.payments ?? new PartnerPayments({ store: repo.partnerPayments });
   const stranger = options.stranger ?? StrangerService.fromEnv(repo.stranger, repo.childSafety);
+  const verifyMatrix: MatrixVerifier = options.verifyMatrix
+    ?? cachedMatrixVerifier((t) => verifyOpenIdToken(t, readStrangerConfig().matrixUserinfoUrl));
 
   const app = express();
   app.set("trust proxy", 1);
@@ -277,12 +288,12 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
       next(err);
     }
   });
-  app.use("/api", createGameRoutes(conversationEngine, endgameEngine, games, repo, { llmRateLimit, gameCreateLimit, gameLocks, llm, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0, partnerGate, seatOf, requirePaid }));
+  app.use("/api", createGameRoutes(conversationEngine, endgameEngine, games, repo, { llmRateLimit, gameCreateLimit, gameLocks, llm, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0, partnerGate, seatOf, requirePaid, verifyMatrix }));
   app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit, gameLocks, requirePaid }));
   app.use("/api", createResearchRoutes(games, repo, { gameLocks, llm, followupLimit, answerLimit, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0 }));
   app.use("/api", createCampusRoutes(repo, { limit: campusPassLimit }));
-  app.use("/api", createUserRoutes());
-  app.use("/api", createAlbumRoutes(repo));
+  app.use("/api", createUserRoutes(repo, { verifyMatrix, seatOf }));
+  app.use("/api", createAlbumRoutes(repo, { verifyMatrix }));
   // The limiter is scoped to the /support/checkout route itself, not mounted
   // as blanket middleware at the /api prefix — app.use("/api", mw, router)
   // would have run `mw` for every /api/* request regardless of which router
