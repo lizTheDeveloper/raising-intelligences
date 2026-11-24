@@ -68,6 +68,15 @@ describe("host tools: studio learning, unlink, purge", () => {
       expect(h.hosts.endScreens(plain.id)?.learning).toBe(false);
     });
 
+    it("works at a studio event with no share codes (level 0), and can be allowed for analysis", async () => {
+      const plain = await h.event({ kind: "studio", level: 0, studioLearning: true, handleExchange: false, name: "seed library" });
+      const g = await finished(plain.code);
+      expect(await learn(g.A, "yes")).toEqual({ view: { answered: true } });
+      expect(await learn(g.B, "yes")).toEqual({ view: { answered: true } });
+      expect((await account(g.a)).games[0].learning).toBe("yes");
+      expect(await allowlist()).toContain(g.gameId);
+    });
+
     it("the reply is the same whatever the answer, and nothing reaches the co-parent", async () => {
       const g = await finished();
       let leaked = 0;

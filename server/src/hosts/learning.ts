@@ -1,6 +1,7 @@
 import type { HostTools } from "./service.js";
 import type { ShareService } from "./share.js";
-import type { Slot } from "./types.js";
+import type { HostEvent, Slot } from "./types.js";
+import type { EventRun } from "../stranger/store.js";
 import { liveTerms } from "./card.js";
 
 export type LearningAnswer = "yes" | "no";
@@ -19,13 +20,18 @@ export class LearningService {
     private readonly share: ShareService,
   ) {}
 
-  /** The game's run and event, when its event offers studio learning. */
-  private async context(gameId: string) {
-    const ctx = await this.share.context(gameId);
-    if (!ctx) return null;
-    const e = ctx.event;
-    const terms = e.frozenTerms ?? liveTerms(e, this.hosts.live());
-    return e.kind === "studio" && terms.learning ? ctx : null;
+  /**
+   * The game's run and event, when its event offers studio learning. Its own
+   * lookup: a studio event can offer learning without share codes.
+   */
+  private async context(gameId: string): Promise<{ run: EventRun; event: HostEvent } | null> {
+    const seats = await this.hosts.stranger.matching?.runFor(gameId);
+    if (!seats?.eventId || seats.discarded) return null;
+    const e = this.hosts.eventById(seats.eventId) ?? (await this.hosts.store.getEvent(seats.eventId));
+    if (!e || e.kind !== "studio") return null;
+    if (!(e.frozenTerms ?? liveTerms(e, this.hosts.live())).learning) return null;
+    const run = (await this.hosts.stranger.store.runsForEvent(e.id)).find((r) => r.gameId === gameId);
+    return run && !run.discarded ? { run, event: e } : null;
   }
 
   /** Is studio learning offered in this game at all? */
