@@ -49,6 +49,7 @@ interface HostEventRow {
 }
 
 interface HostReport { id: string; eventId: string | null; text: string; at: number; status: "open" | "done" }
+interface UnlinkRequest { id: string; at: number; doneAt: number | null; event: string | null }
 
 const when = (ms: number | null | undefined) => (ms ? new Date(ms).toLocaleString() : "—");
 
@@ -66,6 +67,9 @@ export function HostTools({ token }: { token: string }) {
   const [people, setPeople] = useState<Person[]>([]);
   const [events, setEvents] = useState<HostEventRow[]>([]);
   const [reports, setReports] = useState<HostReport[]>([]);
+  const [unlinks, setUnlinks] = useState<UnlinkRequest[]>([]);
+  const [allowlist, setAllowlist] = useState<string[]>([]);
+  const [purged, setPurged] = useState<{ at: number; deleted: Record<string, number> } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<{ name: string; code: string; link: string } | null>(null);
@@ -84,16 +88,20 @@ export function HostTools({ token }: { token: string }) {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [s, p, e, r] = await Promise.all([
+      const [s, p, e, r, u, a] = await Promise.all([
         api<Status>("/status"),
         api<{ people: Person[] }>("/hosts"),
         api<{ events: HostEventRow[] }>("/events"),
         api<{ reports: HostReport[] }>("/host-reports"),
+        api<{ requests: UnlinkRequest[] }>("/unlink-requests"),
+        api<{ games: string[] }>("/analysis-allowlist"),
       ]);
       setStatus(s);
       setPeople(p.people);
       setEvents(e.events);
       setReports(r.reports);
+      setUnlinks(u.requests);
+      setAllowlist(a.games);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -190,6 +198,24 @@ export function HostTools({ token }: { token: string }) {
   const personName = (id: string | null) => (id ? people.find((p) => p.id === id)?.displayName ?? id.slice(0, 8) : "—");
   const approved = people.filter((p) => p.status === "approved");
   const openReports = reports.filter((r) => r.status === "open");
+  const openUnlinks = unlinks.filter((u) => u.doneAt === null);
+  /** A 404 means someone already did it: the list is read again and the server's words shown. */
+  const markUnlinkDone = (id: string) =>
+    act(async () => {
+      try {
+        await api(`/unlink-requests/${id}/done`, "POST");
+      } catch (err) {
+        await load();
+        throw err;
+      }
+    });
+  const runPurge = () => {
+    if (!window.confirm("Run the purge now? Rows past their retention are deleted for good.")) return;
+    void act(async () => {
+      const r = await api<{ deleted: Record<string, number> }>("/purge", "POST");
+      setPurged({ at: Date.now(), deleted: r.deleted });
+    });
+  };
 
   return (
     <div>
@@ -359,6 +385,64 @@ export function HostTools({ token }: { token: string }) {
             ))}
           </tbody>
         </table>
+      </div>
+
+      <div className="detail-section">
+        <h3>Unlink requests ({openUnlinks.length} open)</h3>
+        <p className="dim" style={{ fontSize: 12 }}>"Take this game off my account". The code was voided when they asked; "done" unlinks them (spec §6).</p>
+        <table className="admin-table">
+          <thead><tr><th>Asked</th><th>Event</th><th>Done</th><th></th></tr></thead>
+          <tbody>
+            {unlinks.length === 0 && <tr><td colSpan={4} className="dim">No requests.</td></tr>}
+            {unlinks.map((u) => (
+              <tr key={u.id}>
+                <td style={{ whiteSpace: "nowrap" }}>{when(u.at)}</td>
+                <td>{u.event ?? "—"}</td>
+                <td style={{ whiteSpace: "nowrap" }}>{u.doneAt === null ? "—" : when(u.doneAt)}</td>
+                <td>
+                  {u.doneAt === null && (
+                    <button disabled={busy} onClick={() => { if (window.confirm("Unlink this player from the game now? This can't be undone.")) void markUnlinkDone(u.id); }}>done</button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="detail-section">
+        <h3>Purge</h3>
+        <p className="dim" style={{ fontSize: 12 }}>Runs the retention schedule (spec §10). Only counts of deleted rows come back.</p>
+        <button disabled={busy} onClick={runPurge}>run purge</button>
+        {purged && (
+          <div role="status" style={{ marginTop: 8 }}>
+            <p>Purged at {when(purged.at)}:</p>
+            {Object.keys(purged.deleted).length === 0 ? (
+              <p className="dim">Nothing to delete.</p>
+            ) : (
+              <table className="admin-table">
+                <thead><tr><th>Table</th><th>Rows deleted</th></tr></thead>
+                <tbody>
+                  {Object.entries(purged.deleted).map(([table, n]) => (
+                    <tr key={table}><td><code>{table}</code></td><td>{n}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="detail-section">
+        <h3>Analysis allow-list ({allowlist.length} {allowlist.length === 1 ? "game" : "games"})</h3>
+        <p className="dim" style={{ fontSize: 12 }}>Studio-event games where both parents said yes to studio learning (H18). Only these may be read by ri-devlog and model-search.</p>
+        {allowlist.length === 0 ? (
+          <p className="dim">None.</p>
+        ) : (
+          <ul>
+            {allowlist.map((id) => <li key={id}><code>{id}</code></li>)}
+          </ul>
+        )}
       </div>
     </div>
   );

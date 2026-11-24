@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { track } from "../analytics";
 import { saveResume } from "../localStore";
 import { asCard, type MeetupCard } from "../meetupCard";
+import { AccountLink } from "./ShareStep";
 
 const API = import.meta.env.BASE_URL + "api";
 const MEETUP_KEY = "ri_stranger_meetup";
@@ -41,10 +42,12 @@ function enterGame(gameId: string, playerToken: string): void {
  * Waiting to be paired. No profiles, no photos, no "match" screen: you give a
  * first name and a name for the child, wait, and go straight into the game.
  */
-export function StrangerQueue({ pass, meetup, onBack, onCardChanged }: {
+export function StrangerQueue({ pass, meetup, onBack, onCardChanged, accountLink }: {
   pass: string;
   meetup: string | null;
   onBack: () => void;
+  /** Host tools are on for this entry (its meetup has an event card): link "your account". */
+  accountLink?: boolean;
   /** A 409 with the meetup's current card: read it again, then `retry` joins with the same names. */
   onCardChanged?: (card: MeetupCard, retry: () => void) => void;
 }) {
@@ -128,6 +131,7 @@ export function StrangerQueue({ pass, meetup, onBack, onCardChanged }: {
         </p>
         <p className="dim">when you're paired you'll go straight into the game.</p>
         <button className="btn btn-secondary" onClick={leave}>stop looking</button>
+        {accountLink && <AccountLink />}
       </div>
     );
   }
@@ -149,6 +153,7 @@ export function StrangerQueue({ pass, meetup, onBack, onCardChanged }: {
         <button className="btn" type="submit" data-testid="btn-stranger-queue">find a co-parent</button>
       </form>
       <button className="btn btn-secondary" onClick={onBack} style={{ marginTop: 12 }}>back</button>
+      {accountLink && <AccountLink />}
     </div>
   );
 }

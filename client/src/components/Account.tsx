@@ -5,10 +5,13 @@ import {
   PANEL_NOTHING,
   REPORT_CARD_OMITTED,
   SHARE_SILENCE,
+  UNLINK_REQUESTED,
+  UNLINK_WARNING,
   asAccountPage,
   asShareRow,
   asSnapshot,
   hostForEvent,
+  learningLine,
   loadAccountPass,
   panelLine,
   previewButton,
@@ -74,7 +77,8 @@ type View = "signin" | "notallowed" | "loading" | "page" | "report";
 type Panel =
   | { ref: string; kind: "decide" }
   | { ref: string; kind: "preview"; snapshot: ShareSnapshot | null | undefined }
-  | { ref: string; kind: "stop" };
+  | { ref: string; kind: "stop" }
+  | { ref: string; kind: "unlink" };
 
 export function Account() {
   const [pass, setPass] = useState<string | null>(() => loadAccountPass());
@@ -225,6 +229,13 @@ export function Account() {
       setPanel(null);
     });
 
+  /** "take this game off my account" (spec §6): the code is voided now; the studio does the rest. */
+  const unlink = (g: AccountGame) =>
+    rowCall(g.ref, "/stranger/account/unlink", { gameRef: g.ref }, () => {
+      setPanel(null);
+      if (pass) void loadPage(pass);
+    });
+
   const forget = (ref: string) =>
     rowCall(ref, "/stranger/account/forget-meetup", { eventRef: ref }, () => {
       setPage((pg) => (pg ? { ...pg, meetups: pg.meetups.filter((m) => m.ref !== ref) } : pg));
@@ -281,6 +292,7 @@ export function Account() {
     const lines = g.share ? shareRowLines(g.share) : null;
     const host = g.share?.state === "code" ? g.share.host : hostForEvent(meetups, g.eventName);
     const p = panel?.ref === g.ref ? panel : null;
+    const learning = learningLine(g.learning);
     return (
       <div key={g.ref} className="account-game" data-testid="account-game">
         <p><strong>{g.childName}</strong> · {g.eventName}</p>
@@ -338,6 +350,23 @@ export function Account() {
               <button className="btn btn-secondary" onClick={() => setPanel(null)} disabled={busy}>back</button>
             </div>
           </div>
+        )}
+        {learning && <p className="dim">{learning}</p>}
+
+        {g.unlink === "requested" ? (
+          <p className="dim" data-testid="account-unlink-requested">{UNLINK_REQUESTED}</p>
+        ) : p?.kind === "unlink" ? (
+          <div className="account-panel">
+            <p>{UNLINK_WARNING}</p>
+            <div className="event-card-actions">
+              <button className="btn btn-secondary" onClick={() => void unlink(g)} disabled={busy}>take it off my account</button>
+              <button className="btn btn-secondary" onClick={() => setPanel(null)} disabled={busy}>cancel</button>
+            </div>
+          </div>
+        ) : !p && (
+          <button className="btn-link" onClick={() => { setRowError(null); setPanel({ ref: g.ref, kind: "unlink" }); }} disabled={busy}>
+            take this game off my account
+          </button>
         )}
         {rowError?.ref === g.ref && <p className="error">{rowError.text}</p>}
       </div>

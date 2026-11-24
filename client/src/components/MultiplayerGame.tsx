@@ -18,8 +18,9 @@ import { FamilyAlbum } from "./FamilyAlbum";
 import { PartnerPaymentGate } from "./PartnerPaymentGate";
 import { StrangerNoShow } from "./StrangerQueue";
 import { HandleExchange, StrangerGameEnded, StrangerReport } from "./StrangerExchange";
-import { ShareStep } from "./ShareStep";
-import { handlesAfterShare } from "../shareCodes";
+import { AccountLink, ShareStep } from "./ShareStep";
+import { StudioLearning } from "./StudioLearning";
+import { endSteps } from "../shareCodes";
 
 const API = import.meta.env.BASE_URL + "api";
 
@@ -1005,9 +1006,12 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
   }
 
   if (state.phase === "report_card") {
-    // Host tools end screens, in order: report card → share step → handle exchange (if on).
+    // Host tools end screens, in order: report card → share step → studio
+    // learning → handle exchange (if on). Each waits for the one before it.
     const shareOn = !!(state.strangerRun && state.meetupEnd?.share);
+    const learningOn = !!(state.strangerRun && state.meetupEnd?.learning);
     const handlesOn = state.meetupEnd ? state.meetupEnd.handles : true;
+    const steps = endSteps(shareOn, mp.shareLatest, learningOn, mp.learningLatest);
     return (
       <div className="app fade-in">
         {strangerControls}
@@ -1021,9 +1025,14 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
             onDecide={mp.shareDecision}
           />
         )}
-        {state.strangerRun && handlesOn && handlesAfterShare(shareOn, mp.shareLatest) && (
+        {steps.learning && (
+          <StudioLearning view={mp.learningView} error={mp.learningError} onAnswer={mp.studioLearning} />
+        )}
+        {state.strangerRun && handlesOn && steps.handles && (
           <HandleExchange state={mp.handleState} onAnswer={mp.answerHandle} onStatus={mp.handleStatus} />
         )}
+        {/* Host tools only: a stranger game at a meetup (never the public site). */}
+        {state.strangerRun && state.meetupEnd && <AccountLink />}
       </div>
     );
   }

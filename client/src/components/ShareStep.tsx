@@ -22,7 +22,10 @@ import {
 
 export const ACCOUNT_HREF = `${import.meta.env.BASE_URL}?stranger=account`;
 
-/** "your account", in a new tab so the end screen (and the handle exchange after it) stays put. */
+/**
+ * "your account", in a new tab so the screen it's on (the end screen and the
+ * handle exchange after it, or the queue) stays put. Host tools only.
+ */
 export function AccountLink() {
   return (
     <p className="event-card-links">
@@ -106,7 +109,6 @@ export function ShareStep({ host, view, preview, error, onDecide }: Props) {
     return (
       <div className="lobby stranger-mode event-card share-step" role="status" data-testid="share-answered">
         <p>{line}</p>
-        <AccountLink />
       </div>
     );
   }
@@ -131,7 +133,6 @@ export function ShareStep({ host, view, preview, error, onDecide }: Props) {
         <button className="btn btn-secondary" onClick={() => answer("later")} disabled={sent} data-testid="btn-share-later">decide later, on my own</button>
       </div>
       {error && <p className="error">{error}</p>}
-      <AccountLink />
     </div>
   );
 }
