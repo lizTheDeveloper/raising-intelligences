@@ -1,7 +1,7 @@
 // Client copy of the server's allowlist scrub (see client/src/sentryScrub.ts).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { stripRequestBody, scrubBreadcrumb, scrubEvent } from "../src/sentryScrub.js";
+import { stripRequestBody, scrubBreadcrumb, scrubEvent, scrubMeetup } from "../src/sentryScrub.js";
 
 test("browser events lose query, #handoff fragment, cookies, body and non-allowlisted headers", () => {
   const out = stripRequestBody({
@@ -69,4 +69,10 @@ test("meetup codes are cut from URL, message, exception text, transaction and br
     ],
   });
   assert.doesNotMatch(JSON.stringify(ev), /stmarys-prenatal/);
+});
+
+// Host onboarding (persona tests, S2-5): an invite token is a one-time credential.
+test("host invite tokens are cut from error text like meetup codes", () => {
+  assert.equal(scrubMeetup("boom at /?hostinvite=AbCdEfGhIjKlMnOpQrStUvWx&x=1"), "boom at /?hostinvite=[scrubbed]&x=1");
+  assert.equal(scrubMeetup("back at ?hostinvite=back"), "back at ?hostinvite=[scrubbed]");
 });

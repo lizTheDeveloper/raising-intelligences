@@ -235,5 +235,5 @@ export function lowerLevel(kind: "studio" | "outside", level: number): number | 
  */
 export function untrackedLanding(search: string): boolean {
   const q = new URLSearchParams(search);
-  return q.has("meetup") || q.has("host") || q.has("deck") || q.get("stranger") === "account";
+  return q.has("meetup") || q.has("host") || q.has("deck") || q.has("hostinvite") || q.get("stranger") === "account";
 }

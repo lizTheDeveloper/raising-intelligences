@@ -6,6 +6,7 @@ import { StrangerPasses } from "../stranger/matrix-identity.js";
 import { PUBLISH_AFTER_MS } from "./config.js";
 import { publishFunnel, type FunnelCounts } from "./funnel.js";
 import { liveTerms } from "./card.js";
+import { HOST_TERMS_VERSION, hostTerms } from "./terms.js";
 import type { HostTools } from "./service.js";
 import { CODE_NOT_AVAILABLE, CODES_PAUSED, ShareService } from "./share.js";
 import type { HostEvent, HostPerson, PublishedFunnel } from "./types.js";
@@ -29,6 +30,7 @@ export const DECK = {
 } as const;
 
 const NOT_SIGNED_IN = "Not signed in.";
+const NEEDS_AGREEMENT = "please read and agree to the host terms first.";
 
 /**
  * The host portal (spec §4, §B.3 /api/host/*): who may sign in, what each
@@ -161,37 +163,53 @@ export function createHostPortalRoutes(hosts: HostTools, portal: HostPortal, lim
     res.json(r);
   });
 
-  const withPerson = (fn: (person: HostPerson, req: Request, res: Response) => Promise<void>) =>
+  // A person the admin added without a signed agreement agrees in the portal first
+  // (persona tests, S2-5): until then, only their page and the terms open.
+  const withPerson = (fn: (person: HostPerson, req: Request, res: Response) => Promise<void>, opts: { beforeAgreement?: boolean } = {}) =>
     async (req: Request, res: Response) => {
       await hosts.ready;
       const person = await portal.person((req.body as { pass?: unknown } | undefined)?.pass);
       if (!person) return void res.status(401).json({ error: NOT_SIGNED_IN });
+      if (person.agreementAt === null && !opts.beforeAgreement) return void res.status(403).json({ error: NEEDS_AGREEMENT });
       await fn(person, req, res);
     };
 
   router.post("/host/events", limit, withPerson(async (person, _req, res) => {
+    if (person.agreementAt === null) {
+      return void res.json({ displayName: person.displayName, needsAgreement: true, terms: hostTerms(person.hostType), events: [] });
+    }
     res.json({ displayName: person.displayName, events: await portal.eventsFor(person) });
-  }));
+  }, { beforeAgreement: true }));
+
+  router.post("/host/agree", limit, withPerson(async (person, req, res) => {
+    if ((req.body as { version?: unknown }).version !== HOST_TERMS_VERSION) {
+      return void res.status(409).json({ error: "the terms changed. here are the current ones.", terms: hostTerms(person.hostType) });
+    }
+    if (person.agreementAt === null) await hosts.agree(person, HOST_TERMS_VERSION);
+    res.json({ ok: true });
+  }, { beforeAgreement: true }));
 
   // Share codes (§5.2). Every failure: the same 404, the same body, after the same floor. Past 10
   // failures an hour (30 a day) every new code, right or wrong, gets the same 429 after the same
   // floor; a code this reader already opened still re-opens, uncounted.
   router.post("/host/codes/redeem", limit, async (req: Request, res: Response) => {
     const started = Date.now();
-    let codeRef: string | "paused" | null = null;
+    let codeRef: string | "paused" | "unagreed" | null = null;
     let signedIn = true;
     try {
       await hosts.ready;
       const body = (req.body ?? {}) as { pass?: unknown; words?: unknown };
       const person = await portal.person(body.pass);
       signedIn = !!person;
-      if (person && share) codeRef = await share.redeem(person, body.words);
+      if (person && person.agreementAt === null) codeRef = "unagreed";
+      else if (person && share) codeRef = await share.redeem(person, body.words);
     } catch {
       codeRef = null;
     }
     await ShareService.floor(started);
     // Not signed in says nothing about any code; it only sends the host back to sign-in.
     if (!signedIn) return void res.status(401).json({ error: NOT_SIGNED_IN });
+    if (codeRef === "unagreed") return void res.status(403).json({ error: NEEDS_AGREEMENT });
     if (codeRef === "paused") return void res.status(429).json({ error: CODES_PAUSED });
     if (!codeRef) return void res.status(404).json({ error: CODE_NOT_AVAILABLE });
     res.json({ codeRef });

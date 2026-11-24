@@ -65,6 +65,11 @@ export function shareCodeHash(pepper: string, normalizedWords: string): string {
   return hmac(pepper, `share-code-words:${normalizedWords}`).toString("hex");
 }
 
+/** A host invite's token (shown to the admin once) and its stored hash. */
+export function inviteTokenHash(pepper: string, token: string): string {
+  return hmac(pepper, `host-invite:${token}`).toString("hex");
+}
+
 /** The pre-subject token handed back for an acknowledgement, and its stored hash. */
 export function newAckToken(): string {
   return randomBytes(24).toString("base64url");

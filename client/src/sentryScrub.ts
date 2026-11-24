@@ -58,7 +58,7 @@ export function stripRequestBody<T extends { request?: ScrubbableRequest }>(even
 
 type ScrubbableBreadcrumb = { data?: Record<string, unknown>; message?: string };
 
-const MEETUP_PARAM = /([?&#]meetup=)[^&#\s"'<>]*/gi;
+const MEETUP_PARAM = /([?&#](?:meetup|hostinvite)=)[^&#\s"'<>]*/gi;
 
 /**
  * A meetup code names the event a player tried to attend (privacy review F5).

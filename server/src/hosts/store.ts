@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import type {
-  AckRow, FrozenTerms, HostEvent, HostPerson, HostReport, PublishedFunnel, ShareCodeRow, ShareDecision, Slot, UnlinkRequest,
+  AckRow, FrozenTerms, HostEvent, HostInvite, HostPerson, HostReport, PublishedFunnel, ShareCodeRow, ShareDecision, Slot, UnlinkRequest,
 } from "./types.js";
 
 /**
@@ -13,7 +13,15 @@ export interface HostStore {
   getPerson(id: string): Promise<HostPerson | null>;
   personBySubject(subject: string): Promise<HostPerson | null>;
   listPeople(): Promise<HostPerson[]>;
-  updatePerson(id: string, patch: Partial<Pick<HostPerson, "status" | "displayName" | "roleText" | "roleChecked" | "roleCheckedAt" | "hostType" | "organisation">>): Promise<void>;
+  updatePerson(id: string, patch: Partial<Pick<HostPerson, "status" | "displayName" | "roleText" | "roleChecked" | "roleCheckedAt" | "hostType" | "organisation" | "agreementVersion" | "agreementAt">>): Promise<void>;
+
+  /** Host invites (migration 038). */
+  createInvite(i: HostInvite): Promise<void>;
+  inviteByHash(tokenHash: string): Promise<HostInvite | null>;
+  listInvites(): Promise<HostInvite[]>;
+  updateInvite(id: string, patch: Partial<Pick<HostInvite, "revokedAt">>): Promise<void>;
+  /** Marks the invite used by this person, once. True if this call used it. */
+  useInvite(id: string, personId: string, at: number): Promise<boolean>;
 
   createEvent(e: HostEvent): Promise<void>;
   getEvent(id: string): Promise<HostEvent | null>;
@@ -113,6 +121,18 @@ export class InMemoryHostStore implements HostStore {
   async updatePerson(id: string, patch: Partial<HostPerson>) {
     const p = this.people.get(id);
     if (p) Object.assign(p, clone(patch));
+  }
+
+  private invites = new Map<string, HostInvite>();
+  async createInvite(i: HostInvite) { this.invites.set(i.id, clone(i)); }
+  async inviteByHash(tokenHash: string) { return clone([...this.invites.values()].find((i) => i.tokenHash === tokenHash) ?? null); }
+  async listInvites() { return [...this.invites.values()].map(clone).sort((a, b) => b.createdAt - a.createdAt); }
+  async updateInvite(id: string, patch: Partial<HostInvite>) { const i = this.invites.get(id); if (i) Object.assign(i, clone(patch)); }
+  async useInvite(id: string, personId: string, at: number) {
+    const i = this.invites.get(id);
+    if (!i || i.usedAt !== null) return false;
+    Object.assign(i, { usedAt: at, personId });
+    return true;
   }
 
   async createEvent(e: HostEvent) {
@@ -271,9 +291,17 @@ function toPerson(r: Record<string, unknown>): HostPerson {
   return {
     id: String(r.id), subject: String(r.subject), displayName: String(r.display_name),
     roleText: (r.role_text as string | null) ?? null, roleChecked: (r.role_checked as string | null) ?? null, roleCheckedAt: n(r.role_checked_at),
-    agreementVersion: String(r.agreement_version), agreementAt: Number(r.agreement_at),
+    agreementVersion: (r.agreement_version as string | null) ?? null, agreementAt: n(r.agreement_at),
     status: r.status as HostPerson["status"], createdAt: Number(r.created_at),
     hostType: (r.host_type as HostPerson["hostType"]) ?? null, organisation: (r.organisation as string | null) ?? null,
+  };
+}
+
+function toInvite(r: Record<string, unknown>): HostInvite {
+  return {
+    id: String(r.id), tokenHash: String(r.token_hash), displayName: String(r.display_name), hostType: r.host_type as HostInvite["hostType"],
+    organisation: (r.organisation as string | null) ?? null, createdAt: Number(r.created_at), expiresAt: Number(r.expires_at),
+    usedAt: n(r.used_at), personId: (r.person_id as string | null) ?? null, revokedAt: n(r.revoked_at),
   };
 }
 
@@ -340,13 +368,35 @@ export class PgHostStore implements HostStore {
     return (await this.db.query(`SELECT * FROM host_people ORDER BY created_at`)).rows.map(toPerson);
   }
   async updatePerson(id: string, patch: Partial<HostPerson>) {
-    const map: Array<[keyof HostPerson, string]> = [["status", "status"], ["displayName", "display_name"], ["roleText", "role_text"], ["roleChecked", "role_checked"], ["roleCheckedAt", "role_checked_at"], ["hostType", "host_type"], ["organisation", "organisation"]];
+    const map: Array<[keyof HostPerson, string]> = [["status", "status"], ["displayName", "display_name"], ["roleText", "role_text"], ["roleChecked", "role_checked"], ["roleCheckedAt", "role_checked_at"], ["hostType", "host_type"], ["organisation", "organisation"], ["agreementVersion", "agreement_version"], ["agreementAt", "agreement_at"]];
     const sets: string[] = [];
     const vals: unknown[] = [];
     for (const [k, c] of map) if (k in patch) { vals.push(patch[k]); sets.push(`${c} = $${vals.length}`); }
     if (!sets.length) return;
     vals.push(id);
     await this.db.query(`UPDATE host_people SET ${sets.join(", ")} WHERE id = $${vals.length}`, vals);
+  }
+
+  async createInvite(i: HostInvite) {
+    await this.db.query(
+      `INSERT INTO host_invites (id, token_hash, display_name, host_type, organisation, created_at, expires_at, used_at, person_id, revoked_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [i.id, i.tokenHash, i.displayName, i.hostType, i.organisation, i.createdAt, i.expiresAt, i.usedAt, i.personId, i.revokedAt],
+    );
+  }
+  async inviteByHash(tokenHash: string) {
+    const r = await this.db.query(`SELECT * FROM host_invites WHERE token_hash = $1`, [tokenHash]);
+    return r.rows[0] ? toInvite(r.rows[0]) : null;
+  }
+  async listInvites() {
+    return (await this.db.query(`SELECT * FROM host_invites ORDER BY created_at DESC`)).rows.map(toInvite);
+  }
+  async updateInvite(id: string, patch: Partial<HostInvite>) {
+    if ("revokedAt" in patch) await this.db.query(`UPDATE host_invites SET revoked_at = $1 WHERE id = $2`, [patch.revokedAt, id]);
+  }
+  async useInvite(id: string, personId: string, at: number) {
+    const r = await this.db.query(`UPDATE host_invites SET used_at = $1, person_id = $2 WHERE id = $3 AND used_at IS NULL`, [at, personId, id]);
+    return (r.rowCount ?? 0) === 1;
   }
 
   async createEvent(e: HostEvent) {

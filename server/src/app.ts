@@ -22,6 +22,7 @@ import { StrangerService } from "./stranger/service.js";
 import { HostTools } from "./hosts/service.js";
 import { devMatrixVerifier, readDevHarness } from "./dev/harness.js";
 import { createHostToolsRoutes, createHostToolsAdminRoutes } from "./hosts/routes.js";
+import { InviteService, createHostInviteAdminRoutes, createHostInviteRoutes } from "./hosts/invites.js";
 import { HostPortal, createDeckRoute, createHostPortalRoutes, createHostPortalAdminRoutes } from "./hosts/portal.js";
 import { ShareService } from "./hosts/share.js";
 import { AccountService, createAccountRoutes } from "./hosts/account.js";
@@ -362,6 +363,9 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     stranger.resolveUnlinked = (placeholder) => unlink.originalSubject(placeholder);
     mayListKid = (userId, gameId) => (hostTools.active() ? unlink.mayList(userId, gameId) : Promise.resolve(true));
     const account = new AccountService(hostTools, share, portal, games, repo, learning, unlink);
+    const invites = new InviteService(hostTools);
+    app.use("/api", createHostInviteRoutes(hostTools, invites, rateLimit({ windowMs: 60_000, max: 30, standardHeaders: true, legacyHeaders: false })));
+    app.use("/api", createHostInviteAdminRoutes(hostTools, invites));
     app.use("/api", createHostPortalRoutes(hostTools, portal, rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false }), share));
     app.use("/api", createAccountRoutes(hostTools, account, share, unlink, learning, rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false })));
     app.use("/api", createHostPortalAdminRoutes(hostTools, portal));

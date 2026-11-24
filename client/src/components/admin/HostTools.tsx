@@ -30,6 +30,21 @@ interface Person {
   createdAt?: number;
   hostType: HostType | null;
   organisation: string | null;
+  /** The host terms they agreed to: null until they agree (in their portal, or on paper, recorded here). */
+  agreementVersion: string | null;
+  agreementAt: number | null;
+}
+
+/** An onboarding invite (persona tests, S2-5). Its token was shown once, when it was made. */
+interface Invite {
+  id: string;
+  displayName: string;
+  hostType: HostType;
+  organisation: string | null;
+  createdAt: number;
+  expiresAt: number;
+  status: "open" | "used" | "expired" | "revoked";
+  personName: string | null;
 }
 
 /** §9.1, on the person (set once). Every event's levels and naming come from it. */
@@ -83,6 +98,8 @@ function msToLocal(ms: number): string {
 export function HostTools({ token }: { token: string }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
+  const [invites, setInvites] = useState<Invite[]>([]);
+  const [inviteMade, setInviteMade] = useState<{ name: string; link: string } | null>(null);
   const [events, setEvents] = useState<HostEventRow[]>([]);
   const [reports, setReports] = useState<HostReport[]>([]);
   const [unlinks, setUnlinks] = useState<UnlinkRequest[]>([]);
@@ -106,14 +123,16 @@ export function HostTools({ token }: { token: string }) {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [s, p, e, r, u, a] = await Promise.all([
+      const [s, p, e, r, u, a, i] = await Promise.all([
         api<Status>("/status"),
         api<{ people: Person[] }>("/hosts"),
         api<{ events: HostEventRow[] }>("/events"),
         api<{ reports: HostReport[] }>("/host-reports"),
         api<{ requests: UnlinkRequest[] }>("/unlink-requests"),
         api<{ games: string[] }>("/analysis-allowlist"),
+        api<{ invites: Invite[] }>("/invites"),
       ]);
+      setInvites(i.invites);
       setStatus(s);
       setPeople(p.people);
       setEvents(e.events);
@@ -149,6 +168,8 @@ export function HostTools({ token }: { token: string }) {
   const [pChecked, setPChecked] = useState("");
   const [pType, setPType] = useState<HostType | "">("");
   const [pOrg, setPOrg] = useState("");
+  const [pSigned, setPSigned] = useState(false);
+  const [pSignedVersion, setPSignedVersion] = useState("");
   const createPerson = (e: React.FormEvent) => {
     e.preventDefault();
     void act(async () => {
@@ -159,8 +180,26 @@ export function HostTools({ token }: { token: string }) {
         ...(pOrg.trim() ? { organisation: pOrg.trim() } : {}),
         ...(pRole.trim() ? { roleText: pRole.trim() } : {}),
         ...(pChecked.trim() ? { roleChecked: pChecked.trim() } : {}),
+        ...(pSigned ? { agreementSigned: true, ...(pSignedVersion.trim() ? { agreementVersion: pSignedVersion.trim() } : {}) } : {}),
       });
-      setPMxid(""); setPName(""); setPRole(""); setPChecked(""); setPType(""); setPOrg("");
+      setPMxid(""); setPName(""); setPRole(""); setPChecked(""); setPType(""); setPOrg(""); setPSigned(false); setPSignedVersion("");
+    });
+  };
+
+  // ---- invites ----
+  const [iName, setIName] = useState("");
+  const [iType, setIType] = useState<HostType | "">("");
+  const [iOrg, setIOrg] = useState("");
+  const createInvite = (e: React.FormEvent) => {
+    e.preventDefault();
+    void act(async () => {
+      const r = await api<{ link: string; invite: { displayName: string } }>("/invites", "POST", {
+        displayName: iName.trim(),
+        hostType: iType,
+        ...(iOrg.trim() ? { organisation: iOrg.trim() } : {}),
+      });
+      setInviteMade({ name: r.invite.displayName, link: r.link });
+      setIName(""); setIType(""); setIOrg("");
     });
   };
 
@@ -276,9 +315,9 @@ export function HostTools({ token }: { token: string }) {
       <div className="detail-section">
         <h3>People (hosts and guest readers)</h3>
         <table className="admin-table">
-          <thead><tr><th>Name</th><th>Type</th><th>Role</th><th>Role checked</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Type</th><th>Role</th><th>Role checked</th><th>Host terms</th><th>Status</th><th></th></tr></thead>
           <tbody>
-            {people.length === 0 && <tr><td colSpan={6} className="dim">No one yet.</td></tr>}
+            {people.length === 0 && <tr><td colSpan={7} className="dim">No one yet.</td></tr>}
             {people.map((p) => (
               <tr key={p.id}>
                 <td>{p.displayName}{p.organisation && !p.displayName.includes(p.organisation) ? <span className="dim"> ({p.organisation})</span> : null}</td>
@@ -292,6 +331,7 @@ export function HostTools({ token }: { token: string }) {
                 </td>
                 <td>{p.roleText ?? "—"}</td>
                 <td>{p.roleChecked ? `${p.roleChecked} (${when(p.roleCheckedAt)})` : "—"}</td>
+                <td>{p.agreementAt ? `${p.agreementVersion ?? "?"} (${when(p.agreementAt)})` : <span className="dim">not yet: asked in their portal</span>}</td>
                 <td>{p.status}</td>
                 <td style={{ whiteSpace: "nowrap" }}>
                   {p.status !== "approved" && <button disabled={busy} onClick={() => void act(() => api(`/hosts/${p.id}/status`, "POST", { status: "approved" }))}>approve</button>}
@@ -314,9 +354,52 @@ export function HostTools({ token }: { token: string }) {
             </select>
           </label>
           <label>Business or group name (optional, never shown to players) <input maxLength={60} placeholder="e.g. Spark Night" value={pOrg} onChange={(e) => setPOrg(e.target.value)} /></label>
+          <label><input type="checkbox" checked={pSigned} onChange={(e) => setPSigned(e.target.checked)} /> They signed a host agreement with the studio</label>
+          {pSigned && <label>Which agreement (optional) <input maxLength={60} placeholder="e.g. paper-2026-11" value={pSignedVersion} onChange={(e) => setPSignedVersion(e.target.value)} /></label>}
           <button type="submit" disabled={busy}>Add person</button>
         </form>
-        <p className="dim" style={{ fontSize: 12 }}>They must have passed the 18+ check first (any meetup link, "get ready early"). Only a hash of the Matrix id is stored. A person added before host types shows "set type…": they can't go on a new event until it's set.</p>
+        <p className="dim" style={{ fontSize: 12 }}>Most people should get an invite instead (below): it takes them through sign-in, the 18+ check and the host terms. Adding someone here needs them to have passed the 18+ check already. Unless you tick the signed-agreement box, their portal asks them to agree to the host terms before it opens. Only a hash of the Matrix id is stored. A person added before host types shows "set type…": they can't go on a new event until it's set.</p>
+      </div>
+
+      <div className="detail-section">
+        <h3>Invites (hosts and guest readers)</h3>
+        {inviteMade && (
+          <div style={{ border: "2px solid #e8b96a", padding: 16, margin: "8px 0" }} role="status" data-testid="invite-made">
+            <p>Invite for <strong>{inviteMade.name}</strong>. Send them this link. It works once, for 14 days, and isn't shown again.</p>
+            <p style={{ wordBreak: "break-all" }}>
+              <code>{inviteMade.link}</code>{" "}
+              <button onClick={() => void navigator.clipboard?.writeText(inviteMade.link)}>copy link</button>
+            </p>
+            <button onClick={() => setInviteMade(null)}>done</button>
+          </div>
+        )}
+        <table className="admin-table">
+          <thead><tr><th>For</th><th>Type</th><th>Made</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            {invites.length === 0 && <tr><td colSpan={5} className="dim">No invites yet.</td></tr>}
+            {invites.map((i) => (
+              <tr key={i.id}>
+                <td>{i.displayName}{i.organisation ? <span className="dim"> ({i.organisation})</span> : null}</td>
+                <td>{HOST_TYPE_SHORT[i.hostType]}</td>
+                <td>{when(i.createdAt)}</td>
+                <td>{i.status === "used" ? `used${i.personName ? ` by ${i.personName}` : ""}` : i.status === "open" ? `open until ${when(i.expiresAt)}` : i.status}</td>
+                <td>{i.status === "open" && <button disabled={busy} onClick={() => { if (window.confirm(`Revoke the invite for ${i.displayName}?`)) void act(() => api(`/invites/${i.id}/revoke`, "POST", {})); }}>revoke</button>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <form onSubmit={createInvite} className="admin-filters" style={{ flexWrap: "wrap", marginTop: 12 }}>
+          <label>Their name, as they'll see it <input required maxLength={60} value={iName} onChange={(e) => setIName(e.target.value)} /></label>
+          <label>Host type (set once){" "}
+            <select required value={iType} onChange={(e) => setIType(e.target.value as HostType | "")}>
+              <option value="">(choose)</option>
+              {(Object.keys(HOST_TYPE_LABEL) as HostType[]).map((t) => <option key={t} value={t}>{HOST_TYPE_LABEL[t]}</option>)}
+            </select>
+          </label>
+          <label>Business or group name (optional, never shown to players) <input maxLength={60} value={iOrg} onChange={(e) => setIOrg(e.target.value)} /></label>
+          <button type="submit" disabled={busy}>Make invite</button>
+        </form>
+        <p className="dim" style={{ fontSize: 12 }}>The link takes them through sign-in, the 18+ check (the same as players', with copy for hosts) and the host terms. What they agree to is what's recorded. Then their portal opens. Add them to an event as host or guest reader afterwards.</p>
       </div>
 
       <div className="detail-section">

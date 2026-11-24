@@ -226,4 +226,25 @@ describe.skipIf(!process.env.DATABASE_URL)("host tools store on Postgres", () =>
     await query(`UPDATE host_events SET code_seq = NULL WHERE id = $1`, [e.id]);
     expect((await store.getEvent(e.id))?.codeSeq).toBeNull();
   });
+
+  it("migration 038: invites round-trip, are used once, revoke; an agreement can be absent until the person agrees", async () => {
+    const t = Date.now();
+    const inv = { id: randomUUID(), tokenHash: `t-${randomUUID()}`, displayName: "Sister Jensen", hostType: "sensitive" as const, organisation: "Riverside Ward", createdAt: t, expiresAt: t + 1000, usedAt: null, personId: null, revokedAt: null };
+    await store.createInvite(inv);
+    expect(await store.inviteByHash(inv.tokenHash)).toEqual(inv);
+    expect((await store.listInvites()).some((i) => i.id === inv.id)).toBe(true);
+    const p = person({ agreementVersion: null, agreementAt: null, hostType: "sensitive" });
+    expect(await store.createPerson(p)).toBe(true);
+    expect((await store.getPerson(p.id))?.agreementAt).toBeNull();
+    expect(await store.useInvite(inv.id, p.id, t + 5)).toBe(true);
+    expect(await store.useInvite(inv.id, p.id, t + 6)).toBe(false);
+    expect(await store.inviteByHash(inv.tokenHash)).toMatchObject({ usedAt: t + 5, personId: p.id });
+    await store.updatePerson(p.id, { agreementVersion: "host-terms-x", agreementAt: t + 7 });
+    expect(await store.getPerson(p.id)).toMatchObject({ agreementVersion: "host-terms-x", agreementAt: t + 7 });
+    const other = { ...inv, id: randomUUID(), tokenHash: `t-${randomUUID()}` };
+    await store.createInvite(other);
+    await store.updateInvite(other.id, { revokedAt: t + 9 });
+    expect((await store.inviteByHash(other.tokenHash))?.revokedAt).toBe(t + 9);
+    await expect(query(`INSERT INTO host_invites (id, token_hash, display_name, host_type, created_at, expires_at) VALUES ($1, $2, 'x', 'wizard', 1, 2)`, [randomUUID(), randomUUID()])).rejects.toThrow();
+  });
 });
