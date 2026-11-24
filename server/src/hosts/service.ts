@@ -4,7 +4,7 @@ import { normalizeMeetupCode, readStrangerConfig } from "../stranger/config.js";
 import type { StrangerService, StrangerHostTools } from "../stranger/service.js";
 import type { PartnerPayments } from "../payments/partner-payments.js";
 import { buildCard, liveTerms, reconcileTerms, termsFor, type CardPayload, type LiveSettings } from "./card.js";
-import { ackTokenHash, eventCodeHash, newAckToken, newEventCode } from "./codes.js";
+import { ackTokenHash, eventCodeHash, newAckToken, newEventCode, opaqueRef } from "./codes.js";
 import { MAX_EVENT_MS, readHostToolsConfig, type HostToolsConfig } from "./config.js";
 import type { HostStore } from "./store.js";
 import type { EventStatus, HostEvent, HostPerson, Level } from "./types.js";
@@ -207,6 +207,16 @@ export class HostTools implements StrangerHostTools {
     const c = normalizeMeetupCode(code);
     if (!c) return null;
     return this.byHash.get(eventCodeHash(this.pepper, c)) ?? null;
+  }
+
+  /** A per-viewer opaque reference (H11): never a raw id in a host or account response. */
+  ref(kind: "game" | "code" | "event", viewer: string, id: string): string {
+    return opaqueRef(this.pepper, kind, viewer, id);
+  }
+
+  /** Re-reads an event into the registry after a direct store write (the funnel's one publication). */
+  refresh(e: HostEvent): void {
+    this.remember(e);
   }
 
   eventById(id: string | null | undefined): HostEvent | null {
