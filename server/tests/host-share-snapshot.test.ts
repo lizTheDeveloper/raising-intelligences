@@ -190,6 +190,31 @@ describe("the share snapshot", () => {
     expect(s.reportCard).toContain("Her friends rely on her as their steady rock.");
   });
 
+  describe("security review of 2.14.1", () => {
+    const fill = " She ran. She hid. She slept. She woke. She sang. She left. She read. She swam.";
+    const none = { typed: [], privateTalk: [], derived: [] };
+
+    it("a bold name mid-sentence is still mid-sentence (only a leading label counts as a start)", () => {
+      const s = buildShareSnapshot(null, `She told **Gary** about it.${fill}`, sources({ ...none, childName: "Juniper" }));
+      expect(s.epilogue).not.toContain("Gary");
+      const label = buildShareSnapshot(null, `- **Steady.** She keeps going.${fill}`, sources({ ...none, childName: "Juniper" }));
+      expect(label.epilogue).toContain("**Steady.** She keeps going.");
+    });
+
+    it("a name typed with a possessive (Gary's) is typed, even when a scene also uses it", () => {
+      const s = buildShareSnapshot(null, `She still waves to Gary.${fill}`, sources({
+        typed: ["Gary's truck broke down again."], privateTalk: [], derived: [], childName: "Juniper", scenes: ["Gary waves from the porch."],
+      }));
+      expect(s.epilogue).not.toContain("Gary");
+    });
+
+    it("family and person words count in the overlap and paraphrase checks", () => {
+      const priv = "my dad hit my mother at home when I was a boy";
+      const s = buildShareSnapshot(null, `Her dad hit her mother at home when she was small.${fill}`, sources({ typed: [priv], privateTalk: [priv], derived: [], childName: "Juniper" }));
+      expect(s.epilogue).not.toContain("hit her mother");
+    });
+  });
+
   it("a sentence that retells a secret or a confidence is dropped", () => {
     const s = buildShareSnapshot(null, "She kept her mother's secret for years. She confided in her father once. She ran. She hid. She slept. She woke. She sang. She left.", sources({ typed: [], privateTalk: [], derived: [] }));
     expect(s.epilogue).not.toContain("secret");
