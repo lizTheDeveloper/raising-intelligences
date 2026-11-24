@@ -1,4 +1,4 @@
-import { asDeck, type Deck as DeckData } from "../hostPortal";
+import { asDeck, deckPlayLines, gameAddress, type Deck as DeckData } from "../hostPortal";
 
 /**
  * The RI discussion deck (host tools spec §B.6): static questions from the
@@ -9,8 +9,9 @@ import { asDeck, type Deck as DeckData } from "../hostPortal";
 const API = import.meta.env.BASE_URL + "api";
 
 /**
- * GET /events/deck. Anything but a 200 with a deck is null: host tools are
- * off, and the caller shows the normal app as if no parameter was given.
+ * GET /events/deck, served in every mode. Anything but a 200 with a deck is
+ * null (the site is up but the API isn't), and the caller shows the normal
+ * app as if no parameter was given.
  */
 export async function loadDeck(): Promise<DeckData | null> {
   try {
@@ -22,6 +23,22 @@ export async function loadDeck(): Promise<DeckData | null> {
   }
 }
 
+/**
+ * GET /host/on: whether host tools are on. Only a 200 saying so counts; off,
+ * it falls through like a path never built, and ?host=1 or ?stranger=account
+ * show the normal app.
+ */
+export async function probeHostTools(): Promise<boolean> {
+  try {
+    const res = await fetch(`${API}/host/on`);
+    if (res.status !== 200) return false;
+    const body = (await res.json().catch(() => null)) as { on?: unknown } | null;
+    return body?.on === true;
+  } catch {
+    return false;
+  }
+}
+
 export function Deck({ deck, onBack }: { deck: DeckData; onBack: () => void }) {
   return (
     <div className="lobby stranger-mode event-card deck" data-testid="deck">
@@ -30,10 +47,22 @@ export function Deck({ deck, onBack }: { deck: DeckData; onBack: () => void }) {
       <ol className="deck-questions">
         {deck.questions.map((q, i) => <li key={i}>{q}</li>)}
       </ol>
+      <DeckPlay />
       <div className="event-card-actions no-print">
         <button className="btn" onClick={() => window.print()}>print</button>
         <button className="btn btn-secondary" onClick={onBack}>back</button>
       </div>
+    </div>
+  );
+}
+
+/** Where the game is, on screen and on the printout. */
+function DeckPlay() {
+  const play = deckPlayLines(gameAddress(window.location.origin, import.meta.env.BASE_URL));
+  return (
+    <div className="deck-play" data-testid="deck-play">
+      <h2>{play.heading}</h2>
+      {play.steps.map((s, i) => <p key={i}>{s}</p>)}
     </div>
   );
 }

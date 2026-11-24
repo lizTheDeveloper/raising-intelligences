@@ -4,6 +4,8 @@ declare global {
   }
 }
 
+import { analyticsAllowed } from "./umamiScript";
+
 export type EventProps = Record<string, string | number | boolean>;
 
 /**
@@ -83,6 +85,8 @@ const ONCE_PER_SESSION: Record<string, string[]> = {
 const alreadySent = new Set<string>();
 
 export function track(event: string, data?: EventProps) {
+  // Global Privacy Control: nothing is queued, nothing is sent (umamiScript.ts).
+  if (typeof navigator !== "undefined" && !analyticsAllowed(navigator as Navigator & { globalPrivacyControl?: unknown })) return;
   const keys = ONCE_PER_SESSION[event];
   if (keys) {
     const key = [event, ...keys.map((k) => String(data?.[k] ?? ""))].join("|");

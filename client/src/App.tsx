@@ -12,7 +12,7 @@ import { StrangerQueue } from "./components/StrangerQueue";
 import { EventCard, NotForMe } from "./components/EventCard";
 import { asCard, clearAck, loadAck, urlWithoutMeetup, type MeetupCard } from "./meetupCard";
 import { HostPortal } from "./components/HostPortal";
-import { Deck, loadDeck } from "./components/Deck";
+import { Deck, loadDeck, probeHostTools } from "./components/Deck";
 import { hostRoute, type Deck as DeckData } from "./hostPortal";
 import { Account, probeAccount } from "./components/Account";
 import { isAccountRoute } from "./shareCodes";
@@ -242,7 +242,8 @@ export function App() {
     if (!hostTarget) return;
     let live = true;
     const giveUp = setTimeout(() => setMode((m) => (m === "hostcheck" ? "choose" : m)), 8000);
-    void loadDeck().then((d) => {
+    // The deck loads in every mode; the portal also needs host tools on.
+    void (hostTarget === "host" ? probeHostTools().then((on) => (on ? loadDeck() : null)) : loadDeck()).then((d) => {
       clearTimeout(giveUp);
       if (!live) return;
       if (d) setDeck(d);

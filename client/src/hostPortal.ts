@@ -189,6 +189,22 @@ export function saveHostPass(pass: string | null, store: KV | null = session()):
 }
 
 /** `?host=1` opens the portal, `?deck=1` the deck alone; anything else is the normal app. */
+/** "multiversegames.ai/raising-intelligences": the game's address, for print. */
+export function gameAddress(origin: string, base: string): string {
+  return `${origin.replace(/^https?:\/\//, "")}${base}`.replace(/\/+$/, "");
+}
+
+/** The deck's "to play" block: where the game is and how two people start (persona tests, finding 10). */
+export function deckPlayLines(address: string): { heading: string; steps: string[] } {
+  return {
+    heading: "to play",
+    steps: [
+      `open ${address} on a phone or laptop.`,
+      `to play together, choose "play with a partner" and send the other person the link it gives you. to play alone, choose "play solo".`,
+    ],
+  };
+}
+
 export function hostRoute(search: string): "host" | "deck" | null {
   const p = new URLSearchParams(search);
   if (p.get("host") === "1") return "host";
