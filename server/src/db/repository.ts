@@ -189,8 +189,13 @@ export interface GameRepository {
   recordAccessSecretHash(gameId: string, hash: string): Promise<void>;
   /** Null for unknown games and legacy games created before secrets existed. */
   getAccessSecretHash(gameId: string): Promise<string | null>;
-  /** Store a secret hash only if the game has none yet. True if this call stored it. */
-  claimAccessSecretHash(gameId: string, hash: string): Promise<boolean>;
+  /**
+   * A legacy (pre-secret) game's one claim: stores a READ-ONLY credential hash
+   * only while the game has neither an owner secret nor an earlier claim.
+   * True if this call stored it.
+   */
+  claimLegacyReadHash(gameId: string, hash: string): Promise<boolean>;
+  getLegacyReadHash(gameId: string): Promise<string | null>;
   /**
    * Removes the game and every row keyed to it (messages, events, snapshots,
    * players, endgames, moderation/concern/escalation records, album moments,
@@ -1189,12 +1194,21 @@ export class PgGameRepository implements GameRepository {
     await this.db.query(`UPDATE games SET access_secret_hash = $2 WHERE id = $1`, [gameId, hash]);
   }
 
-  async claimAccessSecretHash(gameId: string, hash: string): Promise<boolean> {
+  async claimLegacyReadHash(gameId: string, hash: string): Promise<boolean> {
     const { rowCount } = await this.db.query(
-      `UPDATE games SET access_secret_hash = $2 WHERE id = $1 AND access_secret_hash IS NULL`,
+      `UPDATE games SET legacy_read_hash = $2, legacy_claimed_at = now()
+       WHERE id = $1 AND access_secret_hash IS NULL AND legacy_read_hash IS NULL`,
       [gameId, hash]
     );
     return (rowCount ?? 0) > 0;
+  }
+
+  async getLegacyReadHash(gameId: string): Promise<string | null> {
+    const { rows } = await this.db.query<{ legacy_read_hash: string | null }>(
+      `SELECT legacy_read_hash FROM games WHERE id = $1`,
+      [gameId]
+    );
+    return rows[0]?.legacy_read_hash ?? null;
   }
 
   async getAccessSecretHash(gameId: string): Promise<string | null> {
@@ -1320,6 +1334,7 @@ export class InMemoryGameRepository implements GameRepository {
   // Self-reported age classification; under-18 entries carry birthYear null.
   private gameAges = new Map<string, { birthYear: number | null; isAdult: boolean }>();
   private accessSecretHashes = new Map<string, string>();
+  private legacyReadHashes = new Map<string, string>();
   private answers = new Map<string, StoredAnswer>();
   private momentLabels = new Map<string, MomentLabel & { gameId: string; sceneIndex: number }>();
   // Two maps, like the two tables: the contact is keyed by a random pseudonym.
@@ -1719,6 +1734,7 @@ export class InMemoryGameRepository implements GameRepository {
     this.gameCampusSubs.delete(gameId);
     this.gameAges.delete(gameId);
     this.accessSecretHashes.delete(gameId);
+    this.legacyReadHashes.delete(gameId);
     for (const [key, a] of [...this.answers]) {
       if (a.gameId === gameId) this.answers.delete(key);
     }
@@ -1849,10 +1865,14 @@ export class InMemoryGameRepository implements GameRepository {
     return this.accessSecretHashes.get(gameId) ?? null;
   }
 
-  async claimAccessSecretHash(gameId: string, hash: string): Promise<boolean> {
-    if (this.accessSecretHashes.has(gameId)) return false;
-    this.accessSecretHashes.set(gameId, hash);
+  async claimLegacyReadHash(gameId: string, hash: string): Promise<boolean> {
+    if (this.accessSecretHashes.has(gameId) || this.legacyReadHashes.has(gameId)) return false;
+    this.legacyReadHashes.set(gameId, hash);
     return true;
+  }
+
+  async getLegacyReadHash(gameId: string): Promise<string | null> {
+    return this.legacyReadHashes.get(gameId) ?? null;
   }
 
   async getIpPlayProfile(ipAddress: string): Promise<{ totalGames: number; darkGames: number; ordinaryGames: number }> {

@@ -49,7 +49,7 @@ import { cleanRepairMessage } from "../research/repair.js";
 import { forgetSceneSummary } from "../research/moment-label.js";
 import { requireAdmin } from "./admin.js";
 import { isSeatedGame } from "../research/seats.js";
-import { gameReaderOf, stateForReader, type MatrixVerifier } from "../security/game-read-access.js";
+import { gameReaderOf, legacyClaimOpen, stateForReader, type MatrixVerifier } from "../security/game-read-access.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -299,13 +299,17 @@ export function createGameRoutes(
   });
 
   // A seatless game made before per-game secrets existed (before 2.2.0) has no
-  // credential anywhere, so its player could never resume it once reads need
-  // one. Its first claim mints a secret, exactly once (the hash is set only
-  // while none is stored); every later claim is refused. Seated games read
-  // with their seat tokens and are never claimable.
+  // credential anywhere, and nothing its player holds can be verified: the
+  // client only ever kept the game id. So a claim can't prove ownership, and
+  // gets no owner secret. It gets a READ-ONLY credential, stored apart from
+  // access_secret_hash, which GET /state accepts and nothing else does (not
+  // DELETE, not the research routes, not a proven kid link). One claim per
+  // game, each one logged, and only inside the migration window
+  // (RI_LEGACY_CLAIM_UNTIL). Seated games read with seat tokens and are never
+  // claimable.
   router.post("/game/:id/claim", ...(gameCreateLimit ? [gameCreateLimit] : []), async (req: Request, res: Response) => {
     const gameId = req.params.id as string;
-    if (!UUID_RE.test(gameId)) {
+    if (!legacyClaimOpen() || !UUID_RE.test(gameId)) {
       res.status(403).json({ error: "Forbidden" });
       return;
     }
@@ -315,12 +319,12 @@ export function createGameRoutes(
       return;
     }
     const { secret, hash } = newGameSecret();
-    if (!(await repo.claimAccessSecretHash(gameId, hash))) {
+    if (!(await repo.claimLegacyReadHash(gameId, hash))) {
       res.status(403).json({ error: "Forbidden" });
       return;
     }
-    logger.info("legacy_game_claimed", { gameId });
-    res.json({ secret });
+    logger.info("legacy_game_claimed", { gameId, readOnly: true });
+    res.json({ secret, readOnly: true });
   });
 
   router.post("/game/:id/next-event", requirePaid, async (req: Request, res: Response) => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { AddressInfo } from "net";
 import { buildServer, type BuiltServer } from "../src/app.js";
 import { MockLLMClient } from "../src/llm/mock.js";
@@ -154,29 +154,73 @@ describe("game reads need the reader's credential (F1)", () => {
   });
 
   describe("a game made before secrets existed (legacy, seatless)", () => {
+    // A legacy game has no credential anywhere: nothing the creator holds
+    // (only the game id, in localStorage) can be verified. A claim therefore
+    // mints a READ-ONLY credential: never an owner secret.
     async function legacyGame(): Promise<string> {
       const s = createGame("Old Kai", "solo parent");
-      built.games.set(s.id, s);
-      await repo.saveGame(s);
+      built.games.set(s.id, { ...s, messages: [{ sender: "parent1", content: "LEGACY-SENTINEL", chatType: "shared", visibleTo: ["parent1", "parent2", "kid"], timestamp: Date.now(), eventNumber: 1 }] });
+      await repo.saveGame(built.games.get(s.id)!);
       return s.id;
     }
+    const claim = (id: string) => post(`/game/${id}/claim`, {});
 
-    it("is claimed once: the first claim gets a secret that then reads it, a second claim is refused", async () => {
+    it("is claimed once: the claim reads the game's own view, a second claim is refused", async () => {
       const id = await legacyGame();
       expect((await get(`/game/${id}/state`)).status).toBe(403);
-      const first = await post(`/game/${id}/claim`, {});
+      const first = await claim(id);
       expect(first.status).toBe(200);
       const { secret } = (await first.json()) as { secret: string };
       expect(typeof secret).toBe("string");
-      expect((await post(`/game/${id}/claim`, {})).status).toBe(403);
-      expect((await get(`/game/${id}/state`, { "x-game-secret": secret })).status).toBe(200);
+      expect((await claim(id)).status).toBe(403);
+      const res = await get(`/game/${id}/state`, { "x-game-secret": secret });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain("LEGACY-SENTINEL");
+    });
+
+    it("an attacker who knows only the game id can't delete it, link it, or read it once its player has claimed it", async () => {
+      const id = await legacyGame();
+      // The attacker claims first: the claimed credential reads, and does nothing else.
+      const { secret } = (await (await claim(id)).json()) as { secret: string };
+      const del = await fetch(`${api}/game/${id}`, { method: "DELETE", headers: { "x-game-secret": secret } });
+      expect(del.status).toBe(403);
+      expect(await repo.loadGame(id)).not.toBeNull();
+      expect((await repo.getAccessSecretHash(id))).toBeNull(); // never an owner secret
+      await post(`/user/${MALLORY}/kids`, [{ gameId: id, childName: "Old Kai", secret }], { "x-matrix-openid": "tok-mallory" });
+      expect(await repo.isProvenUserGame(MALLORY, id)).toBe(false);
+      expect((await get(`/game/${id}/state`, { "x-matrix-openid": "tok-mallory" })).status).toBe(403);
+
+      // The other order: the player claimed first; the attacker gets nothing.
+      const id2 = await legacyGame();
+      expect((await claim(id2)).status).toBe(200);
+      expect((await claim(id2)).status).toBe(403);
+      const raw = await (await get(`/game/${id2}/state`)).text();
+      expect(raw).not.toContain("LEGACY-SENTINEL");
+    });
+
+    it("each claim is logged, and the claim path closes when the migration window ends", async () => {
+      const lines: string[] = [];
+      const out = vi.spyOn(process.stdout, "write").mockImplementation(((c: unknown) => { lines.push(String(c)); return true; }) as never);
+      try {
+        expect((await claim(await legacyGame())).status).toBe(200);
+      } finally {
+        out.mockRestore();
+      }
+      expect(lines.some((l) => l.includes("legacy_game_claimed"))).toBe(true);
+      const saved = process.env.RI_LEGACY_CLAIM_UNTIL;
+      process.env.RI_LEGACY_CLAIM_UNTIL = "2000-01-01T00:00:00Z";
+      try {
+        expect((await claim(await legacyGame())).status).toBe(403);
+      } finally {
+        if (saved === undefined) delete process.env.RI_LEGACY_CLAIM_UNTIL; else process.env.RI_LEGACY_CLAIM_UNTIL = saved;
+      }
     });
 
     it("a game that already has a secret, or has seats, can't be claimed", async () => {
       const { gameId } = await soloGame();
-      expect((await post(`/game/${gameId}/claim`, {})).status).toBe(403);
+      expect((await claim(gameId)).status).toBe(403);
       const seated = await seatedGame();
-      expect((await post(`/game/${seated.gameId}/claim`, {})).status).toBe(403);
+      expect((await claim(seated.gameId)).status).toBe(403);
     });
   });
 

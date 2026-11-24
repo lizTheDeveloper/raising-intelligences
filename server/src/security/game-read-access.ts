@@ -11,8 +11,9 @@ import { GAME_SECRET_HEADER, verifyGameSecret } from "./game-secret.js";
  * carries it), it has sat in page URLs, and so in analytics. A read needs
  * one of the reader's own credentials:
  *   - `x-game-secret`: the solo player's per-game secret (the creating
- *     device holds it). Reads as the owner of a seatless game, or as parent1
- *     if the game has since gained seats.
+ *     device holds it), or a legacy game's claimed read-only credential.
+ *     Reads as the owner of a seatless game, or as parent1 if the game has
+ *     since gained seats.
  *   - `x-player-token`: a seat's token. Reads as that seat only.
  *   - `x-matrix-openid`: a Matrix OpenID token, for the owner on another
  *     device. Reads a seatless game as its owner only when that Matrix user's
@@ -82,7 +83,12 @@ export async function gameReaderOf(
     return { kind: "seat", slot: seat.slot };
   }
   const secret = req.header(GAME_SECRET_HEADER);
-  if (secret && verifyGameSecret(secret, await deps.repo.getAccessSecretHash(gameId))) {
+  if (
+    secret &&
+    (verifyGameSecret(secret, await deps.repo.getAccessSecretHash(gameId)) ||
+      // A legacy game's claimed credential: it reads, and is accepted nowhere else.
+      verifyGameSecret(secret, await deps.repo.getLegacyReadHash(gameId)))
+  ) {
     // The creator of a game that has since gained seats is parent1, and sees what parent1 sees.
     return seat.seated ? { kind: "seat", slot: "parent1" } : { kind: "owner" };
   }
@@ -119,4 +125,14 @@ export function stateForReader(state: GameState, reader: GameReader): Record<str
   if (reader.kind === "owner") return base;
   const { memorySummary: _memorySummary, ...seatState } = base;
   return { ...seatState, messages: state.messages.filter((m) => m.visibleTo.includes(reader.slot)) };
+}
+
+/**
+ * The claim window for legacy (pre-secret) games. RI_LEGACY_CLAIM_UNTIL is an
+ * ISO timestamp; unset means the default below; anything unparseable closes it.
+ */
+export const DEFAULT_LEGACY_CLAIM_UNTIL = "2026-12-24T00:00:00Z";
+export function legacyClaimOpen(now: number = Date.now(), env: NodeJS.ProcessEnv = process.env): boolean {
+  const until = Date.parse(env.RI_LEGACY_CLAIM_UNTIL?.trim() || DEFAULT_LEGACY_CLAIM_UNTIL);
+  return Number.isFinite(until) && now < until;
 }
