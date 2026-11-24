@@ -122,6 +122,17 @@ export interface GameState {
    * has none.
    */
   epilogue: string;
+  /**
+   * The report card, once `SHOW_REPORT_CARD` has run. Empty before that.
+   *
+   * Server-owned for the same reason as `epilogue`: it used to reach a client
+   * only in the one-shot REPORT_CARD_READY event (or the SSE reply that
+   * generated it), so a player who reloaded, closed the tab or opened the game
+   * on another device afterwards saw "No report card was generated." In state,
+   * it rides on every STATE and /state read. Rehydration restores it (and the
+   * epilogue) from the game's endgames row.
+   */
+  reportCard: string;
   /** Queued for the next World Manager call: weave a supportive side
    * character into the next scene giving genuinely good, actionable advice
    * relevant to this (never naming or diagnosing the pattern). Cleared once

@@ -1033,6 +1033,25 @@ export function MultiplayerGame({ joinGameId, matrixDisplayName }: Props) {
         )}
         {/* Host tools only: a stranger game at a meetup (never the public site). */}
         {state.strangerRun && state.meetupEnd && <AccountLink />}
+        {/* The report card screen had no way off it. Same two ways out as solo's. */}
+        <div className="report-card-actions" style={{ textAlign: "center", marginTop: "1.5rem", display: "flex", gap: "0.75rem", justifyContent: "center", flexWrap: "wrap" }}>
+          {matrixUser && (
+            <button className="btn" onClick={() => setShowAlbum(true)}>
+              view your family
+            </button>
+          )}
+          <button
+            className="btn btn-secondary"
+            onClick={() => {
+              const url = new URL(window.location.href);
+              url.searchParams.delete("game");
+              url.hash = "";
+              window.location.href = url.toString();
+            }}
+          >
+            back to the start
+          </button>
+        </div>
       </div>
     );
   }

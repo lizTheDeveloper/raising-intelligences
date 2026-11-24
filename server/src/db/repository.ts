@@ -303,6 +303,9 @@ function reconstructState(input: {
   cpsOutcome?: "stay" | "safety_plan" | "removal" | null;
   therapyMessages?: TherapyMessage[];
   interventionText?: string | null;
+  /** From the game's endgames row, which exists once the report card does. */
+  epilogue?: string;
+  reportCard?: string;
 }): GameState {
   /**
    * `event_intro` means "between scenes" — there is no current scene, ever.
@@ -384,12 +387,13 @@ function reconstructState(input: {
     interventionText: input.interventionText ?? null,
     therapyMessages: input.therapyMessages ?? [],
     cpsOutcome: input.cpsOutcome ?? null,
-    // Not persisted anywhere the games row can reach: the endgames row that
-    // holds the epilogue is only written at report-card time. A game
-    // rehydrated in the `epilogue` phase therefore comes back without its
-    // text, and the socket REPORT_CARD handler falls back to the client's copy
-    // for exactly that case. See GameState.epilogue.
-    epilogue: "",
+    // Both live in the endgames row, which is only written at report-card
+    // time. A finished game gets both back from it (so a reopened report card
+    // isn't blank); a game rehydrated in the `epilogue` phase still comes back
+    // without its text, and the socket REPORT_CARD handler falls back to the
+    // client's copy for exactly that case. See GameState.epilogue.
+    epilogue: input.epilogue ?? "",
+    reportCard: input.reportCard ?? "",
     pendingGuidance: null,
     lastActivityAt: Date.now(),
   };
@@ -736,6 +740,7 @@ export class PgGameRepository implements GameRepository {
     const identitySnapshots: IdentitySnapshot[] = snapshotsRes.rows.map(
       (r) => ({ eventNumber: r.event_number, document: r.document })
     );
+    const endgame = await this.loadEndgame(gameId);
 
     return reconstructState({
       id: game.id,
@@ -762,6 +767,8 @@ export class PgGameRepository implements GameRepository {
       cpsOutcome: game.cps_outcome,
       therapyMessages: game.therapy_messages,
       interventionText: game.intervention_text,
+      epilogue: endgame?.epilogue,
+      reportCard: endgame?.reportCard,
     });
   }
 
@@ -1523,6 +1530,8 @@ export class InMemoryGameRepository implements GameRepository {
       cpsOutcome: game.cpsOutcome,
       therapyMessages: game.therapyMessages.map((m) => ({ ...m })),
       interventionText: game.interventionText,
+      epilogue: this.endgames.get(gameId)?.epilogue,
+      reportCard: this.endgames.get(gameId)?.reportCard,
     });
   }
 
