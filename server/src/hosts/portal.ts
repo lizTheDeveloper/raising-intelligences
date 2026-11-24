@@ -7,7 +7,7 @@ import { PUBLISH_AFTER_MS } from "./config.js";
 import { publishFunnel, type FunnelCounts } from "./funnel.js";
 import { liveTerms } from "./card.js";
 import type { HostTools } from "./service.js";
-import { CODE_NOT_AVAILABLE, ShareService } from "./share.js";
+import { CODE_NOT_AVAILABLE, CODES_PAUSED, ShareService } from "./share.js";
 import type { HostEvent, HostPerson, PublishedFunnel } from "./types.js";
 
 /** The RI discussion deck (spec §B.6): static, from the studio, no player data. */
@@ -172,10 +172,12 @@ export function createHostPortalRoutes(hosts: HostTools, portal: HostPortal, lim
     res.json({ displayName: person.displayName, events: await portal.eventsFor(person) });
   }));
 
-  // Share codes (§5.2). Every failure: the same 404, the same body, after the same floor.
+  // Share codes (§5.2). Every failure: the same 404, the same body, after the same floor. Past 10
+  // failures an hour (30 a day) every new code, right or wrong, gets the same 429 after the same
+  // floor; a code this reader already opened still re-opens, uncounted.
   router.post("/host/codes/redeem", limit, async (req: Request, res: Response) => {
     const started = Date.now();
-    let codeRef: string | null = null;
+    let codeRef: string | "paused" | null = null;
     let signedIn = true;
     try {
       await hosts.ready;
@@ -189,9 +191,15 @@ export function createHostPortalRoutes(hosts: HostTools, portal: HostPortal, lim
     await ShareService.floor(started);
     // Not signed in says nothing about any code; it only sends the host back to sign-in.
     if (!signedIn) return void res.status(401).json({ error: NOT_SIGNED_IN });
+    if (codeRef === "paused") return void res.status(429).json({ error: CODES_PAUSED });
     if (!codeRef) return void res.status(404).json({ error: CODE_NOT_AVAILABLE });
     res.json({ codeRef });
   });
+
+  // The codes this reader opened, while she can still read them: she never re-types them (S2-1).
+  router.post("/host/codes/list", limit, withPerson(async (person, _req, res) => {
+    res.json({ codes: share ? await share.openedCodes(person) : [] });
+  }));
 
   router.post("/host/codes/view", limit, withPerson(async (person, req, res) => {
     const v = share ? await share.viewCode(person, (req.body as { codeRef?: unknown } | undefined)?.codeRef) : null;

@@ -23,6 +23,8 @@ export type ShareView =
 
 /** Every failure of a redemption, whatever the reason (§5.2). */
 export const CODE_NOT_AVAILABLE = "this code isn't available.";
+/** Too many codes that didn't open lately: the same answer for every code, right or wrong. */
+export const CODES_PAUSED = "too many codes didn't open lately, so new codes are paused: try again in an hour (or tomorrow, after 30 in a day). codes you've already opened still open from your list.";
 
 export interface ShareDeps {
   hosts: HostTools;
@@ -42,7 +44,7 @@ export interface ShareDeps {
  */
 export class ShareService {
   private readonly rng: () => number;
-  private redeems = new Map<string, number[]>();
+  private failures = new Map<string, number[]>();
   /** The delay drawn at each second yes (tests read it: same distribution for every game). */
   readonly drawn: Array<{ gameId: string; delayMs: number }> = [];
 
@@ -246,36 +248,82 @@ export class ShareService {
     return id ? this.hosts.store.getPerson(id) : null;
   }
 
-  private rateLimited(personId: string): boolean {
-    const now = Date.now();
-    const recent = (this.redeems.get(personId) ?? []).filter((t) => t > now - 24 * 3600_000);
-    recent.push(now);
-    this.redeems.set(personId, recent);
+  /**
+   * Only failures count (persona tests, S2-1): a reader re-opening codes she
+   * already opened, a dozen times an evening, is never locked out by it.
+   */
+  private lockedOut(personId: string): boolean {
+    const now = this.now();
+    const recent = (this.failures.get(personId) ?? []).filter((t) => t > now - 24 * 3600_000);
+    this.failures.set(personId, recent);
     const hour = recent.filter((t) => t > now - 3600_000).length;
-    return hour > REDEEM_PER_HOUR || recent.length > REDEEM_PER_DAY;
+    return hour >= REDEEM_PER_HOUR || recent.length >= REDEEM_PER_DAY;
   }
 
-  /** Redeems words for this reader: a code ref, or null (every failure the same). */
-  async redeem(person: HostPerson, words: unknown): Promise<string | null> {
-    if (this.rateLimited(person.id)) return null;
+  private failed(personId: string): void {
+    this.failures.set(personId, [...(this.failures.get(personId) ?? []), this.now()]);
+  }
+
+  /**
+   * Redeems words for this reader: a code ref; "paused" when she has had too
+   * many failures lately (the same answer for every code, right or wrong); or
+   * null (every failure the same). A code she already opened re-opens first,
+   * uncounted and never paused.
+   */
+  async redeem(person: HostPerson, words: unknown): Promise<string | "paused" | null> {
     const norm = normalizeWords(words);
-    if (!norm) return null;
-    const code = await this.hosts.store.codeByHash(this.hosts.shareHash(norm));
-    if (!code) return null;
-    const now = this.now();
-    if (code.stoppedAt !== null || now < code.visibleAt) return null;
-    const event = this.hosts.eventById(code.eventId) ?? (await this.hosts.store.getEvent(code.eventId));
-    if (!event?.shareCodes) return null; // the level was lowered: codes no longer open
-    const reader = await this.readerOf(event);
-    if (!reader || reader.id !== person.id || reader.status !== "approved") return null;
-    if (!(await this.stillShareable(code))) return null;
-    if (code.redeemedBy === null) {
-      if (now >= code.expiresAt) return null;
-      if (!(await this.hosts.store.redeemCode(code.id, person.id, now, now + CODE_ACCESS_MS))) return null;
-    } else if (code.redeemedBy !== person.id || (code.accessUntil ?? 0) <= now) {
-      return null;
+    const code = norm ? await this.hosts.store.codeByHash(this.hosts.shareHash(norm)) : null;
+    if (code && code.redeemedBy === person.id) {
+      const ref = await this.reopen(person, code);
+      if (ref) return ref;
     }
+    if (this.lockedOut(person.id)) return "paused";
+    const ref = code ? await this.firstOpen(person, code) : null;
+    if (!ref) this.failed(person.id);
+    return ref;
+  }
+
+  /** Whether this person may read this code now: its reader, approved, the code live and still shareable. */
+  private async readable(person: HostPerson, code: ShareCodeRow): Promise<boolean> {
+    if (code.stoppedAt !== null) return false;
+    const event = this.hosts.eventById(code.eventId) ?? (await this.hosts.store.getEvent(code.eventId));
+    if (!event?.shareCodes) return false; // the level was lowered: codes no longer open
+    // Access lasts only while this person is still the event's reader (an admin can reassign or suspend).
+    const reader = await this.readerOf(event);
+    if (!reader || reader.id !== person.id || reader.status !== "approved") return false;
+    return this.stillShareable(code);
+  }
+
+  private async reopen(person: HostPerson, code: ShareCodeRow): Promise<string | null> {
+    if ((code.accessUntil ?? 0) <= this.now()) return null;
+    return (await this.readable(person, code)) ? this.hosts.ref("code", person.id, code.id) : null;
+  }
+
+  private async firstOpen(person: HostPerson, code: ShareCodeRow): Promise<string | null> {
+    const now = this.now();
+    if (now < code.visibleAt) return null;
+    if (code.redeemedBy !== null) return null; // someone else's, or hers and past its window
+    if (!(await this.readable(person, code))) return null;
+    if (now >= code.expiresAt) return null;
+    if (!(await this.hosts.store.redeemCode(code.id, person.id, now, now + CODE_ACCESS_MS))) return null;
     return this.hosts.ref("code", person.id, code.id);
+  }
+
+  /**
+   * The codes this reader has opened, while she can still read them, newest
+   * first, so she never re-types them. A code stopped since stays listed and
+   * opens like any unavailable code: the players were told she "will see that
+   * it no longer opens".
+   */
+  async openedCodes(person: HostPerson): Promise<Array<{ codeRef: string; eventName: string; openedAt: number; until: number }>> {
+    const now = this.now();
+    const out: Array<{ codeRef: string; eventName: string; openedAt: number; until: number }> = [];
+    for (const code of await this.hosts.store.codesForReader(person.id)) {
+      if ((code.accessUntil ?? 0) <= now || code.redeemedAt === null) continue;
+      const event = this.hosts.eventById(code.eventId) ?? (await this.hosts.store.getEvent(code.eventId));
+      out.push({ codeRef: this.hosts.ref("code", person.id, code.id), eventName: event?.name ?? "", openedAt: code.redeemedAt, until: code.accessUntil! });
+    }
+    return out.sort((a, b) => b.openedAt - a.openedAt);
   }
 
   /** The snapshot for its reader, while access holds; logs the opening (H10, H14). */
@@ -284,12 +332,7 @@ export class ShareService {
     const now = this.now();
     for (const code of await this.hosts.store.codesForReader(person.id)) {
       if (this.hosts.ref("code", person.id, code.id) !== codeRef) continue;
-      if (code.stoppedAt !== null || (code.accessUntil ?? 0) <= now) return null;
-      // Access lasts only while this person is still the event's reader (an admin can reassign or suspend).
-      const event = this.hosts.eventById(code.eventId) ?? (await this.hosts.store.getEvent(code.eventId));
-      const reader = event?.shareCodes ? await this.readerOf(event) : null;
-      if (!reader || reader.id !== person.id || reader.status !== "approved") return null;
-      if (!(await this.stillShareable(code))) return null;
+      if ((code.accessUntil ?? 0) <= now || !(await this.readable(person, code))) return null;
       await this.hosts.store.addAccess(code.id, person.id, now);
       return { snapshot: code.snapshot, until: code.accessUntil!, reader: person.displayName, openedAt: now };
     }
