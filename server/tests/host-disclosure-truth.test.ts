@@ -259,14 +259,37 @@ describe("host tools: the account page and unlink keep their promises", () => {
       expect((await account(g.b)).games[0].share).toEqual({ state: "ended" });
     });
 
-    it("a code that can't open any more (excluded later, or never opened in time) reads as ended on both rows", async () => {
-      const g = await withCode();
-      (h.repo.childSafety as any).cases.set("late", { gameRef: g.gameId });
-      expect((await account(g.a)).games[0].share).toEqual({ state: "ended" });
-      expect((await account(g.b)).games[0].share).toEqual({ state: "ended" });
+    it("a code that lapsed unopened reads as ended (the clock, the same for every code)", async () => {
       const g2 = await withCode();
       h.clock!.now += CODE_REDEEM_MS + MIN;
       expect((await account(g2.a)).games[0].share).toEqual({ state: "ended" });
+      expect((await account(g2.b)).games[0].share).toEqual({ state: "ended" });
+    });
+
+    it("no safety oracle: after a report, a case and a failed redeem, both rows read exactly like a clean control's", async () => {
+      const control = await withCode();
+      const reported = await withCode();
+      // B reports A; a child-safety case names the game; the reader tries the code (the server stops it, silently).
+      const r = reported.B.waitFor(E.STRANGER_REPORTED);
+      reported.B.emit(E.STRANGER_REPORT, { reason: "said something awful" });
+      await r;
+      (h.repo.childSafety as any).cases.set("late", { gameRef: reported.gameId });
+      const words = (await account(reported.b)).games[0].share.words;
+      const hostPass = (await h.post("/host/pass", { openIdToken: `tok:${READER}` })).body.pass;
+      expect((await h.post("/host/codes/redeem", { pass: hostPass, words })).status).toBe(404);
+      expect((await h.repo.hosts.codeByGame(reported.gameId))!.stoppedAt).not.toBeNull();
+      // The same state, the same fields, the same host and access log as the control, for both seats.
+      const shape = (row: Record<string, unknown>) => ({ ...row, words: "<words>", until: "<until>", openBy: "<openBy>" });
+      for (const [mine, theirs] of [[reported.a, control.a], [reported.b, control.b]]) {
+        const a = await h.post("/stranger/account", { pass: await accountPass(mine) });
+        const c = await h.post("/stranger/account", { pass: await accountPass(theirs) });
+        expect(a.status).toBe(c.status);
+        expect(shape(a.body.games[0].share)).toEqual(shape(c.body.games[0].share));
+        expect(Object.keys(a.body.games[0]).sort()).toEqual(Object.keys(c.body.games[0]).sort());
+        expect(a.body.games[0].learning).toEqual(c.body.games[0].learning);
+        expect(a.body.games[0].unlink).toEqual(c.body.games[0].unlink);
+        expect(a.body.hostSaw).toEqual(c.body.hostSaw);
+      }
     });
   });
 

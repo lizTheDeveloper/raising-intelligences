@@ -19,9 +19,9 @@ const NOT_FOUND = "Not found";
  * One game's share state, as its own seat may know it. "code": until is the
  * latest moment anyone can read it (before it's opened: the open-by date plus
  * the read window that follows); openBy is there only while unopened.
- * "stopped": this seat stopped it. "ended": it no longer opens, for any other
- * reason (the co-parent stopped it, it lapsed, or the game can't share any
- * more); the row never says which.
+ * "stopped": this seat stopped it. "ended": the co-parent stopped it, or it
+ * lapsed by the clock; the row never says which. Safety state is never read
+ * into a row (no oracle for a report or ban).
  */
 type ShareRow =
   | { state: "waiting" }
@@ -135,16 +135,18 @@ export class AccountService {
     const now = this.hosts.now();
     const code = await this.hosts.store.codeByGame(run.gameId);
     if (code && now >= code.visibleAt) {
-      if (code.stoppedAt !== null) return code.stoppedBy === slot ? { state: "stopped", at: code.stoppedAt } : { state: "ended" };
+      // A player's explicit stop shows on both rows (the stopper's says so; the co-parent's says only that
+      // it no longer opens). A stop the server made for a safety reason (stoppedBy null) never shows here:
+      // this page is loaded by the player, so it must never act as an oracle for a report, case, ban,
+      // block or suspension. That stop surfaces only as the reader's generic "isn't available".
+      if (code.stoppedAt !== null && code.stoppedBy !== null) return code.stoppedBy === slot ? { state: "stopped", at: code.stoppedAt } : { state: "ended" };
       const words = this.share.words(code);
       if (!words) return { state: "none" };
       const opened = code.redeemedBy !== null;
       // Unopened, it can be opened until expiresAt and then read for CODE_ACCESS_MS: the latest date anyone could read it.
       const until = opened ? (code.accessUntil ?? code.expiresAt) : code.expiresAt + CODE_ACCESS_MS;
+      // Lapsing is by the clock alone, the same schedule for every code: no safety state is read here.
       if (opened ? until <= now : now >= code.expiresAt) return { state: "ended" };
-      // A game that can't share any more (a case, a report, a block, a seat no longer an adult in good standing)
-      // no longer opens, even before anyone tries it: the row mustn't say it works.
-      if (await this.share.excluded(run.gameId, run)) return { state: "ended" };
       const log = await this.hosts.store.accessLog(code.id);
       return { state: "code", words, host: await this.hostName(event), until, ...(opened ? {} : { openBy: code.expiresAt }), opened: log };
     }
