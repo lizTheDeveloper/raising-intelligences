@@ -11,6 +11,8 @@ export interface RepairDeps {
   gameId: string;
   /** The game's secret, if this device has one. Sent so the server may keep the words as research data. */
   secret: string | null;
+  /** The credential this device holds for the game (secret, seat token or Matrix sign-in); the server refuses a repair without one. */
+  authHeaders?: Record<string, string>;
   /** Web cabinets: the campus identity token, so the server knows the creator sent it. */
   campusIdentity?: string;
   message: string;
@@ -34,6 +36,7 @@ export async function sendRepair(deps: RepairDeps): Promise<RepairResult> {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(deps.authHeaders ?? {}),
         ...(deps.secret ? { "x-game-secret": deps.secret } : {}),
         ...(deps.campusIdentity ? { "x-campus-identity": deps.campusIdentity } : {}),
       },

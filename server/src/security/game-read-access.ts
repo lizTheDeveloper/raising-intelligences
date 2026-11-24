@@ -75,9 +75,13 @@ export async function gameReaderOf(
   req: Request,
   state: GameState,
   deps: { repo: GameRepository; seatOf: SeatOf; verifyMatrix: MatrixVerifier },
+  mode: "read" | "write" = "read",
 ): Promise<GameReader | null> {
   const gameId = state.id;
-  const token = req.header(PLAYER_TOKEN_HEADER);
+  // A seat's token, in the header; a write may carry it in its body, as the
+  // REST personality route always has.
+  const bodyToken = mode === "write" ? (req.body as { playerToken?: unknown } | undefined)?.playerToken : undefined;
+  const token = req.header(PLAYER_TOKEN_HEADER) ?? (typeof bodyToken === "string" ? bodyToken : undefined);
   const seat = await deps.seatOf(gameId, token);
   if (token && seat.slot && (seat.slot === "parent1" || seat.slot === "parent2")) {
     return { kind: "seat", slot: seat.slot };
@@ -87,7 +91,7 @@ export async function gameReaderOf(
     secret &&
     (verifyGameSecret(secret, await deps.repo.getAccessSecretHash(gameId)) ||
       // A legacy game's claimed credential: it reads, and is accepted nowhere else.
-      verifyGameSecret(secret, await deps.repo.getLegacyReadHash(gameId)))
+      (mode === "read" && verifyGameSecret(secret, await deps.repo.getLegacyReadHash(gameId))))
   ) {
     // The creator of a game that has since gained seats is parent1, and sees what parent1 sees.
     return seat.seated ? { kind: "seat", slot: "parent1" } : { kind: "owner" };
@@ -97,6 +101,29 @@ export async function gameReaderOf(
     if (sub && (await deps.repo.isProvenUserGame(sub, gameId))) return { kind: "owner" };
   }
   return null;
+}
+
+/**
+ * Gate for every REST route that generates for a game or changes it: the
+ * caller needs the same credential that reads it (a seat token, the solo
+ * secret, or the owner's Matrix sign-in on a kid synced with proof), never
+ * a legacy game's read-only claim. A game that doesn't exist passes through,
+ * so the route answers its own 404.
+ */
+export function requireGameWriter(deps: {
+  repo: GameRepository;
+  seatOf: SeatOf;
+  verifyMatrix: MatrixVerifier;
+  resolveGame: (id: string) => Promise<GameState | null | undefined>;
+}): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction) => {
+    (async () => {
+      const state = await deps.resolveGame(String(req.params.id));
+      if (!state) return next();
+      if (!(await gameReaderOf(req, state, deps, "write"))) return void res.status(403).json({ error: "Forbidden" });
+      next();
+    })().catch(next);
+  };
 }
 
 /**

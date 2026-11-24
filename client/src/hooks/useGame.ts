@@ -318,7 +318,7 @@ export function useGame() {
     setStreamingDocText("");
     setError(null);
     try {
-      const res = await fetch(`${API}/game/${gid}/epilogue`, { method: "POST" });
+      const res = await fetch(`${API}/game/${gid}/epilogue`, { method: "POST", headers: await gameReadHeaders(gid) });
       if (!res.ok || !res.body) {
         const body = await res.text().catch(() => "");
         setTrackedError(`Failed to generate epilogue: ${res.status}${body ? ` — ${body}` : ""}`, "epilogue");
@@ -362,6 +362,7 @@ export function useGame() {
     setError(null);
     const res = await fetch(`${API}/game/${gid}/next-event`, {
       method: "POST",
+      headers: await gameReadHeaders(gid),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
@@ -409,7 +410,7 @@ export function useGame() {
   const beginChat = useCallback(() => {
     setPhase("family_chat");
     if (gameId) {
-      fetch(`${API}/game/${gameId}/portraits/next`, { method: "POST" }).catch(() => {});
+      void gameReadHeaders(gameId).then((headers) => fetch(`${API}/game/${gameId}/portraits/next`, { method: "POST", headers })).catch(() => {});
     }
     track("conversation_started", {
       age: currentEvent?.age ?? 0,
@@ -443,7 +444,7 @@ export function useGame() {
       try {
         const res = await fetch(`${API}/game/${gameId}/message`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...campusIdentityHeaders() },
+          headers: { "Content-Type": "application/json", ...campusIdentityHeaders(), ...(await gameReadHeaders(gameId)) },
           body: JSON.stringify({ sender: "parent1", content }),
         });
 
@@ -551,7 +552,7 @@ export function useGame() {
     setStreamingDocText("");
     setError(null);
     try {
-      const res = await fetch(`${API}/game/${gameId}/end-chat`, { method: "POST" });
+      const res = await fetch(`${API}/game/${gameId}/end-chat`, { method: "POST", headers: await gameReadHeaders(gameId) });
       if (!res.ok || !res.body) {
         const body = await res.text().catch(() => "");
         setTrackedError(`Failed to end chat: ${res.status}${body ? ` — ${body}` : ""}`, "end_chat");
@@ -606,6 +607,7 @@ export function useGame() {
     if (!gameId) return null;
     const res = await fetch(`${API}/game/${gameId}/end-debrief`, {
       method: "POST",
+      headers: await gameReadHeaders(gameId),
     });
     const data = await res.json();
     setMemorySummary("");
@@ -635,6 +637,7 @@ export function useGame() {
     const result = await sendRepair({
       gameId,
       secret: getGameSecret(gameId),
+      authHeaders: await gameReadHeaders(gameId),
       campusIdentity: campusIdentity(),
       message,
       base: import.meta.env.BASE_URL,
@@ -655,7 +658,7 @@ export function useGame() {
   const endConsult = useCallback(async () => {
     if (!gameId) return;
     setError(null);
-    const res = await fetch(`${API}/game/${gameId}/end-consult`, { method: "POST" });
+    const res = await fetch(`${API}/game/${gameId}/end-consult`, { method: "POST", headers: await gameReadHeaders(gameId) });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       setTrackedError(`Failed to end consult: ${res.status}${body ? ` — ${body}` : ""}`, "end_consult");
@@ -695,7 +698,7 @@ export function useGame() {
       try {
         const res = await fetch(`${API}/game/${gameId}/therapy-message`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...campusIdentityHeaders() },
+          headers: { "Content-Type": "application/json", ...campusIdentityHeaders(), ...(await gameReadHeaders(gameId)) },
           body: JSON.stringify({ content }),
         });
 
@@ -765,7 +768,7 @@ export function useGame() {
   const endTherapy = useCallback(async () => {
     if (!gameId) return;
     setError(null);
-    const res = await fetch(`${API}/game/${gameId}/end-therapy`, { method: "POST" });
+    const res = await fetch(`${API}/game/${gameId}/end-therapy`, { method: "POST", headers: await gameReadHeaders(gameId) });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       setTrackedError(`Failed to end therapy: ${res.status}${body ? ` — ${body}` : ""}`, "end_therapy");
@@ -795,7 +798,7 @@ export function useGame() {
   const endCps = useCallback(async () => {
     if (!gameId) return null;
     setError(null);
-    const res = await fetch(`${API}/game/${gameId}/end-cps`, { method: "POST" });
+    const res = await fetch(`${API}/game/${gameId}/end-cps`, { method: "POST", headers: await gameReadHeaders(gameId) });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       setTrackedError(`Failed to end CPS review: ${res.status}${body ? ` — ${body}` : ""}`, "end_cps");
@@ -845,7 +848,7 @@ export function useGame() {
       const qp = userId ? `?userId=${encodeURIComponent(userId)}` : "";
       const res = await fetch(`${API}/game/${gameId}/report-card${qp}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(await gameReadHeaders(gameId)) },
         body: JSON.stringify({ epilogue }),
       });
       if (!res.ok || !res.body) {

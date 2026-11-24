@@ -68,7 +68,7 @@ describe("end-debrief phase guard", () => {
     const gameId = await newGame();
 
     // A fresh game is in `event_intro`, never `debrief`.
-    const res = await fetch(`${baseUrl}/api/game/${gameId}/end-debrief`, { method: "POST" });
+    const res = await fetch(`${baseUrl}/api/game/${gameId}/end-debrief`, { method: "POST", headers: { "x-game-secret": secrets.get(gameId) ?? "" } });
 
     expect(res.status).toBe(409);
     const json = (await res.json()) as { error?: string };
@@ -81,7 +81,7 @@ describe("end-debrief phase guard", () => {
     const gameId = await newGame();
 
     const before = await readState(gameId).then((r) => r.json());
-    await fetch(`${baseUrl}/api/game/${gameId}/end-debrief`, { method: "POST" });
+    await fetch(`${baseUrl}/api/game/${gameId}/end-debrief`, { method: "POST", headers: { "x-game-secret": secrets.get(gameId) ?? "" } });
     const after = await readState(gameId).then((r) => r.json());
 
     expect((after as { phase: string }).phase).toBe((before as { phase: string }).phase);

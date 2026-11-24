@@ -72,7 +72,7 @@ describe("concern accumulator — accrual through the real REST scene-end route"
 
     const nextRes = await fetch(`${baseUrl}/api/game/${gameId}/next-event`, {
       method: "POST",
-      headers: { "X-Forwarded-For": ip },
+      headers: { "X-Forwarded-For": ip, "x-game-secret": secrets.get(gameId) ?? "" },
     });
     const nextJson = (await nextRes.json()) as { phase: string };
     expect(nextJson.phase).toBe("family_chat");
@@ -84,7 +84,7 @@ describe("concern accumulator — accrual through the real REST scene-end route"
   async function sendOneMessage(gameId: string, ip: string): Promise<void> {
     const res = await fetch(`${baseUrl}/api/game/${gameId}/message`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Forwarded-For": ip },
+      headers: { "Content-Type": "application/json", "X-Forwarded-For": ip, "x-game-secret": secrets.get(gameId) ?? "" },
       body: JSON.stringify({ sender: "parent1", content: "hello" }),
     });
     await drainSSE(res);
@@ -93,7 +93,7 @@ describe("concern accumulator — accrual through the real REST scene-end route"
   async function endChat(gameId: string, ip: string): Promise<void> {
     const res = await fetch(`${baseUrl}/api/game/${gameId}/end-chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Forwarded-For": ip },
+      headers: { "Content-Type": "application/json", "X-Forwarded-For": ip, "x-game-secret": secrets.get(gameId) ?? "" },
       body: JSON.stringify({}),
     });
     await drainSSE(res);

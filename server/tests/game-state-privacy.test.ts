@@ -54,7 +54,7 @@ describe("GET /game/:id/state privacy (#139)", () => {
 
     const personalityRes = await fetch(`${baseUrl}/game/${gameId}/personality`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Forwarded-For": "203.0.113.10" },
+      headers: { "Content-Type": "application/json", "X-Forwarded-For": "203.0.113.10", "x-game-secret": secret },
       body: JSON.stringify({
         ocean: [3, 3, 3, 3, 3],
         confessional1: SECRET_CONFESSION,

@@ -49,7 +49,7 @@ import { cleanRepairMessage } from "../research/repair.js";
 import { forgetSceneSummary } from "../research/moment-label.js";
 import { requireAdmin } from "./admin.js";
 import { isSeatedGame } from "../research/seats.js";
-import { gameReaderOf, legacyClaimOpen, stateForReader, type MatrixVerifier } from "../security/game-read-access.js";
+import { gameReaderOf, legacyClaimOpen, requireGameWriter, stateForReader, type MatrixVerifier } from "../security/game-read-access.js";
 
 const VALID_SENDERS: Sender[] = ["parent1", "parent2"];
 const MAX_CHILD_NAME_LENGTH = 50;
@@ -104,6 +104,10 @@ export function createGameRoutes(
 
   const lock = <T>(gameId: string, fn: () => Promise<T>) => withGameLock(gameLocks, gameId, fn);
   const resolveGame = (id: string) => sharedResolveGame(id, games, repo);
+  // Every route below that generates for a game or changes it needs the
+  // caller's own credential (a game id alone is not one). Before the payment
+  // gate, so a stranger learns nothing about a game's payment either.
+  const writer = requireGameWriter({ repo, seatOf, verifyMatrix, resolveGame });
 
   router.post("/game", ...(gameCreateLimit ? [gameCreateLimit] : []), async (req: Request, res: Response) => {
     const { childName, relationshipType, birthYear, campusIdentity } = req.body as {
@@ -327,7 +331,7 @@ export function createGameRoutes(
     res.json({ secret, readOnly: true });
   });
 
-  router.post("/game/:id/next-event", requirePaid, async (req: Request, res: Response) => {
+  router.post("/game/:id/next-event", writer, requirePaid, async (req: Request, res: Response) => {
     const gameId = req.params.id as string;
 
     // Lock barrier (FIFO): handlers already queued for this game, such as a
@@ -399,7 +403,7 @@ export function createGameRoutes(
     }
   });
 
-  router.post("/game/:id/message", requirePaid, ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
+  router.post("/game/:id/message", writer, requirePaid, ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
     const { sender, content } = req.body as { sender: Sender; content: string };
 
     if (!VALID_SENDERS.includes(sender)) {
@@ -584,7 +588,7 @@ export function createGameRoutes(
     }
   });
 
-  router.post("/game/:id/end-chat", requirePaid, ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
+  router.post("/game/:id/end-chat", writer, requirePaid, ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
     const precheck = await resolveGame(req.params.id as string);
     if (!precheck) {
       res.status(404).json({ error: "Game not found" });
@@ -688,7 +692,7 @@ export function createGameRoutes(
     }
   });
 
-  router.post("/game/:id/end-debrief", requirePaid, async (req: Request, res: Response) => {
+  router.post("/game/:id/end-debrief", writer, requirePaid, async (req: Request, res: Response) => {
     const gameId = req.params.id as string;
     if (!(await resolveGame(gameId))) {
       res.status(404).json({ error: "Game not found" });
@@ -750,7 +754,7 @@ export function createGameRoutes(
   // kept as research data only when research is on, the game is adult and the
   // secret is valid; otherwise the note lives in memory and is cleared when the
   // next scene starts.
-  router.post("/game/:id/repair", requirePaid, ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
+  router.post("/game/:id/repair", writer, requirePaid, ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
     const gameId = req.params.id as string;
     const body = req.body as { message?: unknown } | undefined;
     const cleaned = cleanRepairMessage(body?.message);
@@ -835,7 +839,7 @@ export function createGameRoutes(
   // Dark Play Plan 3 — advance out of Rung 1 (consult). Decays concernLevel
   // by CONSULT_DECAY and returns to event_intro; consult never ends the
   // story, it returns to a scene so the repaired parent gets to parent again.
-  router.post("/game/:id/end-consult", requirePaid, async (req: Request, res: Response) => {
+  router.post("/game/:id/end-consult", writer, requirePaid, async (req: Request, res: Response) => {
     const gameId = req.params.id as string;
     if (!(await resolveGame(gameId))) {
       res.status(404).json({ error: "Game not found" });
@@ -866,7 +870,7 @@ export function createGameRoutes(
   // Dark Play Plan 3 — conclude a Rung 2 (therapy) session. Decays
   // concernLevel by THERAPY_DECAY and returns to event_intro, clearing
   // therapyMessages (state-machine's END_INTERVENTION already does this).
-  router.post("/game/:id/end-therapy", requirePaid, async (req: Request, res: Response) => {
+  router.post("/game/:id/end-therapy", writer, requirePaid, async (req: Request, res: Response) => {
     const gameId = req.params.id as string;
     if (!(await resolveGame(gameId))) {
       res.status(404).json({ error: "Game not found" });
@@ -896,7 +900,7 @@ export function createGameRoutes(
   // the lower rungs; "removal" is terminal — generates the removal epilogue
   // instead. NEVER calls applyModerationBlock or repo.banIp here: removal is
   // an in-fiction outcome, not a ban.
-  router.post("/game/:id/end-cps", requirePaid, async (req: Request, res: Response) => {
+  router.post("/game/:id/end-cps", writer, requirePaid, async (req: Request, res: Response) => {
     const gameId = req.params.id as string;
     if (!(await resolveGame(gameId))) {
       res.status(404).json({ error: "Game not found" });
@@ -942,7 +946,7 @@ export function createGameRoutes(
   // Dark Play Plan 3, Rung 2 — a parent's turn during a therapy session.
   // SSE, mirroring /game/:id/message: guarded to `therapy` and to
   // THERAPY_TURN_CAP parent turns already in therapyMessages.
-  router.post("/game/:id/therapy-message", requirePaid, ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
+  router.post("/game/:id/therapy-message", writer, requirePaid, ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
     const { content } = req.body as { content: string };
 
     if (!content || typeof content !== "string") {
@@ -1024,7 +1028,7 @@ export function createGameRoutes(
 
   // Submit a parent's personality (OCEAN scores + confessionals). When all
   // required parents have submitted, generates and stores the personality seed.
-  router.post("/game/:id/personality", ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
+  router.post("/game/:id/personality", writer, ...(llmRateLimit ? [llmRateLimit] : []), async (req: Request, res: Response) => {
     const gameId = req.params.id as string;
     const state = await resolveGame(gameId);
     if (!state) {
@@ -1175,7 +1179,7 @@ export function createGameRoutes(
 
   // Kick off generation of the next portrait in the chain — called by the client
   // as soon as a conversation begins so the portrait is ready for the next event.
-  router.post("/game/:id/portraits/next", requirePaid, async (req: Request, res: Response) => {
+  router.post("/game/:id/portraits/next", writer, requirePaid, async (req: Request, res: Response) => {
     const state = await resolveGame(req.params.id as string);
     if (!state) {
       res.status(404).json({ error: "Game not found" });

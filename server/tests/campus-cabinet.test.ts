@@ -9,6 +9,7 @@ import { InMemoryChildSafetyStore } from "../src/safety/child-safety/store.js";
 import { logger } from "../src/logger.js";
 import { resolveCampusIdentity } from "../src/security/campus-identity.js";
 import { buildReportPackage, reporterInfoFromEnv } from "../src/safety/child-safety/report.js";
+import { secretHeaders } from "./helpers/game-auth.js";
 
 // Synthetic only: never real player text.
 const FIXTURE = "TEST FIXTURE: synthetic flagged text, not real content";
@@ -76,6 +77,7 @@ describe("campus web cabinet (server)", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json", "X-Forwarded-For": ip, "User-Agent": "SyntheticUA",
+        ...(await secretHeaders(server.memRepo, gameId)),
         ...(identity ? { "X-Campus-Identity": identity } : {}),
       },
       body: JSON.stringify({ sender, content: FIXTURE }),

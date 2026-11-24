@@ -39,9 +39,9 @@ describe("solo-only research gates also check saved seats (no in-memory session)
   /** An adult research game, played to the debrief of scene 1. */
   async function debriefGame() {
     const g = (await (await call("POST", "/game", { childName: "Kai", relationshipType: "solo parent", birthYear: 1985 })).json()) as { gameId: string; secret: string };
-    await call("POST", `/game/${g.gameId}/personality`, { ocean: [3, 3, 3, 3, 3], confessional1: "x", slot: "parent1" });
-    expect((await call("POST", `/game/${g.gameId}/next-event`, {})).status).toBe(200);
-    await (await call("POST", `/game/${g.gameId}/end-chat`, {})).text();
+    await call("POST", `/game/${g.gameId}/personality`, { ocean: [3, 3, 3, 3, 3], confessional1: "x", slot: "parent1" }, g.secret);
+    expect((await call("POST", `/game/${g.gameId}/next-event`, {}, g.secret)).status).toBe(200);
+    await (await call("POST", `/game/${g.gameId}/end-chat`, {}, g.secret)).text();
     return g;
   }
   const followup = { email: EMAIL, consentFollowup: true, consentAiAnalysis: true };
@@ -78,7 +78,9 @@ describe("solo-only research gates also check saved seats (no in-memory session)
     vi.spyOn(repo, "loadPlayers").mockRejectedValue(new Error("db down"));
     const s = await statuses(g);
     expect(s).toMatchObject({ questions: 404, answers: 404, followupPost: 404, followupDelete: 404 });
-    expect(s.repair).toBe(409);
+    // The credential check can't tell who holds the seats, so the repair is refused before the route runs.
+    expect(s.repair).toBe(500);
+    expect((await repo.listAnswers(g.gameId)).filter((a) => a.kind === "repair")).toHaveLength(0);
   });
 
   it("gate order is unchanged: no secret is a 403 before the seat check", async () => {

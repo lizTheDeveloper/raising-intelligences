@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestServer, type TestServer } from "./helpers/test-server.js";
 import { RestClient } from "./helpers/rest-client.js";
 import { createGame } from "../src/game/state-machine.js";
+import { secretHeaders } from "./helpers/game-auth.js";
 
 /**
  * Regression for the RI production error (GlitchTip project 6):
@@ -34,6 +35,7 @@ describe("message out-of-phase guard", () => {
   it("rejects cleanly (not a 500) when the scene has already ended", async () => {
     const state = { ...createGame("Luna"), phase: "debrief" as const };
     await server.memRepo.saveGame(state);
+    api.auth = await secretHeaders(server.memRepo, state.id);
 
     await expect(
       api.postSSE(`/api/game/${state.id}/message`, { sender: "parent1", content: "hi" })

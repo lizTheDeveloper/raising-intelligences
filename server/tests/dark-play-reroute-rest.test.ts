@@ -91,7 +91,7 @@ describe("dark-play reroute (routing layer, via real REST routes)", () => {
 
     const nextRes = await fetch(`${baseUrl}/api/game/${gameId}/next-event`, {
       method: "POST",
-      headers: { "X-Forwarded-For": ip },
+      headers: { "X-Forwarded-For": ip, "x-game-secret": secrets.get(gameId) ?? "" },
     });
     const nextJson = (await nextRes.json()) as { phase: string };
     expect(nextJson.phase).toBe("family_chat");
@@ -101,7 +101,7 @@ describe("dark-play reroute (routing layer, via real REST routes)", () => {
   async function sendMessage(gameId: string, ip: string, content: string): Promise<MessageFrame[]> {
     const res = await fetch(`${baseUrl}/api/game/${gameId}/message`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Forwarded-For": ip },
+      headers: { "Content-Type": "application/json", "X-Forwarded-For": ip, "x-game-secret": secrets.get(gameId) ?? "" },
       body: JSON.stringify({ sender: "parent1", content }),
     });
     return readSSE(res);

@@ -40,12 +40,17 @@ let baseUrl: string;
 const post = (path: string, body: unknown) =>
   fetch(`${baseUrl}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authFor(path) },
     body: JSON.stringify(body),
   });
 
-// GET /state needs the game's own secret (privacy review F1).
 const secrets = new Map<string, string>();
+// GET /state and every write need the game's own secret (privacy review F1).
+const authFor = (path: string): Record<string, string> => {
+  const id = /\/game\/([^/]+)\//.exec(path)?.[1];
+  const secret = id ? secrets.get(id) : undefined;
+  return secret ? { "x-game-secret": secret } : {};
+};
 async function newSoloGame(): Promise<string> {
   const res = await post("/game", { childName: "Kai", relationshipType: "solo parent" });
   const { gameId, secret } = (await res.json()) as { gameId: string; secret: string };

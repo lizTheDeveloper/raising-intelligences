@@ -289,7 +289,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     }
   });
   app.use("/api", createGameRoutes(conversationEngine, endgameEngine, games, repo, { llmRateLimit, gameCreateLimit, gameLocks, llm, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0, partnerGate, seatOf, requirePaid, verifyMatrix }));
-  app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit, gameLocks, requirePaid }));
+  app.use("/api", createEndgameRoutes(endgameEngine, games, repo, { llmRateLimit, gameLocks, requirePaid, seatOf, verifyMatrix }));
   app.use("/api", createResearchRoutes(games, repo, { gameLocks, llm, followupLimit, answerLimit, hasSeat: (id) => (sessions.get(id)?.players.length ?? 0) > 0 }));
   app.use("/api", createCampusRoutes(repo, { limit: campusPassLimit }));
   app.use("/api", createUserRoutes(repo, { verifyMatrix, seatOf }));

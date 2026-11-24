@@ -64,16 +64,19 @@ describe("solo scene 1 is built after the personality seed", () => {
     await new Promise<void>((r) => built.httpServer.close(() => r()));
   });
 
+  // Every write needs the game's own secret, as the client sends it.
+  let secret = "";
   const post = (path: string, body: unknown) =>
     fetch(`${baseUrl}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(secret ? { "x-game-secret": secret } : {}) },
       body: JSON.stringify(body),
     });
 
   it("scene 1 world-manager context contains the personality seed", async () => {
     const created = await post("/game", { childName: "Kai", relationshipType: "solo parent" });
-    const { gameId } = (await created.json()) as { gameId: string };
+    const { gameId, secret: s } = (await created.json()) as { gameId: string; secret: string };
+    secret = s;
 
     const pr = await post(`/game/${gameId}/personality`, {
       ocean: [3, 3, 3, 3, 3],

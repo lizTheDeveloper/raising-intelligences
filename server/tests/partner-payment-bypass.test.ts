@@ -74,10 +74,10 @@ describe("partner payment cannot be bypassed", () => {
     return c;
   }
 
-  async function post(path: string, body: unknown) {
+  async function post(path: string, body: unknown, headers: Record<string, string> = {}) {
     const res = await fetch(`${baseUrl}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify(body),
     });
     return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, unknown> };
@@ -114,7 +114,7 @@ describe("partner payment cannot be bypassed", () => {
   });
 
   it("a partner who joins a solo game mid-story stops every further generation until paid", async () => {
-    const { p1, gameId } = await host("solo parent");
+    const { p1, gameId, hostToken } = await host("solo parent");
     const chat = p1.waitFor<ViewerState>(E.STATE, (s) => s.phase === "family_chat");
     p1.emit(E.SUBMIT_PERSONALITY, { ocean: OCEAN_P1, confessional1: "a", confessional2: "" });
     await chat;
@@ -133,7 +133,7 @@ describe("partner payment cannot be bypassed", () => {
     p1.emit(E.END_CHAT);
     await settle();
     expect(mock.generated()).toBe(before);
-    expect((await post(`/api/game/${gameId}/next-event`, {})).status).toBe(402);
+    expect((await post(`/api/game/${gameId}/next-event`, {}, { "x-player-token": hostToken })).status).toBe(402);
   });
 
   it("REST /personality can't answer for a seat nobody holds", async () => {
@@ -174,7 +174,8 @@ describe("partner payment cannot be bypassed", () => {
   });
 
   it("every generating REST route refuses an unpaid two-human child, however the path is spelled", async () => {
-    const { p1, gameId } = await host();
+    const { p1, gameId, hostToken } = await host();
+    const seat = { "x-player-token": hostToken };
     const { p2 } = await join(gameId);
     const due = p1.waitFor<ViewerState>(E.STATE, (s) => s.payment?.status === "due");
     p1.emit(E.SUBMIT_PERSONALITY, { ocean: OCEAN_P1, confessional1: "a", confessional2: "" });
@@ -187,11 +188,11 @@ describe("partner payment cannot be bypassed", () => {
     const spellings = (r: string) => [r, r.toUpperCase(), r[0].toUpperCase() + r.slice(1), `${r}/`, `${r.toUpperCase()}/`];
     for (const r of routes) {
       for (const path of spellings(r)) {
-        const res = await post(`/api/game/${gameId}/${path}`, { content: "hi", message: "hi" });
+        const res = await post(`/api/game/${gameId}/${path}`, { content: "hi", message: "hi" }, seat);
         expect({ path, status: res.status }).toEqual({ path, status: 402 });
       }
       // The game id itself in another case is just another (unknown) game — never generated for.
-      const upper = await post(`/api/GAME/${gameId}/${r}`, { content: "hi" });
+      const upper = await post(`/api/GAME/${gameId}/${r}`, { content: "hi" }, seat);
       expect([402, 404]).toContain(upper.status);
     }
     await settle();
@@ -199,7 +200,7 @@ describe("partner payment cannot be bypassed", () => {
   });
 
   it("the REST gate counts saved seats, not just the ones live in memory", async () => {
-    const { p1, gameId } = await host();
+    const { p1, gameId, hostToken } = await host();
     const { p2 } = await join(gameId);
     const due = p1.waitFor<ViewerState>(E.STATE, (s) => s.payment?.status === "due");
     p1.emit(E.SUBMIT_PERSONALITY, { ocean: OCEAN_P1, confessional1: "a", confessional2: "" });
@@ -207,7 +208,7 @@ describe("partner payment cannot be bypassed", () => {
     await due;
     // As if the server restarted: the live session is gone, the seats are saved.
     built.sessions.delete(gameId);
-    expect((await post(`/api/game/${gameId}/next-event`, {})).status).toBe(402);
+    expect((await post(`/api/game/${gameId}/next-event`, {}, { "x-player-token": hostToken })).status).toBe(402);
   });
 
   it("a partner who joins and leaves before the quiz is never charged, and a solo child stays free", async () => {
