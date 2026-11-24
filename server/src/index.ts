@@ -1,3 +1,4 @@
+import { devMockLlm, readDevHarness } from "./dev/harness.js";
 import { RoutingLLMClient } from "./llm/routing-client.js";
 import type { LLMUsage } from "./llm/client.js";
 import type { ModelTier } from "./llm/model-config.js";
@@ -57,11 +58,13 @@ async function main() {
     });
   };
   const seed = process.env.LLM_SEED ? Number(process.env.LLM_SEED) : undefined;
-  const llm = new TracedLLMClient(
-    new RoutingLLMClient(tier, onUsage, "kid_family_chat", seed),
-    {},
-    tier
-  );
+  const llm = readDevHarness().mockLlm
+    ? devMockLlm()
+    : new TracedLLMClient(
+        new RoutingLLMClient(tier, onUsage, "kid_family_chat", seed),
+        {},
+        tier
+      );
 
   // Use Postgres when DATABASE_URL is configured; otherwise an in-memory
   // repository so the server runs with no external dependencies.

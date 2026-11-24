@@ -17,6 +17,7 @@ import { ESCALATION_DARK_CONCERN } from "../safety/escalation.js";
 import { InMemoryChildSafetyStore, PgChildSafetyStore, type ChildSafetyStore } from "../safety/child-safety/store.js";
 import { InMemoryPartnerPaymentStore, PgPartnerPaymentStore, type PartnerPaymentStore } from "../payments/store.js";
 import { InMemoryStrangerStore, PgStrangerStore, type StrangerStore } from "../stranger/store.js";
+import { InMemoryHostStore, PgHostStore, type HostStore } from "../hosts/store.js";
 import {
   isWithheld,
   preserveModerationFlag,
@@ -86,6 +87,8 @@ export interface GameRepository {
    */
   readonly partnerPayments: PartnerPaymentStore;
   readonly stranger: StrangerStore;
+  /** Meetup host tools (migration 034). */
+  readonly hosts: HostStore;
   /** Upsert the top-level game checkpoint (phase, counters, identity doc). */
   saveGame(state: GameState): Promise<void>;
   saveMessage(gameId: string, message: Message): Promise<void>;
@@ -394,10 +397,12 @@ export class PgGameRepository implements GameRepository {
   readonly childSafety: ChildSafetyStore;
   readonly partnerPayments: PartnerPaymentStore;
   readonly stranger: StrangerStore;
+  readonly hosts: HostStore;
   constructor(private db: Pick<pg.Pool, "query"> & Partial<Pick<pg.Pool, "connect">> = pool) {
     this.childSafety = new PgChildSafetyStore(db);
     this.partnerPayments = new PgPartnerPaymentStore(db);
     this.stranger = new PgStrangerStore(db);
+    this.hosts = new PgHostStore(db);
   }
 
   async saveGame(state: GameState): Promise<void> {
@@ -1287,6 +1292,7 @@ export class InMemoryGameRepository implements GameRepository {
   readonly childSafety = new InMemoryChildSafetyStore();
   readonly partnerPayments: PartnerPaymentStore = new InMemoryPartnerPaymentStore();
   readonly stranger: StrangerStore = new InMemoryStrangerStore();
+  readonly hosts: HostStore = new InMemoryHostStore();
   private games = new Map<
     string,
     {

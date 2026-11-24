@@ -70,10 +70,13 @@ import { logger } from "../logger.js";
 import { isResearchEnabled } from "../research/config.js";
 import { loadParentContext } from "../research/parent-context.js";
 import type { PartnerPayments } from "../payments/partner-payments.js";
+import type { HostTools } from "../hosts/service.js";
 
 export interface SocketDeps {
   /** Stranger mode (Tier 4): matching, seat binding. Absent in most tests. */
   stranger?: StrangerService;
+  /** Meetup host tools (absent, or inactive, unless RI_STRANGER_MODE=meetup). */
+  hostTools?: HostTools | null;
   io: Server;
   games: Map<string, GameState>;
   sessions: Map<string, Session>;
@@ -294,13 +297,24 @@ function lobbyState(session: Session): LobbyState {
 export function registerSocketHandlers(deps: SocketDeps): void {
   const { io, games, sessions, conversationEngine, endgameEngine, repo, llm,
           gameLocks = new Map<string, Promise<void>>(),
-          handoffTtlMs = HANDOFF_TTL_MS, payments, stranger } = deps;
+          handoffTtlMs = HANDOFF_TTL_MS, payments, stranger, hostTools } = deps;
+  const hostsOn = () => (hostTools?.active() ? hostTools : null);
+  /** The end screens of a stranger game at a meetup (no I/O: STATE is synchronous). */
+  const meetupEnd = (gameId: string): { handles: boolean; share: boolean; learning: boolean } | null => {
+    const h = hostsOn();
+    const eventId = h ? stranger?.matching?.eventIdOf(gameId) : null;
+    return h && eventId ? h.endScreens(eventId) : null;
+  };
 
   /** viewerState plus the per-seat payment step, which lives outside GameState. */
   const view = (state: GameState, slot: Sender, generating: boolean): ViewerState => ({
     ...viewerState(state, slot, generating),
     payment: payments?.view(state.id, slot) ?? null,
     ...(stranger?.matching?.isRun(state.id) ? { strangerRun: true } : {}),
+    ...((): { meetupEnd?: { handles: boolean; share: boolean; learning: boolean } } => {
+      const m = stranger?.matching?.isRun(state.id) ? meetupEnd(state.id) : null;
+      return m ? { meetupEnd: m } : {};
+    })(),
   });
 
   // ---- Stranger mode: matching creates games here, where games and seats live ----
@@ -1080,6 +1094,8 @@ export function registerSocketHandlers(deps: SocketDeps): void {
           if (!slot) return fail(STRANGER_PRIVATE);
           const holder = await stranger.seatHolderOk(seats, slot, payload.strangerPass);
           if (!holder) return fail(STRANGER_PRIVATE);
+          // Host tools H12: a meetup's host or guest reader never sits in a game at it.
+          if (seats.eventId && (await hostsOn()?.refusedSeat(seats.eventId, seats[slot]))) return fail(STRANGER_PRIVATE);
           // A suspended account takes no new seat and returns to no game but
           // the one it was reported in — and nothing it sees may differ from
           // what any other player sees. Back in its own seat of a reported
@@ -1968,7 +1984,10 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       const refuse = (error: string) => socket.emit(E.HANDLE_STATE, { mine: null, closed: true, error });
       try {
         if (!gameId || (slot !== "parent1" && slot !== "parent2") || !stranger?.matching) return refuse("Not available in this game.");
-        if (!(await stranger.matching.runFor(gameId))) return refuse("Not available in this game.");
+        const seats = await stranger.matching.runFor(gameId);
+        if (!seats) return refuse("Not available in this game.");
+        // A meetup whose card said "there's no contact swap at this meetup".
+        if (seats.eventId && hostsOn() && !hostsOn()!.handleExchangeOn(seats.eventId)) return refuse("Not available in this game.");
         const state = games.get(gameId);
         if (state?.phase !== "report_card") return refuse("This comes after the report card.");
         if ((sessions.get(gameId)?.players.length ?? 0) < 2) return refuse("Not available in this game.");
@@ -2047,6 +2066,12 @@ export function registerSocketHandlers(deps: SocketDeps): void {
         games.set(result.state.id, result.state);
         await repo.saveEndgame(result.state.id, epilogue, result.reportCard);
         await repo.saveGame(result.state);
+        // Host tools: a stranger game at a meetup is "finished" here, and its share window starts.
+        if (stranger?.matching?.isRun(gameId)) {
+          await stranger.store.markRunFinished(gameId, Date.now()).catch((err) => {
+            logger.error("stranger_run_finish_failed", { gameId, error: err instanceof Error ? err.message : String(err) });
+          });
+        }
         broadcastState(gameId);
         io.to(gameId).emit(E.REPORT_CARD_READY, { reportCard: result.reportCard });
 

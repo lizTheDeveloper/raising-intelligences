@@ -33,7 +33,24 @@ const EXCHANGE_TTL_MS = 6 * 60 * 60 * 1000;
 const REPORT_SUSPENSION_CAP = 3;
 const REPORT_CAP_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const UNFOUNDED_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
-import { StrangerMatching, type MatchingHooks, type StrangerRunSeats, type StrangerSlot } from "./matching.js";
+import { DevIdentity, devMatrixVerifier, readDevHarness } from "../dev/harness.js";
+import { StrangerMatching, type MatchingGate, type MatchingHooks, type StrangerRunSeats, type StrangerSlot } from "./matching.js";
+
+/**
+ * Host tools (hosts/service.ts), as stranger mode sees them. In meetup mode
+ * every meetup code is an event: visible while it isn't closed, and a pass is
+ * issued only to someone who has acknowledged its current card.
+ */
+export interface StrangerHostTools extends MatchingGate {
+  active(): boolean;
+  codeVisible(code: unknown): boolean;
+  eventLive(eventId: string): boolean;
+  bindAck(ackToken: unknown, meetupCode: string | null, subject: string): Promise<{ ok: true } | { ok: false; card: unknown }>;
+  /** The host or guest reader of the event a game was matched at (H12). */
+  refusedSeat(eventId: string | null | undefined, subject: string): Promise<boolean>;
+  /** Is the handle exchange on for the event a game was matched at? */
+  handleExchangeOn(eventId: string | null | undefined): boolean;
+}
 
 /**
  * Everything stranger mode needs, in one place, so the routes and the socket
@@ -56,6 +73,12 @@ export class StrangerService {
   readonly store: StrangerStore;
   /** Set by the socket layer, which owns games and seats (registerSocketHandlers). */
   matching: StrangerMatching | null = null;
+  /** Host tools, attached by buildServer when they exist. */
+  hosts: StrangerHostTools | null = null;
+
+  private hostsOn(): StrangerHostTools | null {
+    return this.hosts?.active() ? this.hosts : null;
+  }
 
   constructor(deps: StrangerServiceDeps) {
     this.config = deps.config;
@@ -66,7 +89,7 @@ export class StrangerService {
   }
 
   attachMatching(hooks: MatchingHooks): StrangerMatching {
-    this.matching = new StrangerMatching({ age: this.age, store: this.store, config: this.config, hooks });
+    this.matching = new StrangerMatching({ age: this.age, store: this.store, config: this.config, hooks, gate: () => this.hostsOn() });
     return this.matching;
   }
 
@@ -262,7 +285,7 @@ export class StrangerService {
   }
 
   private async revealAllowed(gameId: string, seats: StrangerRunSeats, x: Exchange): Promise<boolean> {
-    if (this.off() || x.reportFiled || !this.visible(seats.meetupCode)) return false;
+    if (this.off() || x.reportFiled || !this.runVisible(seats)) return false;
     if (await this.store.gameReported(gameId)) return false;
     if (await this.store.isBlocked(seats.parent1, seats.parent2)) return false;
     for (const s of ["parent1", "parent2"] as const) {
@@ -359,11 +382,12 @@ export class StrangerService {
       });
       cfg = { ...cfg, mode: "off" };
     }
+    const dev = readDevHarness(env);
     return new StrangerService({
       config: () => cfg,
       passes: new StrangerPasses(),
-      age: new AgeVerification({ store, config: () => cfg, childSafety, pepper }),
-      verifyMatrix: (t) => verifyOpenIdToken(t, cfg.matrixUserinfoUrl),
+      age: new AgeVerification({ store, config: () => cfg, childSafety, pepper, ...(dev.fakeIdentity ? { api: new DevIdentity() } : {}) }),
+      verifyMatrix: devMatrixVerifier((t) => verifyOpenIdToken(t, cfg.matrixUserinfoUrl), dev),
       store,
     });
   }
@@ -374,7 +398,16 @@ export class StrangerService {
   }
 
   visible(code: unknown): boolean {
+    const h = this.hostsOn();
+    if (h) return h.codeVisible(code);
     return strangerVisible(this.config(), code);
+  }
+
+  /** Is the meetup a game was matched at still running? */
+  runVisible(seats: StrangerRunSeats): boolean {
+    const h = this.hostsOn();
+    if (h && seats.eventId) return h.eventLive(seats.eventId);
+    return this.visible(seats.meetupCode);
   }
 
   /**
@@ -394,7 +427,7 @@ export class StrangerService {
     return p;
   }
 
-  async issuePass(openIdToken: unknown, meetup: unknown, ip?: string): Promise<{ pass: string } | { status: number; error: string }> {
+  async issuePass(openIdToken: unknown, meetup: unknown, ip?: string, ackToken?: unknown): Promise<{ pass: string } | { status: number; error: string; card?: unknown }> {
     if (!this.visible(meetup)) return { status: 404, error: "Not found" };
     if (ip && (await this.age.ipBanned(ip))) return { status: 403, error: "stranger mode isn't available here." };
     const subject = await this.verifyMatrix(openIdToken);
@@ -402,6 +435,12 @@ export class StrangerService {
     const pool = await this.age.adultForPool(subject);
     if (pool.reason === "banned") return { status: 403, error: "This account can't use stranger mode." };
     if (pool.reason === "minor") return { status: 403, error: "Stranger mode is for adults only." };
+    const h = this.hostsOn();
+    if (h) {
+      // The card comes first (host tools spec §3.1): no pass without an acknowledgement of its current version.
+      const bound = await h.bindAck(ackToken, normalizeMeetupCode(meetup), await this.age.subjectHash(subject));
+      if (!bound.ok) return { status: 409, error: "Please read the meetup card first.", ...(bound.card ? { card: bound.card } : {}) };
+    }
     return { pass: this.passes.issue(subject, normalizeMeetupCode(meetup)) };
   }
 

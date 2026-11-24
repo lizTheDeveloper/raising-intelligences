@@ -41,11 +41,11 @@ export function createStrangerRoutes(stranger: StrangerService, limit: RequestHa
   });
 
   router.post("/stranger/pass", limit, async (req: Request, res: Response, next: NextFunction) => {
-    const { openIdToken, meetup } = (req.body ?? {}) as { openIdToken?: unknown; meetup?: unknown };
+    const { openIdToken, meetup, ackToken } = (req.body ?? {}) as { openIdToken?: unknown; meetup?: unknown; ackToken?: unknown };
     if (!stranger.visible(meetup)) return void hide(next);
-    const r = await stranger.issuePass(openIdToken, meetup, req.ip ?? undefined);
+    const r = await stranger.issuePass(openIdToken, meetup, req.ip ?? undefined, ackToken);
     if ("pass" in r) return void res.json({ pass: r.pass });
-    res.status(r.status).json({ error: r.error });
+    res.status(r.status).json({ error: r.error, ...(r.card ? { card: r.card } : {}) });
   });
 
   router.post("/stranger/me", limit, async (req: Request, res: Response, next: NextFunction) => {
@@ -101,7 +101,7 @@ export function createStrangerRoutes(stranger: StrangerService, limit: RequestHa
     if (!childName) return void res.status(400).json({ error: "Name the child you'd like to raise." });
     const displayName = clean(body.displayName, 30) || "a parent";
     const r = await m.join(p.subject, p.meetupCode, displayName, childName);
-    if (!r.ok) return void res.status(r.status).json({ error: r.error });
+    if (!r.ok) return void res.status(r.status).json({ error: r.error, ...(r.card ? { card: r.card } : {}) });
     res.json(m.poll(p.subject));
   });
 

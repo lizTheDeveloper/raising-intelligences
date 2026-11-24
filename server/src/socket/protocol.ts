@@ -155,6 +155,12 @@ export interface ViewerState {
   payment: { status: "due" | "paid" | "refunded"; youPay: boolean; amountCents: number } | null;
   /** A stranger-mode game: no invite link, no handoff, seats bound to their matched adults. */
   strangerRun?: boolean;
+  /**
+   * A stranger game at a host-tools meetup: which end screens follow the
+   * report card. `handles`: the handle exchange; `share`: the share step;
+   * `learning`: the studio-learning question.
+   */
+  meetupEnd?: { handles: boolean; share: boolean; learning: boolean };
 }
 
 /** Server → room co-presence broadcast, emitted to the *other* player only. */
