@@ -37,6 +37,8 @@ export const DERIVED_RUN = 6;
 export const QUOTED_WORDS = 2;
 export const PARAPHRASE_STEMS = 3;
 export const PRIVATE_ONLY_STEMS = 2;
+/** Private-only words may be short ("car", "hit"): being absent from everything said in the open is the signal. */
+const PRIVATE_ONLY_MIN = 3;
 export const MAX_DROPPED = 0.4;
 const VOICES = "## The Voices in Their Head";
 const QUOTES = "## Notable Quotes That Stuck";
@@ -203,9 +205,9 @@ function copiedSpans(text: string, banned: Set<string>, n: number): Span[] {
 
 const SECRET = /\b(secrets?|secretly|confid(?:e|ed|es|ing|ant|ante|ants|ential|entially)|privately|in private|never told|confess\w*|just between)\b/i;
 
-function stems(text: string, exclude: Set<string>): Set<string> {
+function stems(text: string, exclude: Set<string>, minLength = 4): Set<string> {
   const out = new Set<string>();
-  for (const w of normaliseWords(text)) if (w.length >= 4 && !STOP.has(w) && !exclude.has(w)) out.add(stem(w));
+  for (const w of normaliseWords(text)) if (w.length >= minLength && !STOP.has(w) && !exclude.has(w)) out.add(stem(w));
   return out;
 }
 
@@ -382,7 +384,7 @@ function scrubPart(text: string, checks: Checks): string | null {
       : SECRET.test(s) ? "secret"
       : nameProblem(s, checks.names) ? "name"
       : checks.privateStems.some((p) => shared(mine, p) >= PARAPHRASE_STEMS) ? "paraphrase"
-      : checks.privateOnly.some((p) => shared(mine, p) >= PRIVATE_ONLY_STEMS) ? "private-only words"
+      : checks.privateOnly.some((p) => shared(stems(s, checks.stemExclude, PRIVATE_ONLY_MIN), p) >= PRIVATE_ONLY_STEMS) ? "private-only words"
       : null;
     if (reason) { dropped.add(u); checks.explain?.push({ reason, sentence: s }); }
   }
@@ -472,13 +474,13 @@ export function buildShareSnapshot(
   const stemExclude = new Set([...child, ...playerWords]);
   // Words the game says in the open: shared chat (typed lines that aren't private talk), scenes, the child's shared lines.
   const privateSet = new Set(src.privateTalk);
-  const openStems = stems([...src.typed.filter((t) => !privateSet.has(t)), ...src.scenes, ...src.childLines].join("\n"), new Set());
+  const openStems = stems([...src.typed.filter((t) => !privateSet.has(t)), ...src.scenes, ...src.childLines].join("\n"), new Set(), PRIVATE_ONLY_MIN);
   const checks: Checks = {
     typedRuns: runSet([...src.typed, ...src.privateTalk], TYPED_RUN),
     derivedRuns: runSet(src.derived, DERIVED_RUN),
     privateStems: privateSentences.map((s) => stems(s, stemExclude)).filter((s) => s.size >= PARAPHRASE_STEMS),
     privateOnly: privateSentences
-      .map((s) => new Set([...stems(s, stemExclude)].filter((x) => !openStems.has(x))))
+      .map((s) => new Set([...stems(s, stemExclude, PRIVATE_ONLY_MIN)].filter((x) => !openStems.has(x))))
       .filter((s) => s.size >= PRIVATE_ONLY_STEMS),
     stemExclude,
     explain,

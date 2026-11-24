@@ -208,6 +208,14 @@ describe("the share snapshot", () => {
       expect(s.epilogue).not.toContain("Gary");
     });
 
+    it("real-LLM game 2: a short private-only word counts (mother crying in the car)", () => {
+      const priv = "grandma rosalind is sick in the hospital in spokane and mommy cries in the car every night but it is our little secret";
+      const s = buildShareSnapshot(null, `Ollie wonders if his anger hides a deeper sadness, much like their mother crying in the car.${fill}`, sources({
+        typed: [priv], privateTalk: [priv], derived: [], childName: "Ollie", scenes: ["Your mother, Nana Diane, waits in the kitchen."],
+      }));
+      expect(s.epilogue).not.toContain("crying in the car");
+    });
+
     it("family and person words count in the overlap and paraphrase checks", () => {
       const priv = "my dad hit my mother at home when I was a boy";
       const s = buildShareSnapshot(null, `Her dad hit her mother at home when she was small.${fill}`, sources({ typed: [priv], privateTalk: [priv], derived: [], childName: "Juniper" }));
