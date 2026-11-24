@@ -112,7 +112,7 @@ export function asShareMessage(v: unknown): ShareMessage | null {
 
 export const shareQuestion = (host: string) => `make a share code for ${host}?`;
 export const shareExplains = (host: string) =>
-  `a share code lets ${host} read part of your report card (your child's personality, strengths and struggles) and your child's epilogue. both were written from your whole game, including your private talks with your child, so they can reflect them. we take out every sentence that quotes anyone or repeats five or more of your words in a row, and we try to take out every name either of you typed and anything that retells your private talks. your names become "Parent 1" and "Parent 2".`;
+  `a share code lets ${host} read part of your report card (your child's personality, strengths and struggles) and your child's epilogue. both were written from your whole game, including what each of you said in private, so they can reflect it. we take out every sentence that quotes anyone or repeats five or more of your words in a row, and we try to take out every name either of you typed and anything that retells what you said in private. your names become "Parent 1" and "Parent 2".`;
 export const SHARE_SILENCE =
   "RI won't tell your co-parent what you chose. if one of you says yes and no code appears, that can mean the other said no, or is deciding later, or that this game can't make a code. RI never says which.";
 export const previewButton = (host: string) => `show me exactly what ${host} would see`;
@@ -445,11 +445,16 @@ export function hostForEvent(meetups: AccountMeetup[], eventName: string): strin
   return meetups.find((m) => m.name === eventName && m.card?.hostName)?.card?.hostName ?? "your host";
 }
 
-/** "report this host": the one host's name when every card agrees on it. */
-export function reportHostName(meetups: AccountMeetup[]): string {
+/** Who a report is about: the one host's name when every card agrees on it; null when no card names one (studio events). */
+export function reportHostName(meetups: AccountMeetup[]): string | null {
   const names = new Set(meetups.map((m) => m.card?.hostName).filter((n): n is string => !!n));
-  return names.size === 1 ? [...names][0] : "the host";
+  return names.size === 0 ? null : names.size === 1 ? [...names][0] : "the host";
 }
+
+/** The report link: a studio event has no host, so it's a problem told to the studio. */
+export const reportLabel = (host: string | null) => (host ? `report ${host}` : "tell the studio about a problem");
+export const reportIntro = (host: string | null) =>
+  `tell the studio what happened. a person reads every report.${host ? ` ${host} isn't told who sent it.` : ""}`;
 
 // ---- The host's code view ----
 

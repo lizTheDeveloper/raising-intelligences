@@ -12,7 +12,9 @@
  *
  * Pulls 6 real kid_family_chat prompts from Langfuse (cached locally after
  * first run), runs each candidate model, scores responses for archetype
- * convergence, and prints a comparison table.
+ * convergence, and prints a comparison table. Every request asks OpenRouter
+ * for providers that don't keep or train on prompts (benchmarkRequest), so a
+ * model that has none fails rather than receives real players' words.
  */
 
 import { writeFile, readFile, mkdir } from "node:fs/promises";
@@ -21,7 +23,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import OpenAI from "openai";
 import { fetchHeldTraceIds, filterHeldObservations } from "../server/src/observability/child-safety-exclusion.js";
-import { fetchAnalysisAllowlist, fetchHostedTraces, filterHostedObservations, gameTaggedTraceIds, hostedTraceIdsToDrop } from "../server/src/observability/hosted-analysis.js";
+import { benchmarkRequest, fetchAnalysisAllowlist, fetchHostedTraces, filterHostedObservations, gameTaggedTraceIds, hostedTraceIdsToDrop } from "../server/src/observability/hosted-analysis.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CACHE_DIR = join(__dirname, ".prompt-cache");
@@ -218,8 +220,9 @@ async function callModel(
   }
 
   try {
+    // OpenRouter-only field: route to providers that don't keep or train on prompts.
     const response = await client.chat.completions.create(
-      { model, messages: msgs, max_tokens: 500 },
+      benchmarkRequest(model, msgs) as OpenAI.ChatCompletionCreateParamsNonStreaming,
       { signal: AbortSignal.timeout(60_000) }
     );
     const text = response.choices[0]?.message?.content ?? "";

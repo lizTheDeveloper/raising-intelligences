@@ -9,6 +9,7 @@ import {
   statusNote,
   type MeetupCard,
 } from "../meetupCard";
+import { reportIntro, reportLabel } from "../shareCodes";
 
 /**
  * The meetup event card (host tools spec §3.2), shown first on `?meetup=`.
@@ -69,10 +70,10 @@ export function CardTerms({ card, headingLevel = 1 }: { card: MeetupCard; headin
 }
 
 /**
- * "report this host" (spec §B.5): POST /events/report-host. The meetup code
+ * "report {host}", or "tell the studio about a problem" at a studio event (spec §B.5): POST /events/report-host. The meetup code
  * goes with it when there is one; the account page has none to send.
  */
-export function ReportHost({ host, meetup, onBack }: { host: string; meetup?: string; onBack: () => void }) {
+export function ReportHost({ host, meetup, onBack }: { host: string | null; meetup?: string; onBack: () => void }) {
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,8 +110,8 @@ export function ReportHost({ host, meetup, onBack }: { host: string; meetup?: st
 
   return (
     <div className="lobby stranger-mode event-card">
-      <h1>report this host</h1>
-      <p>tell the studio what happened. a person reads every report. {host} isn't told who sent it.</p>
+      <h1>{reportLabel(host)}</h1>
+      <p>{reportIntro(host)}</p>
       <form onSubmit={sendReport} className="event-card-report">
         <textarea
           className="event-card-textarea"
@@ -147,7 +148,6 @@ export function EventCard({ card, meetup, changed, onCardReplaced, onAcked, onNo
   const [view, setView] = useState<View>("card");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const host = card.hostName ?? "the host";
   const conduct = safeHttpsUrl(card.conductUrl);
   const note = statusNote(card.status);
 
@@ -183,7 +183,7 @@ export function EventCard({ card, meetup, changed, onCardReplaced, onAcked, onNo
 
   const backToCard = () => { setError(null); setView("card"); };
 
-  if (view === "report") return <ReportHost host={host} meetup={meetup} onBack={backToCard} />;
+  if (view === "report") return <ReportHost host={card.hostName} meetup={meetup} onBack={backToCard} />;
 
   return (
     <div className="lobby stranger-mode event-card" data-testid="event-card">
@@ -211,7 +211,7 @@ export function EventCard({ card, meetup, changed, onCardReplaced, onAcked, onNo
       <p className="event-card-links">
         <button className="btn-link" onClick={() => void acknowledge(true)} disabled={busy} data-testid="btn-card-ready">get ready early</button>
         {" · "}
-        <button className="btn-link" onClick={() => { setError(null); setView("report"); }} data-testid="btn-card-report">report this host</button>
+        <button className="btn-link" onClick={() => { setError(null); setView("report"); }} data-testid="btn-card-report">{reportLabel(card.hostName)}</button>
         {conduct && (
           <>
             {" · "}

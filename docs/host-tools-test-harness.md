@@ -17,6 +17,7 @@ export RI_STRANGER_ALLOW_TEST_IDENTITY=true             # ...which is a test-mod
 export RI_DEV_MOCK_LLM=true                             # canned scenes and replies: no model calls
 # optional: export RI_MEETUP_CODES=tea-party            # listed codes become studio level-0 events
 # optional: export DATABASE_URL=postgres://…            # needed for the admin screen; keeps data across restarts
+# optional: export RI_PUBLIC_BASE_URL=http://localhost:5183   # only if the client isn't on :5173 (see notes)
 npm run dev                                             # server :3000 (or $PORT), client :5173
 ```
 
@@ -24,6 +25,8 @@ Notes:
 - **Where data lives.** With no `DATABASE_URL`, everything is in memory, so events vanish when `tsx watch` restarts the server after an edit. To keep them, point `DATABASE_URL` at a scratch Postgres; migrations, including `034-host-tools.sql`, run at start.
 - **Using a real model.** Leave out `RI_DEV_MOCK_LLM`. Real play then uses the usual `OPENROUTER_API_KEY` / `MODEL_TIER` settings.
 - **Seeing trace tags.** The canned model goes through the same Langfuse tracer as the real one, so its traces carry the same `game_id:<id>`, `hosted_no_analysis` and `child_safety_hold` tags. With no Langfuse configured the tracer does nothing, unless you set `RI_DEV_TRACE_FILE=/some/path.jsonl`: every trace the server would send (tags, metadata and the redacted prompt) is then appended there as JSON lines. `jq -c 'select(.type=="trace") | .tags' /some/path.jsonl` lists the tags. Like the other dev flags, it is refused in production. A local Langfuse (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASEURL`) takes precedence over the file. A trace that would name no game is never written; the server logs `llm_trace_refused_no_game_id` instead.
+- **A client on another port.** After the ID check, the browser goes back to `RI_PUBLIC_BASE_URL`, which defaults to `http://localhost:5173`. If the client runs anywhere else (a second worktree on :5183, say), set `RI_PUBLIC_BASE_URL` to its address, or the return lands on a dead port and the page is blank.
+- **The real model's card.** The canned report card has Personality, Strengths and Struggles, so a local share preview shows a card. A real model's card goes through the same scrub (`server/src/hosts/share-snapshot.ts`); pass an `explain` array to `buildShareSnapshot` to see each dropped sentence and why.
 - **Stripe Identity is never faked in production.** The fake produces test-mode results, which `RI_STRANGER_ALLOW_TEST_IDENTITY` admits only outside production, because production forces that flag off. Production needs a real `RI_STRIPE_IDENTITY_KEY` (an `rk_` restricted key).
 
 ## 2. Create a host (or guest reader) and an event
@@ -83,7 +86,7 @@ Each player needs their own browser storage. Use a normal window and a private w
 
 1. **Player A:** open `http://localhost:5173/?meetup=<code>&devmxid=@ash:local`. The `devmxid` shim exists only in dev builds. It signs in as `@ash:local` and is remembered in that window's localStorage.
 2. **Player B:** open `http://localhost:5173/?meetup=<code>&devmxid=@bea:local` in the other window.
-3. **Each player:** read the event card, then choose **sounds good, continue**. Then agree to the ID check (it returns at once), name the child, and join the queue.
+3. **Each player:** read the event card, then choose **sounds good, continue**. Then agree to the ID check (it returns at once). The queue form asks first what your co-parent should call you (any name), then the child's name; then join the queue.
 4. **The pair:** both land in the same game. With `RI_DEV_MOCK_LLM=true`, every scene and reply is canned, so playing to the report card costs nothing.
 
 To check the host side: a host, guest reader or promoter who joins their own event's queue gets "stranger mode isn't available here."

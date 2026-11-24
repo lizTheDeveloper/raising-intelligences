@@ -17,7 +17,7 @@ async function call<T>(path: string, body: unknown): Promise<{ status: number; b
 }
 
 type Poll =
-  | { status: "waiting"; position: number; count: number }
+  | { status: "waiting"; others: boolean }
   | { status: "matched"; gameId: string; slot: string; playerToken: string; partnerName: string }
   | { status: "none" }
   /** Host tools: the meetup closed while waiting (no reason is given). */
@@ -127,7 +127,7 @@ export function StrangerQueue({ pass, meetup, onBack, onCardChanged, accountLink
       <div className="lobby stranger-mode" role="status" aria-live="polite">
         <h1>finding a co-parent…</h1>
         <p className="dim">
-          {poll.count <= 1 ? "you're the first one here. someone will join soon." : `${poll.count} people are waiting here.`}
+          {poll.others ? "other people are waiting here too. you'll be paired as soon as you can be." : "you're the first one here. someone will join soon."}
         </p>
         <p className="dim">when you're paired you'll go straight into the game.</p>
         <button className="btn btn-secondary" onClick={leave}>stop looking</button>
@@ -147,7 +147,7 @@ export function StrangerQueue({ pass, meetup, onBack, onCardChanged, accountLink
       <h1>you're checked</h1>
       <p className="dim">you'll be paired with the next adult here. if you're paired with someone who came before you, they'll name the child.</p>
       <form onSubmit={join} className="start-form">
-        <input className="name-input" placeholder="your first name" maxLength={30} value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+        <input className="name-input" placeholder="what should your co-parent call you? (any name)" aria-label="what should your co-parent call you? (any name)" maxLength={30} value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
         <input className="name-input" placeholder="a name for the child" maxLength={40} required value={childName} onChange={(e) => setChildName(e.target.value)} />
         {error && <p className="error">{error}</p>}
         <button className="btn" type="submit" data-testid="btn-stranger-queue">find a co-parent</button>

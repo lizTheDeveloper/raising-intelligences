@@ -1,11 +1,11 @@
 /**
  * Games played at a host-tools meetup are never analysed by default (host
  * tools spec, H18). Every Langfuse trace for such a game carries
- * HOSTED_NO_ANALYSIS_TAG. Anything that reads Langfuse in bulk (the ri-devlog
- * skill, scripts/model-search.ts, any agent export) drops those traces unless
- * the game is on the analysis allow-list: a studio-event game where both
- * players said yes to studio learning, and that isn't excluded
- * (GET /api/admin/host-tools/analysis-allowlist).
+ * HOSTED_NO_ANALYSIS_TAG. The ri-devlog skill drops every one of them: no
+ * meetup game is ever in a blog post. Other bulk readers (scripts/model-search.ts,
+ * internal review) drop them unless the game is on the analysis allow-list: a
+ * studio-event game where both players said yes to studio learning, and that
+ * isn't excluded (GET /api/admin/host-tools/analysis-allowlist).
  *
  * Without the allow-list (no admin URL or token), a reader drops every hosted
  * trace: it fails closed.
@@ -103,4 +103,18 @@ export async function fetchAnalysisAllowlist(baseUrl: string | undefined, adminT
   } catch {
     return new Set();
   }
+}
+
+/**
+ * OpenRouter's provider preference that routes only to providers that don't
+ * store or train on prompts. Anything that replays real prompts to other
+ * models (scripts/model-search.ts) sends it, so an allow-listed game is never
+ * "used to train AI", as the studio-learning card promises. A model with no
+ * such provider fails instead.
+ */
+export const NO_TRAINING_ROUTE = { data_collection: "deny" } as const;
+
+/** The body of a benchmark chat completion: always with NO_TRAINING_ROUTE. */
+export function benchmarkRequest<M>(model: string, messages: M[]): { model: string; messages: M[]; max_tokens: number; provider: typeof NO_TRAINING_ROUTE } {
+  return { model, messages, max_tokens: 500, provider: NO_TRAINING_ROUTE };
 }
