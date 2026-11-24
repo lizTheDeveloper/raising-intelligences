@@ -23,6 +23,7 @@ npm run dev                                             # server :3000 (or $PORT
 Notes:
 - **Where data lives.** With no `DATABASE_URL`, everything is in memory, so events vanish when `tsx watch` restarts the server after an edit. To keep them, point `DATABASE_URL` at a scratch Postgres; migrations, including `034-host-tools.sql`, run at start.
 - **Using a real model.** Leave out `RI_DEV_MOCK_LLM`. Real play then uses the usual `OPENROUTER_API_KEY` / `MODEL_TIER` settings.
+- **Seeing trace tags.** The canned model goes through the same Langfuse tracer as the real one, so its traces carry the same `game_id:<id>`, `hosted_no_analysis` and `child_safety_hold` tags. With no Langfuse configured the tracer does nothing, unless you set `RI_DEV_TRACE_FILE=/some/path.jsonl`: every trace the server would send (tags, metadata and the redacted prompt) is then appended there as JSON lines. `jq -c 'select(.type=="trace") | .tags' /some/path.jsonl` lists the tags. Like the other dev flags, it is refused in production. A local Langfuse (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASEURL`) takes precedence over the file. A trace that would name no game is never written; the server logs `llm_trace_refused_no_game_id` instead.
 - **Stripe Identity is never faked in production.** The fake produces test-mode results, which `RI_STRANGER_ALLOW_TEST_IDENTITY` admits only outside production, because production forces that flag off. Production needs a real `RI_STRIPE_IDENTITY_KEY` (an `rk_` restricted key).
 
 ## 2. Create a host (or guest reader) and an event
@@ -97,7 +98,7 @@ To check the host side: a host who joins their own event's queue gets "stranger 
 ## 3d. Studio learning, unlinking and the purge
 
 - **Studio learning:** create a studio event with `"studioLearning":true` (a level-3 studio event also needs a guest reader for share codes). After the report card, and after the share step if there is one, each seat is asked "can the studio learn from your game?". Either answer gets "thanks. that's noted." The co-parent sees nothing, and the first answer stands. Each player's account page shows their own answer.
-- **What the studio may read:** `curl -H "$AUTH" $BASE/api/admin/host-tools/analysis-allowlist` → `{"games":[...]}`. A game is listed only when it's at a studio event, both seats said yes, and nothing excludes it (the same exclusions as share codes). Every Langfuse trace of a game at any event is tagged `hosted_no_analysis`. `scripts/model-search.ts` and the ri-devlog skill drop those traces unless the game is on this list. The script reads the list with `RI_ADMIN_URL` and `ADMIN_TOKEN`; without them it drops every hosted trace.
+- **What the studio may read:** `curl -H "$AUTH" $BASE/api/admin/host-tools/analysis-allowlist` → `{"games":[...]}`. A game is listed only when it's at a studio event, both seats said yes, and nothing excludes it (the same exclusions as share codes). Every Langfuse trace of a game at any event is tagged `hosted_no_analysis` (check it locally with `RI_DEV_TRACE_FILE`, section 1). `scripts/model-search.ts` and the ri-devlog skill drop those traces unless the game is on this list. The script reads the list with `RI_ADMIN_URL` and `ADMIN_TOKEN`; without them it drops every hosted trace.
 - **Take this game off my account:** on the account page, a player chooses "take this game off my account" for a game, then confirms. Their code stops opening at once, and the co-parent's row doesn't change. The request then waits for the studio:
   ```bash
   curl -s -H "$AUTH" $BASE/api/admin/host-tools/unlink-requests            # id, when, event name: no player ids
@@ -123,8 +124,10 @@ On the Mac, run only the host tests; send the full suite to the vast box.
 
 ```bash
 cd server
-npx vitest run tests/host-*.test.ts tests/langfuse-hosted-and-landmine.test.ts tests/dev-harness.test.ts
+npx vitest run tests/host-*.test.ts tests/langfuse-hosted-and-landmine.test.ts tests/langfuse-game-id-production-path.test.ts tests/dev-harness.test.ts
 DATABASE_URL=postgres://… npx vitest run --no-file-parallelism tests/*pg*.test.ts   # Postgres store, migrations 034–035
 ```
+
+`tests/langfuse-game-id-production-path.test.ts` checks trace tags on the production path: `new HostHarness({ wrapLlm: (m) => traceAppLlm(m, "standard") })` wraps the canned model exactly as `index.ts` does, and `tests/helpers/langfuse-sink.ts` is a Langfuse stand-in over HTTP that the real SDK posts to (it also answers `GET /api/public/traces?tags=…`).
 
 `tests/helpers/host-tools.ts` (`HostHarness`) boots the whole app with stranger mode, a fake ID check, a switchable paywall and host tools. It drives players through the real routes: `h.event()`, `h.arrive()`, `h.queue()`, and `h.pair()`, which matches two adults and seats them both.

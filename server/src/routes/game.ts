@@ -24,6 +24,7 @@ import type { GameRepository } from "../db/repository.js";
 import { generateFirstPortrait, generateNextPortrait, PORTRAITS_DIR } from "../portrait-gen.js";
 import { logger } from "../logger.js";
 import { generatePersonalitySeed, inferGender } from "../game/personality.js";
+import { runInGameContext } from "../observability/trace-context.js";
 import { withGameLock } from "../lib/game-lock.js";
 import { initSSE, sseChunk, sseDone, sseError, sseTerminated } from "../lib/sse.js";
 import { resolveGame as sharedResolveGame } from "../lib/resolve-game.js";
@@ -189,7 +190,8 @@ export function createGameRoutes(
     // Kick off gender inference and portrait generation in parallel. Scene 1 is
     // deliberately not prefetched here: it must be built after the personality
     // seed exists, so /next-event generates it via engine.startEvent.
-    inferGender(engine.llm, childName).then((gender) =>
+    // The new game's id is known only now: POST /game isn't under /api/game/:id.
+    runInGameContext(state.id, () => inferGender(engine.llm, childName)).then((gender) =>
       // The LLM call above runs outside the lock; only the check, save and
       // portrait kickoff are serialized with DELETE (which holds the same
       // lock), so a save can never land after a delete and recreate the row.

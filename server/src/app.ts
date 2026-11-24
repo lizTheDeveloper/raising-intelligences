@@ -33,6 +33,7 @@ import { createPartnerPaymentRoutes, createStripeWebhookRoute, STRIPE_WEBHOOK_PA
 import { PartnerPayments } from "./payments/partner-payments.js";
 import type { AdminQueries } from "./db/admin-queries.js";
 import { ConversationEngine } from "./game/conversation-engine.js";
+import { runInGameContext } from "./observability/trace-context.js";
 import { EndgameEngine } from "./game/endgame-engine.js";
 import type { LLMClient } from "./llm/client.js";
 import { registerSocketHandlers } from "./socket/handlers.js";
@@ -295,6 +296,9 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     const mine = all.find((p) => safeEqual(p.token, token));
     return { seated: true, slot: mine?.slot ?? null };
   };
+  // Every /api/game/:id request runs as work for that game, so its model
+  // calls are traced under the game's id (observability/trace-context.ts).
+  app.use("/api/game/:id", (req, _res, next) => runInGameContext(String(req.params.id ?? ""), () => next()));
   // A stranger game is played over the socket only, where every seat is bound
   // to its verified adult. REST writes name no seat holder, so none are
   // accepted for one (reads stay open: the game id reaches only the pair).

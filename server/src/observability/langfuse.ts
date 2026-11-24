@@ -22,6 +22,11 @@ import { ChildSeedClient } from "../llm/child-seed-client.js";
 import { CHILD_SAFETY_HOLD_TAG, isGameHeldInProcess } from "./child-safety-exclusion.js";
 import { HOSTED_NO_ANALYSIS_TAG, isGameHosted } from "./hosted-analysis.js";
 import { PRESSURE_POINT_HEADER, PRESSURE_POINT_OPEN, PRESSURE_POINT_CLOSE } from "../game/pressure-point.js";
+import { currentGameId } from "./trace-context.js";
+import { captureException } from "./sentry.js";
+import { devTraceFile } from "../dev/harness.js";
+import { FileTraceSink } from "../dev/trace-file-sink.js";
+import { logger } from "../logger.js";
 
 /**
  * Metadata carried by a traced client. Used both for trace tags
@@ -38,7 +43,20 @@ export interface TraceMetadata {
   kidModel?: string;
 }
 
-let cachedClient: Langfuse | null = null;
+/**
+ * What TracedLLMClient and holdGameTraces use of the Langfuse SDK: the real
+ * client, or, in local dev only, the RI_DEV_TRACE_FILE capture sink.
+ */
+export interface TraceSink {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  trace(body: { id?: string; name?: string; tags?: string[]; metadata?: any }): {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    generation(body: any): { end(body?: any): unknown };
+  };
+  flushAsync(): Promise<void>;
+}
+
+let cachedClient: TraceSink | null = null;
 let initialized = false;
 
 /**
@@ -55,7 +73,7 @@ let initialized = false;
  * with no retention/DPA guarantees (issue #140). Point it at the self-hosted
  * instance (see `langfuse/docker-compose.yml`) to enable tracing.
  */
-export function getLangfuseClient(): Langfuse | null {
+export function getLangfuseClient(): TraceSink | null {
   if (initialized) return cachedClient;
   initialized = true;
 
@@ -64,7 +82,9 @@ export function getLangfuseClient(): Langfuse | null {
   const baseUrl = process.env.LANGFUSE_BASEURL ?? process.env.LANGFUSE_HOST;
 
   if (!publicKey || !secretKey || !baseUrl) {
-    cachedClient = null;
+    // Local dev only (refused in production): capture to a file instead.
+    const file = devTraceFile();
+    cachedClient = file ? new FileTraceSink(file) : null;
     return cachedClient;
   }
 
@@ -175,9 +195,28 @@ function buildTags(metadata: TraceMetadata): string[] {
 }
 
 /**
+ * A trace that names no game can't be tagged `hosted_no_analysis` or
+ * `child_safety_hold`, so no reader could ever drop it. Such a trace is never
+ * sent (fail closed), and the refusal is reported so the missing context gets
+ * fixed. Every LLM role in RI is game-scoped.
+ */
+function refuseTrace(msg: string, fields: Record<string, unknown>): void {
+  logger.error(msg, fields);
+  captureException(new Error(msg), { tags: { component: "langfuse", role: String(fields.role ?? "") } });
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Generation = { end: (args: any) => unknown };
+
+/**
  * Decorates any `LLMClient`, wrapping each call in a Langfuse trace +
  * generation. When Langfuse is unconfigured, every method delegates directly
  * to the inner client with zero observable difference.
+ *
+ * Every trace names its game: from this client's metadata (withContext,
+ * withChildSeed) or, for the app's shared client, from the async context the
+ * request or socket event set up (observability/trace-context.ts). A call with
+ * neither, or with two different games, is not traced at all (`scope`).
  */
 export class TracedLLMClient implements LLMClient {
   constructor(
@@ -197,13 +236,12 @@ export class TracedLLMClient implements LLMClient {
 
   /**
    * Returns a ChildSeedClient that rotates kid models for this gameId, drawn
-   * from the DB pool for `this.tier`. Non-kid roles pass through to this
-   * TracedLLMClient's own inner client unchanged, so tracing/provider-routing
-   * behavior for every other role is identical to calling this client directly.
+   * from the DB pool for `this.tier`. Non-kid roles pass through to a
+   * TracedLLMClient scoped to the same game, so every trace it makes names it.
    */
   withChildSeed(gameId: string): ChildSeedClient {
     const tier = this.tier ?? "standard";
-    return new ChildSeedClient(this, tier, gameId);
+    return new ChildSeedClient(this.withContext({ gameId }), tier, gameId);
   }
 
   /**
@@ -241,48 +279,74 @@ export class TracedLLMClient implements LLMClient {
     try { return selectModel(role, this.tier); } catch { return undefined; }
   }
 
-  async streamResponse(
-    system: string,
-    messages: Array<{ role: "user" | "assistant"; content: string }>,
-    onChunk: (chunk: string) => void,
-    role?: LLMRole
-  ): Promise<string> {
+  /**
+   * The metadata for this call's trace, with its game, or null when it must
+   * not be traced: no game anywhere, or this client's game and the async
+   * context's game disagree (a client scoped to one game used while working
+   * for another, which would file one game's text under the other's id).
+   */
+  private scope(role?: LLMRole): TraceMetadata | null {
     const metadata = this.mergeRole(role);
-    const client = getLangfuseClient();
-    if (!client) {
-      return this.inner.streamResponse(system, messages, onChunk, role);
+    const fromContext = currentGameId();
+    if (metadata.gameId && fromContext && metadata.gameId !== fromContext) {
+      refuseTrace("llm_trace_refused_game_mismatch", { role: metadata.role, clientGameId: metadata.gameId, contextGameId: fromContext });
+      return null;
     }
+    const gameId = metadata.gameId ?? fromContext;
+    if (!gameId) {
+      refuseTrace("llm_trace_refused_no_game_id", { role: metadata.role });
+      return null;
+    }
+    return { ...metadata, gameId };
+  }
 
+  /** Opens this call's trace and generation, or returns undefined when it isn't traced. `input` is built only when it is. */
+  private start(call: string, role: LLMRole | undefined, input: () => unknown, extra: Record<string, unknown> = {}): Generation | undefined {
+    const client = getLangfuseClient();
+    if (!client) return undefined;
+    const metadata = this.scope(role);
+    if (!metadata) return undefined;
     const model = this.resolveModel(role);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let generation: { end: (args: any) => void } | undefined;
     try {
       const trace = client.trace({
-        name: this.traceName("stream", role),
+        name: this.traceName(call, role),
         tags: buildTags(metadata),
         metadata: { ...metadata },
       });
-      generation = trace.generation({
+      return trace.generation({
         name: metadata.role ?? "llm",
-        input: {
-          system: redactPressurePoint(system),
-          messages: messages.map((m) => ({ ...m, content: redactIfConfessional(role, m.content) })),
-        },
+        input: input(),
         ...(model ? { model } : {}),
-        metadata: { ...metadata },
+        metadata: { ...metadata, ...extra },
       });
     } catch {
       // Langfuse SDK error — continue without tracing
+      return undefined;
     }
+  }
 
+  private async finish<T>(generation: Generation | undefined, run: () => Promise<T>): Promise<T> {
     try {
-      const result = await this.inner.streamResponse(system, messages, onChunk, role);
+      const result = await run();
       generation?.end({ output: result });
       return result;
     } catch (err) {
       generation?.end({ output: { error: String(err) }, level: "ERROR" });
       throw err;
     }
+  }
+
+  async streamResponse(
+    system: string,
+    messages: Array<{ role: "user" | "assistant"; content: string }>,
+    onChunk: (chunk: string) => void,
+    role?: LLMRole
+  ): Promise<string> {
+    const generation = this.start("stream", role, () => ({
+      system: redactPressurePoint(system),
+      messages: messages.map((m) => ({ ...m, content: redactIfConfessional(role, m.content) })),
+    }));
+    return this.finish(generation, () => this.inner.streamResponse(system, messages, onChunk, role));
   }
 
   async completeResponse(
@@ -292,75 +356,21 @@ export class TracedLLMClient implements LLMClient {
     role?: LLMRole,
     onChunk?: (chunk: string) => void
   ): Promise<string> {
-    const metadata = this.mergeRole(role);
-    const client = getLangfuseClient();
-    if (!client) {
-      return this.inner.completeResponse(system, userMessage, maxTokens, role, onChunk);
-    }
-
-    const model = this.resolveModel(role);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let generation: { end: (args: any) => void } | undefined;
-    try {
-      const trace = client.trace({
-        name: this.traceName("complete", role),
-        tags: buildTags(metadata),
-        metadata: { ...metadata },
-      });
-      generation = trace.generation({
-        name: metadata.role ?? "llm",
-        input: { system: redactPressurePoint(system), userMessage: redactIfConfessional(role, userMessage) },
-        ...(model ? { model } : {}),
-        metadata: { ...metadata, maxTokens },
-      });
-    } catch {
-      // Langfuse SDK error — continue without tracing
-    }
-
-    try {
-      const result = await this.inner.completeResponse(system, userMessage, maxTokens, role, onChunk);
-      generation?.end({ output: result });
-      return result;
-    } catch (err) {
-      generation?.end({ output: { error: String(err) }, level: "ERROR" });
-      throw err;
-    }
+    const generation = this.start(
+      "complete",
+      role,
+      () => ({ system: redactPressurePoint(system), userMessage: redactIfConfessional(role, userMessage) }),
+      { maxTokens },
+    );
+    return this.finish(generation, () => this.inner.completeResponse(system, userMessage, maxTokens, role, onChunk));
   }
 
-  async completeJson<T>(system: string, userMessage: string, role?: LLMRole): Promise<T> {
-    const metadata = this.mergeRole(role);
-    const client = getLangfuseClient();
-    if (!client) {
-      return this.inner.completeJson<T>(system, userMessage, role);
-    }
-
-    const model = this.resolveModel(role);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let generation: { end: (args: any) => void } | undefined;
-    try {
-      const trace = client.trace({
-        name: this.traceName("complete_json", role),
-        tags: buildTags(metadata),
-        metadata: { ...metadata },
-      });
-      generation = trace.generation({
-        name: metadata.role ?? "llm",
-        input: { system: redactPressurePoint(system), userMessage: redactIfConfessional(role, userMessage) },
-        ...(model ? { model } : {}),
-        metadata: { ...metadata },
-      });
-    } catch {
-      // Langfuse SDK error — continue without tracing
-    }
-
-    try {
-      const result = await this.inner.completeJson<T>(system, userMessage, role);
-      generation?.end({ output: result });
-      return result;
-    } catch (err) {
-      generation?.end({ output: { error: String(err) }, level: "ERROR" });
-      throw err;
-    }
+  async completeJson<T>(system: string, userMessage: string, role?: LLMRole, maxTokens?: number): Promise<T> {
+    const generation = this.start("complete_json", role, () => ({
+      system: redactPressurePoint(system),
+      userMessage: redactIfConfessional(role, userMessage),
+    }));
+    return this.finish(generation, () => this.inner.completeJson<T>(system, userMessage, role, maxTokens));
   }
 
   /** Per-call role (model-config) takes precedence over the context role for
@@ -373,4 +383,14 @@ export class TracedLLMClient implements LLMClient {
     const name = role ?? this.metadata.role ?? "llm";
     return `${name}.${call}`;
   }
+}
+
+/**
+ * The app's one model client: `inner` (the real router, or the dev harness's
+ * canned model) behind the tracer. index.ts builds it with this, and the
+ * production-path tests build theirs with it too, so the canned model's calls
+ * are traced and tagged exactly like real ones.
+ */
+export function traceAppLlm(inner: LLMClient, tier: ModelTier): TracedLLMClient {
+  return new TracedLLMClient(inner, {}, tier);
 }

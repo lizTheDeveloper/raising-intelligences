@@ -34,6 +34,24 @@ export function readDevHarness(env: NodeJS.ProcessEnv = process.env): DevHarness
   return { fakeMatrix, fakeIdentity, mockLlm };
 }
 
+/**
+ * RI_DEV_TRACE_FILE=<path>: with no Langfuse configured, every trace the app
+ * would send (tags, metadata, the redacted prompt) is appended to <path> as
+ * JSON lines instead, so the harness can check trace tags offline. The
+ * canned model goes through the same tracer as the real one (index.ts).
+ * Refused in production, like the other dev flags.
+ */
+export function devTraceFile(env: NodeJS.ProcessEnv = process.env): string | null {
+  const file = env.RI_DEV_TRACE_FILE?.trim();
+  if (!file) return null;
+  if (env.NODE_ENV === "production") {
+    logger.error("dev_harness_refused_in_production", { traceFile: true });
+    return null;
+  }
+  logger.warn("dev_trace_file_on", { file });
+  return file;
+}
+
 /** A canned model for driving games locally for nothing: an endless supply of scenes. */
 export function devMockLlm(): MockLLMClient {
   const mock = new MockLLMClient();
