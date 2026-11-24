@@ -41,11 +41,11 @@ export function createStrangerRoutes(stranger: StrangerService, limit: RequestHa
   });
 
   router.post("/stranger/pass", limit, async (req: Request, res: Response, next: NextFunction) => {
-    const { openIdToken, meetup } = (req.body ?? {}) as { openIdToken?: unknown; meetup?: unknown };
+    const { openIdToken, meetup, ackToken } = (req.body ?? {}) as { openIdToken?: unknown; meetup?: unknown; ackToken?: unknown };
     if (!stranger.visible(meetup)) return void hide(next);
-    const r = await stranger.issuePass(openIdToken, meetup, req.ip ?? undefined);
+    const r = await stranger.issuePass(openIdToken, meetup, req.ip ?? undefined, ackToken);
     if ("pass" in r) return void res.json({ pass: r.pass });
-    res.status(r.status).json({ error: r.error });
+    res.status(r.status).json({ error: r.error, ...(r.card ? { card: r.card } : {}) });
   });
 
   router.post("/stranger/me", limit, async (req: Request, res: Response, next: NextFunction) => {
@@ -101,11 +101,21 @@ export function createStrangerRoutes(stranger: StrangerService, limit: RequestHa
     if (!childName) return void res.status(400).json({ error: "Name the child you'd like to raise." });
     const displayName = clean(body.displayName, 30) || "a parent";
     const r = await m.join(p.subject, p.meetupCode, displayName, childName);
-    if (!r.ok) return void res.status(r.status).json({ error: r.error });
+    if (!r.ok) return void res.status(r.status).json({ error: r.error, ...(r.card ? { card: r.card } : {}) });
     res.json(m.poll(p.subject));
   });
 
   router.post("/stranger/queue/poll", limit, async (req: Request, res: Response, next: NextFunction) => {
+    // Host tools: a meetup that closed (or moved to a new period) under someone
+    // already waiting there. Their own live pass still gets the neutral ending,
+    // or "read the card again", instead of a silent dead end. Anyone else still
+    // sees the never-built answer.
+    const raw = (req.body as { pass?: unknown } | undefined)?.pass;
+    if (stranger.hosts?.active() && (await stranger.resolveLive(raw)) === "hidden") {
+      const held = stranger.passes.resolve(raw);
+      const r = held ? stranger.matching?.pollWaiting(held.subject) : null;
+      if (r) return void res.json(r);
+    }
     const p = await withPass(req, res, next);
     if (!p) return;
     res.json(stranger.matching?.poll(p.subject) ?? { status: "none" });

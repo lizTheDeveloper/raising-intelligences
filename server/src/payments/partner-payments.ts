@@ -91,6 +91,15 @@ export class PartnerPayments {
     return this.builtCheckout.api;
   }
 
+  /**
+   * Children that are never charged whatever the paywall says: a stranger game
+   * at a meetup whose card froze "free" (host tools, H17). Set by buildServer.
+   */
+  private exempt: ((gameId: string) => Promise<boolean>) | null = null;
+  exemptWhen(fn: (gameId: string) => Promise<boolean>): void {
+    this.exempt = fn;
+  }
+
   /** Registered by the socket layer: start the opening once a child is paid. */
   onPaid(listener: (gameId: string) => void): void {
     this.paidListeners.push(listener);
@@ -127,6 +136,7 @@ export class PartnerPayments {
     // Switch off (or no usable key): partner play is free and this is the old
     // flow exactly — not even a database read that could fail.
     if (!this.active()) return true;
+    if (this.exempt && (await this.exempt(gameId))) return true;
     const existing = await this.store.get(gameId);
     this.cache.set(gameId, existing);
     if (existing && existing.status !== "due") return true;
@@ -142,7 +152,7 @@ export class PartnerPayments {
   /** True when a game owes the $20 and must not be advanced by any other path. */
   async owes(gameId: string): Promise<boolean> {
     const row = await this.store.get(gameId);
-    if (row) return row.status === "due" && this.active();
+    if (row) return row.status === "due" && this.active() && !(this.exempt && (await this.exempt(gameId)));
     return false;
   }
 

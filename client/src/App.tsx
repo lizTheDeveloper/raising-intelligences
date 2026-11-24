@@ -9,6 +9,8 @@ import { useMatrixAuth } from "./hooks/useMatrixAuth";
 import { Credits } from "./components/Credits";
 import { StrangerMode } from "./components/StrangerMode";
 import { StrangerQueue } from "./components/StrangerQueue";
+import { EventCard, NotForMe } from "./components/EventCard";
+import { asCard, clearAck, loadAck, urlWithoutMeetup, type MeetupCard } from "./meetupCard";
 
 const TAGLINES = [
   // funny
@@ -174,7 +176,9 @@ const TAGLINES = [
 
 const TAGLINE = TAGLINES[Math.floor(Math.random() * TAGLINES.length)];
 
-type Mode = "choose" | "solo" | "multiplayer" | "stranger";
+// "pending": a ?meetup= link, waiting to hear whether it has an event card.
+// "card" / "notforme": the meetup host tools' card (spec §3), shown first.
+type Mode = "choose" | "solo" | "multiplayer" | "stranger" | "pending" | "card" | "notforme";
 type Theme = "" | "theme-ocean-grunge" | "theme-cyber";
 
 const THEMES: { id: Theme; label: string }[] = [
@@ -200,9 +204,23 @@ export function App() {
   const [meetup, setMeetup] = useState<string | null>(params.get("meetup"));
   const backFromIdCheck = params.get("stranger") === "identity" || params.get("stranger") === "queue";
   const returnRef = params.get("stranger") === "identity" ? params.get("ref") : null;
+  // A meetup link waits for its card before painting anything, so the title
+  // screen (and its title_screen_viewed event) never shows under a card. With
+  // host tools off the card request 404s and this becomes "choose" as before.
+  const arrivedForCard = !!params.get("meetup") && !joinGameId && !backFromIdCheck;
   const [mode, setMode] = useState<Mode>(
-    isSoloResume ? "solo" : joinGameId ? "multiplayer" : backFromIdCheck ? "stranger" : "choose",
+    isSoloResume ? "solo" : joinGameId ? "multiplayer" : backFromIdCheck ? "stranger" : arrivedForCard ? "pending" : "choose",
   );
+  const [card, setCard] = useState<MeetupCard | null>(null);
+  const [cardChanged, setCardChanged] = useState(false);
+  const [notForMe, setNotForMe] = useState<string[]>([]);
+  // "get ready early" survives the Stripe round trip in the stored acknowledgement.
+  const [prepareOnly, setPrepareOnly] = useState<boolean>(
+    () => params.get("stranger") === "identity" && !!loadAck()?.prepareOnly,
+  );
+  // A 409 with the current card mid-flow: show the card over the (still mounted)
+  // stranger screens, then retry the step that was refused.
+  const [interrupt, setInterrupt] = useState<{ retry: () => void } | null>(null);
   const [stranger, setStranger] = useState<{ consentVersion: string } | null>(null);
   useEffect(() => {
     let live = true;
@@ -219,6 +237,65 @@ export function App() {
     // Once, on arrival: the link's meetup (or its return ref) is fixed for this page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // The meetup's event card. Any answer but a card means "no card": the app
+  // behaves exactly as it did before host tools. Re-asked when the meetup
+  // comes back from a Stripe return ref, for "back" and a changed card.
+  useEffect(() => {
+    if (!meetup) {
+      setMode((m) => (m === "pending" ? "choose" : m));
+      return;
+    }
+    let live = true;
+    // A card that never answers must not leave a blank page: fall back to the title.
+    const giveUp = setTimeout(() => setMode((m) => (m === "pending" ? "choose" : m)), 8000);
+    fetch(`${import.meta.env.BASE_URL}api/events/card?meetup=${encodeURIComponent(meetup)}`)
+      .then((r) => (r.status === 200 ? r.json() : null))
+      .then((b: { card?: unknown } | null) => {
+        if (!live) return;
+        const c = asCard(b?.card);
+        if (c) setCard(c);
+        setMode((m) => (m === "pending" ? (c ? "card" : "choose") : m));
+      })
+      .catch(() => { if (live) setMode((m) => (m === "pending" ? "choose" : m)); })
+      .finally(() => clearTimeout(giveUp));
+    return () => { live = false; clearTimeout(giveUp); };
+  }, [meetup]);
+
+  /** Out of the meetup: no code in state, the address bar, or this tab's storage. */
+  const leaveMeetup = () => {
+    const next = urlWithoutMeetup(window.location.href);
+    if (next !== null) window.history.replaceState(window.history.state, "", next);
+    setMeetup(null);
+    setCard(null);
+    setCardChanged(false);
+    setInterrupt(null);
+    setPrepareOnly(false);
+    clearAck();
+    // StrangerQueue keeps the code for a no-show requeue; it isn't needed now.
+    try { sessionStorage.removeItem("ri_stranger_meetup"); } catch { /* private window */ }
+  };
+
+  const onCardChanged = (next: MeetupCard, retry: () => void) => {
+    setCard(next);
+    setCardChanged(true);
+    setInterrupt({ retry });
+    window.scrollTo({ top: 0 });
+  };
+
+  const onAcked = (prepare: boolean) => {
+    const pending = interrupt;
+    setPrepareOnly(prepare);
+    setCardChanged(false);
+    setInterrupt(null);
+    setMode("stranger");
+    if (pending && !prepare) pending.retry();
+  };
+
+  const strangerBack = () => {
+    setInterrupt(null);
+    setMode(card && meetup ? "card" : "choose");
+  };
+
   const [theme, setTheme] = useState<Theme>("theme-ocean-grunge");
   const auth = useMatrixAuth();
   const titleSeenRef = useRef(false);
@@ -260,22 +337,52 @@ export function App() {
     if (mode === "choose") clearResume();
   }, [mode]);
 
+  if (mode === "pending") return <div className="app"><div className="lobby" aria-busy="true" /></div>;
+  const eventCard = (c: MeetupCard, code: string) => (
+    <EventCard
+      card={c}
+      meetup={code}
+      changed={cardChanged}
+      onCardReplaced={(next) => { setCard(next); setCardChanged(true); }}
+      onAcked={onAcked}
+      onNotForMe={() => { setNotForMe(c.notForMe); leaveMeetup(); setMode("notforme"); }}
+      onInvite={() => { leaveMeetup(); setMode("multiplayer"); }}
+    />
+  );
+  if (mode === "card" && card && meetup) return <div className="app fade-in">{eventCard(card, meetup)}</div>;
+  if (mode === "notforme") {
+    return (
+      <div className="app fade-in">
+        <NotForMe lines={notForMe} onSolo={() => setMode("solo")} onInvite={() => setMode("multiplayer")} />
+      </div>
+    );
+  }
   if (mode === "solo") return <SoloGame />;
   if (mode === "stranger") {
     if (!stranger) {
       return (
         <div className="app"><div className="lobby" role="status"><p className="dim">one moment…</p>
-          <button className="btn btn-secondary" onClick={() => setMode("choose")}>back</button></div></div>
+          <button className="btn btn-secondary" onClick={strangerBack}>back</button></div></div>
       );
     }
+    // Only with a meetup to re-acknowledge; otherwise the refusal shows as text.
+    const cardChangedHandler = meetup ? onCardChanged : undefined;
+    const showCard = !!(interrupt && card && meetup);
     return (
       <div className="app fade-in">
-        <StrangerMode
-          meetup={meetup}
-          consentVersion={stranger.consentVersion}
-          onBack={() => setMode("choose")}
-          renderEligible={(pass) => <StrangerQueue pass={pass} meetup={meetup} onBack={() => setMode("choose")} />}
-        />
+        {showCard && card && meetup && eventCard(card, meetup)}
+        <div style={{ display: showCard ? "none" : "contents" }}>
+          <StrangerMode
+            meetup={meetup}
+            consentVersion={stranger.consentVersion}
+            onBack={strangerBack}
+            prepareOnly={prepareOnly}
+            onCardChanged={cardChangedHandler}
+            renderEligible={(pass) => (
+              <StrangerQueue pass={pass} meetup={meetup} onBack={strangerBack} onCardChanged={cardChangedHandler} />
+            )}
+          />
+        </div>
       </div>
     );
   }

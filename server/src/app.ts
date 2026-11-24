@@ -18,6 +18,9 @@ import { createCampusRoutes } from "./routes/campus.js";
 import { createChildSafetyAdminRoutes, createChildSafetyIngestRoutes, INGEST_PATH } from "./routes/child-safety.js";
 import { createStrangerRoutes, createStrangerAdminRoutes, createIdentityWebhookRoute, IDENTITY_WEBHOOK_PATH } from "./routes/stranger.js";
 import { StrangerService } from "./stranger/service.js";
+import { HostTools } from "./hosts/service.js";
+import { devMatrixVerifier, readDevHarness } from "./dev/harness.js";
+import { createHostToolsRoutes, createHostToolsAdminRoutes } from "./hosts/routes.js";
 import { readStrangerConfig } from "./stranger/config.js";
 import { verifyOpenIdToken } from "./stranger/matrix-identity.js";
 import { cachedMatrixVerifier, type MatrixVerifier } from "./security/game-read-access.js";
@@ -74,6 +77,11 @@ export interface BuildServerOptions {
    * Synapse's userinfo endpoint (RI_MATRIX_USERINFO_URL), cached briefly.
    */
   verifyMatrix?: MatrixVerifier;
+  /**
+   * Meetup host tools. Default: from the environment (on only when
+   * RI_STRANGER_MODE=meetup). Tests inject their own, or null for none.
+   */
+  hostTools?: HostTools | null;
 }
 
 /**
@@ -93,6 +101,7 @@ export interface BuiltServer {
   repo: GameRepository;
   payments: PartnerPayments;
   stranger: StrangerService;
+  hostTools: HostTools | null;
   close: () => Promise<void>;
 }
 
@@ -119,8 +128,15 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   } = options;
   const payments = options.payments ?? new PartnerPayments({ store: repo.partnerPayments });
   const stranger = options.stranger ?? StrangerService.fromEnv(repo.stranger, repo.childSafety);
+  const hostTools = options.hostTools !== undefined
+    ? options.hostTools
+    : HostTools.fromEnv({ store: repo.hosts, stranger, payments });
+  if (hostTools) {
+    stranger.hosts = hostTools;
+    payments.exemptWhen((gameId) => (hostTools.active() ? hostTools.frozenFree(gameId) : Promise.resolve(false)));
+  }
   const verifyMatrix: MatrixVerifier = options.verifyMatrix
-    ?? cachedMatrixVerifier((t) => verifyOpenIdToken(t, readStrangerConfig().matrixUserinfoUrl));
+    ?? cachedMatrixVerifier(devMatrixVerifier((t) => verifyOpenIdToken(t, readStrangerConfig().matrixUserinfoUrl), readDevHarness()));
 
   const app = express();
   app.set("trust proxy", 1);
@@ -306,6 +322,10 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   app.use("/api", createStripeWebhookRoute(payments));
   app.use("/api", createIdentityWebhookRoute(stranger));
   app.use("/api", createStrangerRoutes(stranger, rateLimit({ windowMs: 60_000, max: 30, standardHeaders: true, legacyHeaders: false })));
+  if (hostTools) {
+    app.use("/api", createHostToolsRoutes(hostTools, rateLimit({ windowMs: 60_000, max: 30, standardHeaders: true, legacyHeaders: false })));
+    app.use("/api", createHostToolsAdminRoutes(hostTools));
+  }
   app.use("/api", createPartnerPaymentRoutes({ payments, repo, sessions, gameLocks, limit: paymentLimit }));
   // Child safety: evidence ingestion (own token) must be mounted before the
   // admin router, whose router-level requireAdmin answers every /api path
@@ -379,7 +399,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     repo,
     llm,
     gameLocks,
-    payments, stranger,
+    payments, stranger, hostTools,
   });
 
   let evictionTimer: NodeJS.Timeout | undefined;
@@ -413,6 +433,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     repo,
     payments,
     stranger,
+    hostTools,
     close,
   };
 }

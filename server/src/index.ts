@@ -1,3 +1,4 @@
+import { devMockLlm, readDevHarness } from "./dev/harness.js";
 import { RoutingLLMClient } from "./llm/routing-client.js";
 import type { LLMUsage } from "./llm/client.js";
 import type { ModelTier } from "./llm/model-config.js";
@@ -17,7 +18,8 @@ import { logPaywallState, readPaymentConfig } from "./payments/config.js";
 const REQUIRED_ENV_VARS = ["OPENROUTER_API_KEY"];
 
 function validateConfig(): void {
-  const missing = REQUIRED_ENV_VARS.filter((k) => !process.env[k]);
+  // The local harness's canned model (never in production) makes no model calls.
+  const missing = readDevHarness().mockLlm ? [] : REQUIRED_ENV_VARS.filter((k) => !process.env[k]);
   if (missing.length) {
     logger.error("missing_env_vars", { missing });
     process.exit(1);
@@ -57,11 +59,13 @@ async function main() {
     });
   };
   const seed = process.env.LLM_SEED ? Number(process.env.LLM_SEED) : undefined;
-  const llm = new TracedLLMClient(
-    new RoutingLLMClient(tier, onUsage, "kid_family_chat", seed),
-    {},
-    tier
-  );
+  const llm = readDevHarness().mockLlm
+    ? devMockLlm()
+    : new TracedLLMClient(
+        new RoutingLLMClient(tier, onUsage, "kid_family_chat", seed),
+        {},
+        tier
+      );
 
   // Use Postgres when DATABASE_URL is configured; otherwise an in-memory
   // repository so the server runs with no external dependencies.

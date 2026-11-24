@@ -110,8 +110,22 @@ const cabinet = new CampusCabinet({ win: window, base: import.meta.env.BASE_URL 
 setActiveCabinet(cabinet);
 cabinet.start();
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>
-);
+function render(): void {
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>
+  );
+}
+
+// Local harness only (`npm run dev`): `?devmxid=@name:local` signs in through a
+// fake Matrix client that a server with RI_DEV_FAKE_MATRIX=true accepts. The
+// branch is compiled out of production builds, and the module with it.
+if (import.meta.env.DEV) {
+  void import("./devMatrixShim")
+    .then((m) => m.installDevMatrixShim(window))
+    .catch(() => {})
+    .finally(render);
+} else {
+  render();
+}

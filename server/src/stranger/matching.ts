@@ -46,7 +46,18 @@ export interface QueueEntry {
   queuedAt: number;
   seq: number;
   lastSeen: number;
+  /**
+   * The host-tools event (one period of a meetup code) this entry acknowledged
+   * and joined under. Entries pair only within one event, so a game is always
+   * played on the terms both players accepted.
+   */
+  eventId?: string | null;
+  /** The card version this entry's player accepted at that event. */
+  cardVersion?: number | null;
 }
+
+/** Where a queued entry at an event stands now (host tools). */
+export type EntryState = "ok" | "paused" | "closed" | "stale";
 
 export interface StrangerRunSeats {
   gameId: string;
@@ -54,6 +65,26 @@ export interface StrangerRunSeats {
   parent1: string;
   parent2: string;
   discarded?: boolean;
+  /** The host-tools event this game was matched at (its code is never stored). */
+  eventId?: string | null;
+}
+
+/**
+ * Host tools (hosts/service.ts) at the queue: which event a meetup code is,
+ * and whether this subject may join it now (event open, under capacity, the
+ * current card acknowledged, not its host or guest reader).
+ */
+export interface MatchingGate {
+  /** On success, the event and the card version that were checked (what the player accepted). */
+  join(subject: string, meetupCode: string | null): Promise<{ ok: true; eventId?: string; cardVersion?: number } | { ok: false; status: number; error: string; card?: unknown }>;
+  eventIdFor(meetupCode: string | null): string | null;
+  /**
+   * Synchronous: may this entry still be matched? "paused" (or not open yet)
+   * holds it unmatched; "closed" ends it; "stale" (the card changed, or the
+   * code moved on to a new period) sends its player back to the card.
+   */
+  entryState(eventId: string, cardVersion: number | null): EntryState;
+  joinWindowMs(eventId: string): number | null;
 }
 
 const SEAT_CACHE_MAX = 5000;
@@ -68,6 +99,7 @@ export interface MatchingHooks {
 interface Run {
   gameId: string;
   meetupCode: string | null;
+  eventId: string | null;
   entries: Record<StrangerSlot, QueueEntry>;
   tokens: Record<StrangerSlot, string>;
   arrived: Set<StrangerSlot>;
@@ -78,7 +110,11 @@ interface Run {
 export type PollResult =
   | { status: "waiting"; position: number; count: number }
   | { status: "matched"; gameId: string; slot: StrangerSlot; playerToken: string; partnerName: string }
-  | { status: "none" };
+  | { status: "none" }
+  /** Host tools: the meetup closed while waiting. Neutral: no reason given. */
+  | { status: "ended" }
+  /** Host tools: the meetup's card changed while waiting; read it again, then join again. */
+  | { status: "card_changed" };
 
 const SLOTS: StrangerSlot[] = ["parent1", "parent2"];
 
@@ -94,6 +130,8 @@ export class StrangerMatching {
    * would tell them who reported them.
    */
   private held = new Map<string, QueueEntry>();
+  /** Entries taken out of the queue by their event (closed, or a new card), told on their next poll. */
+  private notices = new Map<string, "ended" | "card_changed">();
   private chain: Promise<void> = Promise.resolve();
 
   constructor(
@@ -103,6 +141,8 @@ export class StrangerMatching {
       config: () => StrangerConfig;
       hooks: MatchingHooks;
       now?: () => number;
+      /** Host tools, when they are on (meetup mode). */
+      gate?: () => MatchingGate | null;
     },
   ) {}
 
@@ -110,12 +150,22 @@ export class StrangerMatching {
     return (this.deps.now ?? Date.now)();
   }
 
-  async join(mxid: string, meetupCode: string | null, displayName: string, childName: string): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  async join(mxid: string, meetupCode: string | null, displayName: string, childName: string): Promise<{ ok: true } | { ok: false; status: number; error: string; card?: unknown }> {
     const pool = await this.deps.age.adultForPool(mxid);
     if (!pool.ok) return { ok: false, status: 403, error: "Pass the age check first." };
     const subject = await this.deps.age.subjectHash(mxid);
+    const gate = this.deps.gate?.();
+    let eventId: string | null = null;
+    let cardVersion: number | null = null;
+    if (gate) {
+      const g = await gate.join(subject, meetupCode);
+      if (!g.ok) return g;
+      eventId = g.eventId ?? gate.eventIdFor(meetupCode);
+      cardVersion = g.cardVersion ?? null;
+      this.notices.delete(mxid);
+    }
     if (await this.deps.store.isSuspended(subject)) {
-      this.hold({ mxid, subject, meetupCode, displayName, childName, queuedAt: this.now(), seq: ++this.seq, lastSeen: this.now() });
+      this.hold({ mxid, subject, meetupCode, displayName, childName, queuedAt: this.now(), seq: ++this.seq, lastSeen: this.now(), eventId, cardVersion });
       return { ok: true };
     }
     if (this.matched.has(mxid)) return { ok: true };
@@ -124,10 +174,11 @@ export class StrangerMatching {
       existing.displayName = displayName;
       existing.childName = childName;
       existing.lastSeen = this.now();
+      if (gate) { existing.eventId = eventId; existing.cardVersion = cardVersion; } // re-joined under a new card: its terms now
       return { ok: true };
     }
     const now = this.now();
-    this.queue.push({ mxid, subject, meetupCode, displayName, childName, queuedAt: now, seq: ++this.seq, lastSeen: now });
+    this.queue.push({ mxid, subject, meetupCode, displayName, childName, queuedAt: now, seq: ++this.seq, lastSeen: now, eventId, cardVersion });
     await this.runMatch(meetupCode);
     return { ok: true };
   }
@@ -137,10 +188,47 @@ export class StrangerMatching {
     this.held.delete(mxid);
   }
 
+  private entryState(e: QueueEntry): EntryState {
+    if (!e.eventId) return "ok";
+    const gate = this.deps.gate?.();
+    // Host tools switched off under a queued entry: nothing to match it at.
+    if (!gate) return "closed";
+    return gate.entryState(e.eventId, e.cardVersion ?? null);
+  }
+
+  /** Takes an entry out because of its event, and tells its player on the next poll. */
+  private endEntry(e: QueueEntry, state: "closed" | "stale"): void {
+    this.leave(e.mxid);
+    this.notices.set(e.mxid, state === "closed" ? "ended" : "card_changed");
+  }
+
+  /** Applies each waiting entry's event state; returns those that may be paired now. */
+  private matchable(entries: QueueEntry[]): QueueEntry[] {
+    const out: QueueEntry[] = [];
+    for (const e of entries) {
+      const st = this.entryState(e);
+      if (st === "closed" || st === "stale") this.endEntry(e, st);
+      else if (st === "ok") out.push(e);
+      // "paused": stays queued, unmatched.
+    }
+    return out;
+  }
+
   private hold(entry: QueueEntry): void {
     this.queue = this.queue.filter((e) => e.mxid !== entry.mxid);
     const prior = this.held.get(entry.mxid);
     this.held.set(entry.mxid, { ...(prior ?? entry), lastSeen: this.now() });
+  }
+
+  /**
+   * For a waiting entry (or one just taken out) at an event its pass can no
+   * longer see: the "ended" / "card_changed" result, or null if there's none.
+   */
+  pollWaiting(mxid: string): PollResult | null {
+    const inQueue = this.queue.some((e) => e.mxid === mxid && e.eventId) || !!this.held.get(mxid)?.eventId;
+    if (!inQueue && !this.notices.has(mxid)) return null;
+    const r = this.poll(mxid);
+    return r.status === "ended" || r.status === "card_changed" ? r : null;
   }
 
   poll(mxid: string): PollResult {
@@ -154,9 +242,25 @@ export class StrangerMatching {
       this.matched.delete(mxid);
     }
     this.pruneIdle();
+    const notice = this.notices.get(mxid);
+    if (notice && !this.queue.some((e) => e.mxid === mxid) && !this.held.has(mxid)) {
+      this.notices.delete(mxid);
+      return { status: notice };
+    }
     const mine = this.held.get(mxid) ?? this.queue.find((e) => e.mxid === mxid);
     if (!mine) return { status: "none" };
     mine.lastSeen = this.now();
+    if (mine.eventId) {
+      const st = this.entryState(mine);
+      if (st === "closed" || st === "stale") {
+        this.leave(mxid);
+        return { status: st === "closed" ? "ended" : "card_changed" };
+      }
+      // Resumed (or just opened): a pass that pairs whoever is ready, since nobody new may join to start one.
+      if (st === "ok" && this.queue.includes(mine) && this.queue.some((e) => e !== mine && e.eventId === mine.eventId)) {
+        void this.runMatch(mine.meetupCode);
+      }
+    }
     // Privacy review F2: a held (suspended) player is counted, and placed,
     // exactly like a waiting one, in their own count and in everyone else's.
     // Leaving them out made the difference between phones (or a host watching
@@ -201,11 +305,13 @@ export class StrangerMatching {
    * that had arrived is all that is left (the other's reservation was never
    * stored): treat it as a no-show now, so the one who came can requeue.
    */
-  adoptStranded(seats: StrangerRunSeats, present: StrangerSlot, entry: { mxid: string; displayName: string; childName: string }): void {
+  adoptStranded(seats: StrangerRunSeats, present: StrangerSlot, entry: { mxid: string; displayName: string; childName: string; meetupCode?: string | null }): void {
     if (this.runs.has(seats.gameId)) return;
     const now = this.now();
+    // At an event the run stores no code: the pass carries it, and the entry keeps the event.
     const mk = (mxid: string, subject: string, displayName: string): QueueEntry => ({
-      mxid, subject, meetupCode: seats.meetupCode, displayName, childName: entry.childName, queuedAt: now, seq: ++this.seq, lastSeen: now,
+      mxid, subject, meetupCode: entry.meetupCode ?? seats.meetupCode, displayName, childName: entry.childName, queuedAt: now, seq: ++this.seq, lastSeen: now,
+      eventId: seats.eventId ?? null,
     });
     const absent: StrangerSlot = present === "parent1" ? "parent2" : "parent1";
     const entries = {
@@ -213,7 +319,7 @@ export class StrangerMatching {
       [absent]: mk("", seats[absent], ""),
     } as Record<StrangerSlot, QueueEntry>;
     this.runs.set(seats.gameId, {
-      gameId: seats.gameId, meetupCode: seats.meetupCode, entries, tokens: { parent1: "", parent2: "" },
+      gameId: seats.gameId, meetupCode: seats.meetupCode, eventId: seats.eventId ?? null, entries, tokens: { parent1: "", parent2: "" },
       arrived: new Set([present]), timer: null, absent,
     });
     logger.info("stranger_no_show", { gameId: seats.gameId, afterRestart: true });
@@ -222,7 +328,7 @@ export class StrangerMatching {
   /** Whose seat is whose in a stranger game, or null if it isn't one. Survives a restart (stored). */
   async runFor(gameId: string): Promise<StrangerRunSeats | null> {
     const live = this.runs.get(gameId);
-    if (live) return { gameId, meetupCode: live.meetupCode, parent1: live.entries.parent1.subject, parent2: live.entries.parent2.subject };
+    if (live) return { gameId, meetupCode: live.meetupCode, parent1: live.entries.parent1.subject, parent2: live.entries.parent2.subject, eventId: live.eventId };
     if (this.seatCache.has(gameId)) return this.seatCache.get(gameId) ?? null;
     const row = await this.deps.store.getRun(gameId);
     this.cacheSeats(gameId, row);
@@ -299,11 +405,12 @@ export class StrangerMatching {
         if (!pool.ok) this.leave(e.mxid);
         else if (await this.deps.store.isSuspended(e.subject)) this.hold(e);
       }
-      const eligible = this.sorted(meetupCode);
+      const eligible = this.matchable(this.sorted(meetupCode));
       let pair: [QueueEntry, QueueEntry] | null = null;
       outer: for (let i = 0; i < eligible.length; i++) {
         for (let j = i + 1; j < eligible.length; j++) {
           if (eligible[i].mxid === eligible[j].mxid || eligible[i].subject === eligible[j].subject) continue;
+          if ((eligible[i].eventId ?? null) !== (eligible[j].eventId ?? null)) continue;
           if (!(await this.deps.store.isBlocked(eligible[i].subject, eligible[j].subject))) {
             pair = [eligible[i], eligible[j]];
             break outer;
@@ -321,9 +428,14 @@ export class StrangerMatching {
   private async makeRun(host: QueueEntry, partner: QueueEntry): Promise<boolean> {
     let gameId: string;
     let tokens: Record<StrangerSlot, string>;
+    if (this.matchable([host, partner]).length < 2) return true;
+    const gate = this.deps.gate?.() ?? null;
+    const eventId = host.eventId ?? gate?.eventIdFor(host.meetupCode) ?? null;
+    // At an event, the run names the event, never its code.
+    const storedCode = eventId ? null : host.meetupCode;
     try {
       ({ gameId, tokens } = await this.deps.hooks.createGame(host, partner));
-      await this.deps.store.createRun({ gameId, meetupCode: host.meetupCode, parent1: host.subject, parent2: partner.subject });
+      await this.deps.store.createRun({ gameId, meetupCode: storedCode, parent1: host.subject, parent2: partner.subject, eventId });
     } catch (err) {
       logger.error("stranger_match_create_failed", { error: err instanceof Error ? err.message : String(err) });
       return false;
@@ -334,10 +446,12 @@ export class StrangerMatching {
       if (!(await this.deps.age.adultForPool(e.mxid)).ok) this.leave(e.mxid);
       else if (await this.deps.store.isSuspended(e.subject)) this.hold(e);
     }
-    if (!this.queue.includes(host) || !this.queue.includes(partner)) {
+    // The event may have closed, paused or changed its card while the game was being made (no await after this).
+    const stillMatchable = this.queue.includes(host) && this.queue.includes(partner) && this.matchable([host, partner]).length === 2;
+    if (!stillMatchable) {
       // One left (or stopped being eligible) while the game was being made:
       // throw it away, keep the other queued.
-      this.cacheSeats(gameId, { gameId, meetupCode: host.meetupCode, parent1: host.subject, parent2: partner.subject });
+      this.cacheSeats(gameId, { gameId, meetupCode: storedCode, parent1: host.subject, parent2: partner.subject, eventId });
       await this.markDiscarded(gameId);
       return true;
     }
@@ -346,13 +460,15 @@ export class StrangerMatching {
     const run: Run = {
       gameId,
       meetupCode: host.meetupCode,
+      eventId,
       entries: { parent1: host, parent2: partner },
       tokens,
       arrived: new Set(),
       timer: null,
       absent: null,
     };
-    run.timer = setTimeout(() => this.windowEnd(gameId), this.deps.config().joinWindowMs);
+    const windowMs = (eventId ? gate?.joinWindowMs(eventId) : null) ?? this.deps.config().joinWindowMs;
+    run.timer = setTimeout(() => this.windowEnd(gameId), windowMs);
     run.timer.unref?.();
     this.runs.set(gameId, run);
     this.matched.set(host.mxid, { gameId, slot: "parent1" });
@@ -393,7 +509,14 @@ export class StrangerMatching {
     }
     this.runs.delete(gameId);
     // The seat map stays known, so the game still recognises its two adults.
-    this.cacheSeats(gameId, { gameId, meetupCode: run.meetupCode, parent1: run.entries.parent1.subject, parent2: run.entries.parent2.subject });
+    this.cacheSeats(gameId, {
+      gameId, meetupCode: run.eventId ? null : run.meetupCode, parent1: run.entries.parent1.subject, parent2: run.entries.parent2.subject, eventId: run.eventId,
+    });
+  }
+
+  /** The event a stranger game was matched at, as far as this process knows (no I/O). */
+  eventIdOf(gameId: string): string | null {
+    return this.runs.get(gameId)?.eventId ?? this.seatCache.get(gameId)?.eventId ?? null;
   }
 
   /** The match is over for good: marked in the store, so no seat ever opens again. */

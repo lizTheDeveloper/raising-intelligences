@@ -5,9 +5,10 @@ import { GameList } from "./GameList";
 import { GameDetailView } from "./GameDetail";
 import { Moderation } from "./Moderation";
 import { ChildSafety } from "./ChildSafety";
+import { HostTools } from "./HostTools";
 import "../../admin.css";
 
-type Page = "overview" | "games" | "game-detail" | "moderation" | "child-safety";
+type Page = "overview" | "games" | "game-detail" | "moderation" | "child-safety" | "host-tools";
 
 const ADMIN_BASE = import.meta.env.BASE_URL + "api/admin";
 
@@ -119,6 +120,12 @@ export function AdminApp() {
         >
           Child Safety
         </button>
+        <button
+          className={page === "host-tools" ? "active" : ""}
+          onClick={() => setPage("host-tools")}
+        >
+          Host tools
+        </button>
       </div>
       <main>
         {page === "overview" && (
@@ -145,6 +152,7 @@ export function AdminApp() {
           />
         )}
         {page === "child-safety" && <ChildSafety token={token} />}
+        {page === "host-tools" && <HostTools token={token} />}
       </main>
     </div>
   );
