@@ -8,6 +8,7 @@ import { normalizeNullPayload, toReportableRejection, toReportableWindowError } 
 import { eventHasOnlyThirdPartyFrames } from "./errorNoise";
 import { scrubBreadcrumb, scrubEvent } from "./sentryScrub";
 import { umamiScriptAttributes } from "./umamiScript";
+import { untrackedLanding } from "./meetupCard";
 import "./global.css";
 
 /**
@@ -95,6 +96,8 @@ if (import.meta.env.PROD) {
   const s = document.createElement("script");
   s.defer = true;
   for (const [name, value] of Object.entries(umamiScriptAttributes(location.hostname))) s.setAttribute(name, value);
+  // A meetup card, the host portal or the deck: no pageview (see untrackedLanding).
+  if (untrackedLanding(location.search)) s.setAttribute("data-auto-track", "false");
   document.head.appendChild(s);
 }
 
@@ -102,7 +105,7 @@ if (import.meta.env.PROD) {
 // Umami script has landed: analytics.ts queues until the global appears (which
 // is the whole reason that queue exists — this script is inserted dynamically
 // and so resolves well after first render).
-startSessionTracking();
+if (!untrackedLanding(location.search)) startSessionTracking();
 
 // Web cabinets: inert unless framed with ?cabinet=campus (see campusCabinet.ts).
 // The pass-exchange path comes from vite's configured base, never the URL.

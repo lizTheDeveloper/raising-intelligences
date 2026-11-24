@@ -138,3 +138,10 @@ test("lowerLevel follows the level ceilings", () => {
   assert.equal(lowerLevel("studio", 3), 0);
   assert.equal(lowerLevel("studio", 0), null);
 });
+
+import { untrackedLanding } from "../src/meetupCard.ts";
+
+test("untrackedLanding: the meetup card, the host portal and the deck load with nothing counted", () => {
+  for (const q of ["?meetup=tea-party", "?x=1&meetup=a", "?host=1", "?deck=1"]) assert.equal(untrackedLanding(q), true, q);
+  for (const q of ["", "?game=abc", "?devmxid=@a:local", "?hosted=1", "?meetups=1"]) assert.equal(untrackedLanding(q), false, q);
+});

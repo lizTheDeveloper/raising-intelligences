@@ -275,7 +275,7 @@ const EVENT_COLS: Array<[keyof HostEvent, string]> = [
   ["hostPersonId", "host_person_id"], ["guestReaderId", "guest_reader_id"], ["sensitive", "sensitive"], ["authority", "authority"],
   ["eventsBusiness", "events_business"], ["level", "level"], ["shareCodes", "share_codes"], ["studioLearning", "studio_learning"],
   ["handleExchange", "handle_exchange"], ["welcomeText", "welcome_text"], ["lengthText", "length_text"], ["conductUrl", "conduct_url"],
-  ["capacity", "capacity"], ["joinWindowMs", "join_window_ms"], ["opensAt", "opens_at"], ["closesAt", "closes_at"], ["paused", "paused"],
+  ["capacity", "capacity"], ["joinWindowMs", "join_window_ms"], ["opensAt", "opens_at"], ["closesAt", "closes_at"], ["paused", "paused"], ["pausedBy", "paused_by"],
   ["closedAt", "closed_at"], ["cardVersion", "card_version"], ["frozenTerms", "frozen_terms"], ["firstAckAt", "first_ack_at"],
   ["publishedFunnel", "published_funnel"], ["publishedAt", "published_at"], ["createdAt", "created_at"],
 ];

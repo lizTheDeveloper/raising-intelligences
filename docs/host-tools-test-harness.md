@@ -75,6 +75,15 @@ Each player needs their own browser storage. Use a normal window and a private w
 
 To check the host side: a host who joins their own event's queue gets "stranger mode isn't available here."
 
+## 3b. The host portal and the deck
+
+- **Host portal:** `http://localhost:5173/?host=1&devmxid=@robin:local` (the `devmxid` stand-in is dev-only). Sign in. An approved host sees their events' status. Numbers appear only for level 1 and up, once, 24 hours after close. Hosts can pause, resume, close and lower their own events. A guest reader sees each event's name and dates.
+- **Studio pause:** a pause made through the admin PATCH is the studio's. The host can't resume it ("the studio paused this meetup…"); only the admin can.
+- **Every portal request re-checks the person.** The request is refused if the person is no longer approved by the admin, is no longer a verified adult, is on the ban list, or is suspended from stranger mode. Revoking the account's stranger passes also revokes its host pass.
+- **Publish a funnel early** (for testing, once the event has been closed for 24 hours): `curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" $BASE/api/admin/host-tools/events/<id>/publish`
+- **Discussion deck alone:** `http://localhost:5173/?deck=1`. No sign-in is needed, and it prints cleanly.
+- **Untracked pages:** the meetup card, the portal and the deck send no Umami pageview and don't start the session beats.
+
 ## 4. Run the tests
 
 On the Mac, run only the host tests; send the full suite to the vast box.

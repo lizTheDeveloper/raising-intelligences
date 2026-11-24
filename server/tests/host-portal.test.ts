@@ -40,6 +40,80 @@ describe("the host portal", () => {
     expect((await h.post("/host/events", { pass })).status).toBe(401);
   });
 
+  describe("a session never outlives its eligibility", () => {
+    const signedIn = async () => {
+      await h.person(DEV, "Dev");
+      const pass = (await hostPass(DEV)).body.pass as string;
+      expect((await h.post("/host/events", { pass })).status).toBe(200);
+      return pass;
+    };
+    it("a minor result after sign-in: the next portal request is refused", async () => {
+      const pass = await signedIn();
+      await h.verify(DEV, "minor");
+      expect((await h.post("/host/events", { pass })).status).toBe(401);
+    });
+    it("a ban after sign-in: the next portal request is refused", async () => {
+      const pass = await signedIn();
+      await h.repo.childSafety.banIdentifier({ kind: "matrix", value: DEV }, "test", null);
+      expect((await h.post("/host/events", { pass })).status).toBe(401);
+    });
+    it("a stranger-mode suspension after sign-in: refused", async () => {
+      const pass = await signedIn();
+      await h.repo.stranger.suspend(await h.stranger.age.subjectHash(DEV), "report upheld");
+      expect((await h.post("/host/events", { pass })).status).toBe(401);
+    });
+    it("revoking the account's stranger passes revokes its host pass too", async () => {
+      const pass = await signedIn();
+      h.stranger.passes.revokeSubject(DEV);
+      expect((await h.post("/host/events", { pass })).status).toBe(401);
+    });
+    it("removed by the admin: refused at once", async () => {
+      const pass = await signedIn();
+      const id = (await h.get("/admin/host-tools/hosts", ADMIN)).body.people.find((x: any) => x.displayName === "Dev").id;
+      await h.post(`/admin/host-tools/hosts/${id}/status`, { status: "closed" }, ADMIN);
+      expect((await h.post("/host/events", { pass })).status).toBe(401);
+    });
+  });
+
+  describe("a host never overrides a studio control", () => {
+    const setup = async () => {
+      const dev = await h.person(DEV, "Dev");
+      const e = await h.event({ kind: "outside", level: 1, hostPersonId: dev, handleExchange: false });
+      const pass = (await hostPass(DEV)).body.pass as string;
+      const ref = (await h.post("/host/events", { pass })).body.events[0].ref as string;
+      return { e, pass, ref };
+    };
+    it("studio pause, then host resume: refused, and the event stays paused", async () => {
+      const { e, pass, ref } = await setup();
+      await h.req("PATCH", `/admin/host-tools/events/${e.id}`, { paused: true }, ADMIN);
+      const r = await h.post(`/host/events/${ref}/resume`, { pass });
+      expect(r.status).toBe(403);
+      expect((await h.post("/host/events", { pass })).body.events[0].status).toBe("paused");
+      // A host pause on top doesn't take the pause over either.
+      await h.post(`/host/events/${ref}/pause`, { pass });
+      expect((await h.post(`/host/events/${ref}/resume`, { pass })).status).toBe(403);
+      // The studio can resume it.
+      await h.req("PATCH", `/admin/host-tools/events/${e.id}`, { paused: false }, ADMIN);
+      expect((await h.post("/host/events", { pass })).body.events[0].status).toBe("open");
+    });
+    it("host pause, then host resume: allowed", async () => {
+      const { pass, ref } = await setup();
+      expect((await h.post(`/host/events/${ref}/pause`, { pass })).body.status).toBe("paused");
+      expect((await h.post(`/host/events/${ref}/resume`, { pass })).body.status).toBe("open");
+    });
+    it("host pause, then the studio pauses too: the host can no longer resume", async () => {
+      const { e, pass, ref } = await setup();
+      await h.post(`/host/events/${ref}/pause`, { pass });
+      await h.req("PATCH", `/admin/host-tools/events/${e.id}`, { paused: true }, ADMIN);
+      expect((await h.post(`/host/events/${ref}/resume`, { pass })).status).toBe(403);
+    });
+    it("nothing a host does touches a closed event", async () => {
+      const { e, pass, ref } = await setup();
+      await h.req("PATCH", `/admin/host-tools/events/${e.id}`, { closed: true }, ADMIN);
+      for (const a of ["pause", "resume", "lower"]) expect((await h.post(`/host/events/${ref}/${a}`, { pass })).status).toBe(409);
+    });
+  });
+
   it("while open, a host sees only open / paused / closed / full; a guest reader sees name and dates only", async () => {
     const dev = await h.person(DEV, "Dev");
     const jensen = await h.person(JENSEN, "Sister Jensen");

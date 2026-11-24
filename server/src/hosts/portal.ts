@@ -38,6 +38,8 @@ export class HostPortal {
   readonly passes: StrangerPasses;
   constructor(private readonly hosts: HostTools, passes?: StrangerPasses) {
     this.passes = passes ?? new StrangerPasses(() => hosts.now());
+    // One revocation kills both: a stranger pass revoked (a minor result, a ban) takes the host pass with it.
+    hosts.stranger.passes.onRevoke((mxid) => this.passes.revokeSubject(mxid));
   }
 
   /** Approved, still an adult in good standing, else the same 401 as a bad token. */
@@ -47,17 +49,34 @@ export class HostPortal {
     const subject = await this.hosts.stranger.age.subjectHash(mxid);
     const person = await this.hosts.store.personBySubject(subject);
     if (!person || person.status !== "approved") return null;
-    if (!(await this.hosts.stranger.age.adultForPool(mxid)).ok) return null;
-    return { pass: this.passes.issue(subject, null) };
+    if (!(await this.eligible(mxid, subject))) return null;
+    // The pass holds the Matrix id in memory only (like a stranger pass), so every request can re-run the age and ban check.
+    return { pass: this.passes.issue(mxid, null) };
   }
 
-  /** The person behind a live pass, if still approved. */
+  /** Still a verified adult, not banned, not suspended from stranger mode. Fails closed. */
+  private async eligible(mxid: string, subject: string): Promise<boolean> {
+    try {
+      if (!(await this.hosts.stranger.age.adultForPool(mxid)).ok) return false;
+      return !(await this.hosts.stranger.store.isSuspended(subject));
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * The person behind a live pass. Re-checked on every request: still approved
+   * by the admin, still an adult, not banned, not suspended. Anything else
+   * retires the pass at once.
+   */
   async person(pass: unknown): Promise<HostPerson | null> {
     const p = this.passes.resolve(pass);
     if (!p) return null;
-    const person = await this.hosts.store.personBySubject(p.subject);
-    if (!person || person.status !== "approved") {
-      this.passes.revokeSubject(p.subject);
+    const mxid = p.subject;
+    const subject = await this.hosts.stranger.age.subjectHash(mxid);
+    const person = await this.hosts.store.personBySubject(subject);
+    if (!person || person.status !== "approved" || !(await this.eligible(mxid, subject))) {
+      this.passes.revokeSubject(mxid);
       return null;
     }
     return person;
@@ -155,7 +174,7 @@ export function createHostPortalRoutes(hosts: HostTools, portal: HostPortal, lim
       const patch = action === "pause" ? { paused: true } : action === "resume" ? { paused: false } : action === "close" ? { closed: true }
         : { level: e.level === 3 ? 1 : 0 };
       if (action === "lower" && e.level === 0) return void res.status(409).json({ error: "this meetup is already at the lowest level." });
-      const r = await hosts.patchEvent(e.id, patch);
+      const r = await hosts.patchEvent(e.id, patch, "host");
       if (!r.ok) return void res.status(r.status).json({ error: r.error });
       res.json({ ok: true, status: await hosts.statusNow(r.value), level: r.value.level });
     }));

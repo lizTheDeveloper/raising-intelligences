@@ -11,6 +11,9 @@ import { StrangerMode } from "./components/StrangerMode";
 import { StrangerQueue } from "./components/StrangerQueue";
 import { EventCard, NotForMe } from "./components/EventCard";
 import { asCard, clearAck, loadAck, urlWithoutMeetup, type MeetupCard } from "./meetupCard";
+import { HostPortal } from "./components/HostPortal";
+import { Deck, loadDeck } from "./components/Deck";
+import { hostRoute, type Deck as DeckData } from "./hostPortal";
 
 const TAGLINES = [
   // funny
@@ -178,7 +181,9 @@ const TAGLINE = TAGLINES[Math.floor(Math.random() * TAGLINES.length)];
 
 // "pending": a ?meetup= link, waiting to hear whether it has an event card.
 // "card" / "notforme": the meetup host tools' card (spec §3), shown first.
-type Mode = "choose" | "solo" | "multiplayer" | "stranger" | "pending" | "card" | "notforme";
+// "hostcheck": a ?host=1 / ?deck=1 link, waiting to hear whether host tools are on.
+// "host" / "deck": the host portal and the discussion deck (spec §4, B.6). Untracked.
+type Mode = "choose" | "solo" | "multiplayer" | "stranger" | "pending" | "card" | "notforme" | "hostcheck" | "host" | "deck";
 type Theme = "" | "theme-ocean-grunge" | "theme-cyber";
 
 const THEMES: { id: Theme; label: string }[] = [
@@ -208,9 +213,26 @@ export function App() {
   // screen (and its title_screen_viewed event) never shows under a card. With
   // host tools off the card request 404s and this becomes "choose" as before.
   const arrivedForCard = !!params.get("meetup") && !joinGameId && !backFromIdCheck;
+  // ?host=1 (the host portal) or ?deck=1 (the deck alone). Like a meetup link,
+  // nothing paints until the server answers; with host tools off the deck
+  // request isn't a 200 and this becomes "choose", as if there were no param.
+  const [hostTarget] = useState(() => (joinGameId || backFromIdCheck || arrivedForCard ? null : hostRoute(window.location.search)));
   const [mode, setMode] = useState<Mode>(
-    isSoloResume ? "solo" : joinGameId ? "multiplayer" : backFromIdCheck ? "stranger" : arrivedForCard ? "pending" : "choose",
+    isSoloResume ? "solo" : joinGameId ? "multiplayer" : backFromIdCheck ? "stranger" : arrivedForCard ? "pending" : hostTarget ? "hostcheck" : "choose",
   );
+  const [deck, setDeck] = useState<DeckData | null>(null);
+  useEffect(() => {
+    if (!hostTarget) return;
+    let live = true;
+    const giveUp = setTimeout(() => setMode((m) => (m === "hostcheck" ? "choose" : m)), 8000);
+    void loadDeck().then((d) => {
+      clearTimeout(giveUp);
+      if (!live) return;
+      if (d) setDeck(d);
+      setMode((m) => (m === "hostcheck" ? (d ? hostTarget : "choose") : m));
+    });
+    return () => { live = false; clearTimeout(giveUp); };
+  }, [hostTarget]);
   const [card, setCard] = useState<MeetupCard | null>(null);
   const [cardChanged, setCardChanged] = useState(false);
   const [notForMe, setNotForMe] = useState<string[]>([]);
@@ -337,7 +359,15 @@ export function App() {
     if (mode === "choose") clearResume();
   }, [mode]);
 
-  if (mode === "pending") return <div className="app"><div className="lobby" aria-busy="true" /></div>;
+  if (mode === "pending" || mode === "hostcheck") return <div className="app"><div className="lobby" aria-busy="true" /></div>;
+  if (mode === "host" && deck) return <div className="app fade-in"><HostPortal deck={deck} /></div>;
+  if (mode === "deck" && deck) {
+    return (
+      <div className="app fade-in">
+        <Deck deck={deck} onBack={() => window.location.assign(import.meta.env.BASE_URL)} />
+      </div>
+    );
+  }
   const eventCard = (c: MeetupCard, code: string) => (
     <EventCard
       card={c}
