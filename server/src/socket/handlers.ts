@@ -71,12 +71,15 @@ import { isResearchEnabled } from "../research/config.js";
 import { loadParentContext } from "../research/parent-context.js";
 import type { PartnerPayments } from "../payments/partner-payments.js";
 import type { HostTools } from "../hosts/service.js";
+import type { ShareService } from "../hosts/share.js";
 
 export interface SocketDeps {
   /** Stranger mode (Tier 4): matching, seat binding. Absent in most tests. */
   stranger?: StrangerService;
   /** Meetup host tools (absent, or inactive, unless RI_STRANGER_MODE=meetup). */
   hostTools?: HostTools | null;
+  /** Host tools share codes (§5): the share step after the report card. */
+  share?: ShareService | null;
   io: Server;
   games: Map<string, GameState>;
   sessions: Map<string, Session>;
@@ -297,10 +300,10 @@ function lobbyState(session: Session): LobbyState {
 export function registerSocketHandlers(deps: SocketDeps): void {
   const { io, games, sessions, conversationEngine, endgameEngine, repo, llm,
           gameLocks = new Map<string, Promise<void>>(),
-          handoffTtlMs = HANDOFF_TTL_MS, payments, stranger, hostTools } = deps;
+          handoffTtlMs = HANDOFF_TTL_MS, payments, stranger, hostTools, share } = deps;
   const hostsOn = () => (hostTools?.active() ? hostTools : null);
   /** The end screens of a stranger game at a meetup (no I/O: STATE is synchronous). */
-  const meetupEnd = (gameId: string): { handles: boolean; share: boolean; learning: boolean } | null => {
+  const meetupEnd = (gameId: string): { handles: boolean; share: boolean; learning: boolean; host?: string } | null => {
     const h = hostsOn();
     const eventId = h ? stranger?.matching?.eventIdOf(gameId) : null;
     return h && eventId ? h.endScreens(eventId) : null;
@@ -311,7 +314,7 @@ export function registerSocketHandlers(deps: SocketDeps): void {
     ...viewerState(state, slot, generating),
     payment: payments?.view(state.id, slot) ?? null,
     ...(stranger?.matching?.isRun(state.id) ? { strangerRun: true } : {}),
-    ...((): { meetupEnd?: { handles: boolean; share: boolean; learning: boolean } } => {
+    ...((): { meetupEnd?: { handles: boolean; share: boolean; learning: boolean; host?: string } } => {
       const m = stranger?.matching?.isRun(state.id) ? meetupEnd(state.id) : null;
       return m ? { meetupEnd: m } : {};
     })(),
@@ -1999,6 +2002,30 @@ export function registerSocketHandlers(deps: SocketDeps): void {
       } catch (err) {
         logger.error("handle_exchange_failed", { gameId, error: err instanceof Error ? err.message : String(err) });
         refuse("Something went wrong. Nothing was shared.");
+      }
+    });
+
+    socket.on(E.SHARE_DECISION, async (payload: { answer?: unknown } | undefined) => {
+      const gameId = data.gameId;
+      const slot = data.slot;
+      const refuse = (error: string) => socket.emit(E.SHARE_STATE, { error });
+      try {
+        if (!gameId || (slot !== "parent1" && slot !== "parent2") || !hostsOn() || !share) return refuse("Not available in this game.");
+        const state = games.get(gameId);
+        if (state?.phase !== "report_card") return refuse("This comes after the report card.");
+        const answer = payload?.answer;
+        if (answer === "preview") {
+          if (!(await share.context(gameId))) return refuse("Not available in this game.");
+          return void socket.emit(E.SHARE_STATE, { preview: await share.snapshot(gameId) });
+        }
+        const view = answer === "status" ? await share.status(gameId, slot) : await share.answer(gameId, slot, answer);
+        if (!view) return refuse("Not available in this game.");
+        // Only this seat's own view, to this seat's own sockets. Never anything to the co-parent.
+        socket.emit(E.SHARE_STATE, { view });
+        io.to(slotRoom(gameId, slot)).except(socket.id).emit(E.SHARE_STATE, { view });
+      } catch (err) {
+        logger.error("share_decision_failed", { gameId, error: err instanceof Error ? err.message : String(err) });
+        refuse("Something went wrong. Nothing was recorded.");
       }
     });
 

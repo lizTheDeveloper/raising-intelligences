@@ -139,6 +139,11 @@ export class StrangerService {
     return x;
   }
 
+  /** The Matrix id last seated in a stranger game's seat, if this process saw it. */
+  seatHolder(gameId: string, slot: StrangerSlot): string | null {
+    return this.exchanges.get(gameId)?.holders[slot] ?? null;
+  }
+
   noteSeatHolder(gameId: string, slot: StrangerSlot, mxid: string): void {
     this.exchange(gameId).holders[slot] = mxid;
   }

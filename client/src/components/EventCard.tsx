@@ -40,6 +40,94 @@ export function CardText({ text }: { text: string }) {
   );
 }
 
+/**
+ * The card's own terms, read-only: the lead, name, host line, welcome and
+ * sections. The event card itself and the account page's "the card you
+ * agreed to" both render it.
+ */
+export function CardTerms({ card, headingLevel = 1 }: { card: MeetupCard; headingLevel?: 1 | 2 }) {
+  const Title = headingLevel === 1 ? "h1" : "h2";
+  const Section = headingLevel === 1 ? "h2" : "h3";
+  return (
+    <>
+      <p className="event-card-lead dim"><strong>prototype</strong> · <CardText text={card.lead} /></p>
+      <Title>{card.eventName}</Title>
+      <p className="dim"><CardText text={card.hostLine} /></p>
+      {card.welcome && <p><CardText text={card.welcome} /></p>}
+
+      {card.sections.map((s, i) => (
+        <section key={i} className="event-card-section">
+          {s.heading && <Section><CardText text={s.heading} /></Section>}
+          {s.paragraphs?.map((p, j) => <p key={j}><CardText text={p} /></p>)}
+          {s.bullets && s.bullets.length > 0 && (
+            <ul>{s.bullets.map((b, j) => <li key={j}><CardText text={b} /></li>)}</ul>
+          )}
+        </section>
+      ))}
+    </>
+  );
+}
+
+/**
+ * "report this host" (spec §B.5): POST /events/report-host. The meetup code
+ * goes with it when there is one; the account page has none to send.
+ */
+export function ReportHost({ host, meetup, onBack }: { host: string; meetup?: string; onBack: () => void }) {
+  const [sent, setSent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [report, setReport] = useState("");
+
+  const sendReport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (!report.trim()) return setError("tell the studio what happened.");
+    setBusy(true);
+    try {
+      const r = await post<{ ok?: boolean; error?: string }>("/events/report-host", meetup ? { meetup, text: report } : { text: report });
+      if (r.status === 200 && r.body.ok) {
+        setReport("");
+        setSent(true);
+      } else {
+        setError(r.body.error ?? "that didn't send. try again.");
+      }
+    } catch {
+      setError("that didn't send. try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (sent) {
+    return (
+      <div className="lobby stranger-mode event-card" role="status">
+        <p>thanks. the studio will look into it.</p>
+        <button className="btn btn-secondary" onClick={onBack}>back</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="lobby stranger-mode event-card">
+      <h1>report this host</h1>
+      <p>tell the studio what happened. a person reads every report. {host} isn't told who sent it.</p>
+      <form onSubmit={sendReport} className="event-card-report">
+        <textarea
+          className="event-card-textarea"
+          aria-label="what happened"
+          rows={6}
+          maxLength={2000}
+          value={report}
+          onChange={(e) => setReport(e.target.value)}
+        />
+        {error && <p className="error">{error}</p>}
+        <button className="btn" type="submit" disabled={busy}>{busy ? "sending…" : "send"}</button>
+      </form>
+      <button className="btn btn-secondary" onClick={onBack}>back</button>
+    </div>
+  );
+}
+
 interface Props {
   card: MeetupCard;
   meetup: string;
@@ -53,13 +141,12 @@ interface Props {
   onInvite: () => void;
 }
 
-type View = "card" | "report" | "reported";
+type View = "card" | "report";
 
 export function EventCard({ card, meetup, changed, onCardReplaced, onAcked, onNotForMe, onInvite }: Props) {
   const [view, setView] = useState<View>("card");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [report, setReport] = useState("");
   const host = card.hostName ?? "the host";
   const conduct = safeHttpsUrl(card.conductUrl);
   const note = statusNote(card.status);
@@ -94,76 +181,14 @@ export function EventCard({ card, meetup, changed, onCardReplaced, onAcked, onNo
     }
   };
 
-  const sendReport = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    if (!report.trim()) return setError("tell the studio what happened.");
-    setBusy(true);
-    try {
-      const r = await post<{ ok?: boolean; error?: string }>("/events/report-host", { meetup, text: report });
-      if (r.status === 200 && r.body.ok) {
-        setReport("");
-        setView("reported");
-      } else {
-        setError(r.body.error ?? "that didn't send. try again.");
-      }
-    } catch {
-      setError("that didn't send. try again.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const backToCard = () => { setError(null); setView("card"); };
 
-  if (view === "reported") {
-    return (
-      <div className="lobby stranger-mode event-card" role="status">
-        <p>thanks. the studio will look into it.</p>
-        <button className="btn btn-secondary" onClick={backToCard}>back</button>
-      </div>
-    );
-  }
-
-  if (view === "report") {
-    return (
-      <div className="lobby stranger-mode event-card">
-        <h1>report this host</h1>
-        <p>tell the studio what happened. a person reads every report. {host} isn't told who sent it.</p>
-        <form onSubmit={sendReport} className="event-card-report">
-          <textarea
-            className="event-card-textarea"
-            aria-label="what happened"
-            rows={6}
-            maxLength={2000}
-            value={report}
-            onChange={(e) => setReport(e.target.value)}
-          />
-          {error && <p className="error">{error}</p>}
-          <button className="btn" type="submit" disabled={busy}>{busy ? "sending…" : "send"}</button>
-        </form>
-        <button className="btn btn-secondary" onClick={backToCard}>back</button>
-      </div>
-    );
-  }
+  if (view === "report") return <ReportHost host={host} meetup={meetup} onBack={backToCard} />;
 
   return (
     <div className="lobby stranger-mode event-card" data-testid="event-card">
       {changed && <p className="event-card-changed" role="status">{CARD_CHANGED}</p>}
-      <p className="event-card-lead dim"><strong>prototype</strong> · <CardText text={card.lead} /></p>
-      <h1>{card.eventName}</h1>
-      <p className="dim"><CardText text={card.hostLine} /></p>
-      {card.welcome && <p><CardText text={card.welcome} /></p>}
-
-      {card.sections.map((s, i) => (
-        <section key={i} className="event-card-section">
-          {s.heading && <h2><CardText text={s.heading} /></h2>}
-          {s.paragraphs?.map((p, j) => <p key={j}><CardText text={p} /></p>)}
-          {s.bullets && s.bullets.length > 0 && (
-            <ul>{s.bullets.map((b, j) => <li key={j}><CardText text={b} /></li>)}</ul>
-          )}
-        </section>
-      ))}
+      <CardTerms card={card} />
 
       <section className="event-card-section">
         <h2>came with someone you know?</h2>

@@ -160,7 +160,7 @@ export interface ViewerState {
    * report card. `handles`: the handle exchange; `share`: the share step;
    * `learning`: the studio-learning question.
    */
-  meetupEnd?: { handles: boolean; share: boolean; learning: boolean };
+  meetupEnd?: { handles: boolean; share: boolean; learning: boolean; host?: string };
 }
 
 /** Server → room co-presence broadcast, emitted to the *other* player only. */
@@ -234,6 +234,14 @@ export const SOCKET_EVENTS = {
   HANDLE_EXCHANGE: "handle_exchange",
   /** `{ mine, closed, matrixId?, error? }` — matrixId is the OTHER player's, sent only on a mutual yes, only to each seat. */
   HANDLE_STATE: "handle_state",
+  /**
+   * Host tools share step, after the report card, at events with share codes:
+   * client → server `{ answer: "yes" | "no" | "later" | "status" | "preview" }`.
+   * Server → that seat only: SHARE_STATE `{ view?, preview?, error? }`. The
+   * same for every game, including games that can never make a code.
+   */
+  SHARE_DECISION: "share_decision",
+  SHARE_STATE: "share_state",
   /** Stranger mode, any time: client → server `{ reason }`. Suspends the reported player, blocks the pair, closes the exchange. */
   STRANGER_REPORT: "stranger_report",
   STRANGER_REPORTED: "stranger_reported",

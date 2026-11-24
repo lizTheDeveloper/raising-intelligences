@@ -22,6 +22,8 @@ import { HostTools } from "./hosts/service.js";
 import { devMatrixVerifier, readDevHarness } from "./dev/harness.js";
 import { createHostToolsRoutes, createHostToolsAdminRoutes } from "./hosts/routes.js";
 import { HostPortal, createHostPortalRoutes, createHostPortalAdminRoutes } from "./hosts/portal.js";
+import { ShareService } from "./hosts/share.js";
+import { AccountService, createAccountRoutes } from "./hosts/account.js";
 import { readStrangerConfig } from "./stranger/config.js";
 import { verifyOpenIdToken } from "./stranger/matrix-identity.js";
 import { cachedMatrixVerifier, type MatrixVerifier } from "./security/game-read-access.js";
@@ -103,6 +105,7 @@ export interface BuiltServer {
   payments: PartnerPayments;
   stranger: StrangerService;
   hostTools: HostTools | null;
+  share: ShareService | null;
   close: () => Promise<void>;
 }
 
@@ -323,11 +326,18 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
   app.use("/api", createStripeWebhookRoute(payments));
   app.use("/api", createIdentityWebhookRoute(stranger));
   app.use("/api", createStrangerRoutes(stranger, rateLimit({ windowMs: 60_000, max: 30, standardHeaders: true, legacyHeaders: false })));
+  let share: ShareService | null = null;
   if (hostTools) {
     app.use("/api", createHostToolsRoutes(hostTools, rateLimit({ windowMs: 60_000, max: 30, standardHeaders: true, legacyHeaders: false })));
     app.use("/api", createHostToolsAdminRoutes(hostTools));
     const portal = new HostPortal(hostTools);
-    app.use("/api", createHostPortalRoutes(hostTools, portal, rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false })));
+    share = new ShareService({
+      hosts: hostTools, repo, games,
+      names: (id) => Object.fromEntries((sessions.get(id)?.players ?? []).map((p) => [p.slot, p.displayName])),
+    });
+    const account = new AccountService(hostTools, share, portal, games, repo);
+    app.use("/api", createHostPortalRoutes(hostTools, portal, rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false }), share));
+    app.use("/api", createAccountRoutes(hostTools, account, share, rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false })));
     app.use("/api", createHostPortalAdminRoutes(hostTools, portal));
   }
   app.use("/api", createPartnerPaymentRoutes({ payments, repo, sessions, gameLocks, limit: paymentLimit }));
@@ -403,7 +413,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     repo,
     llm,
     gameLocks,
-    payments, stranger, hostTools,
+    payments, stranger, hostTools, share,
   });
 
   let evictionTimer: NodeJS.Timeout | undefined;
@@ -438,6 +448,7 @@ export function buildServer(options: BuildServerOptions): BuiltServer {
     payments,
     stranger,
     hostTools,
+    share,
     close,
   };
 }

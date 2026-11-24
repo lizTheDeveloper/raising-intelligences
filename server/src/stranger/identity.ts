@@ -307,6 +307,22 @@ export class AgeVerification {
    * May this account enter the stranger pool (or be matched, or exchange a
    * handle) right now? Re-checked at each of those steps, not cached.
    */
+  /**
+   * The adult check by subject alone, for when the Matrix id isn't in memory
+   * (after a restart): the stored outcome and its mode. The ban list is keyed
+   * by Matrix id, so it is only checked by adultForPool.
+   */
+  async adultBySubject(subject: string): Promise<boolean> {
+    try {
+      const row = await this.store.getVerification(subject);
+      if (!row || row.outcome !== "adult") return false;
+      const cfg = this.config();
+      return row.livemode || (!cfg.production && cfg.allowTestIdentity);
+    } catch {
+      return false;
+    }
+  }
+
   async adultForPool(matrixId: string): Promise<{ ok: boolean; reason?: PoolRefusal }> {
     try {
       if (await this.childSafety.isIdentifierBanned({ kind: "matrix", value: matrixId })) return { ok: false, reason: "banned" };

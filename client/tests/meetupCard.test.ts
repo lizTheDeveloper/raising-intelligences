@@ -141,7 +141,7 @@ test("lowerLevel follows the level ceilings", () => {
 
 import { untrackedLanding } from "../src/meetupCard.ts";
 
-test("untrackedLanding: the meetup card, the host portal and the deck load with nothing counted", () => {
-  for (const q of ["?meetup=tea-party", "?x=1&meetup=a", "?host=1", "?deck=1"]) assert.equal(untrackedLanding(q), true, q);
-  for (const q of ["", "?game=abc", "?devmxid=@a:local", "?hosted=1", "?meetups=1"]) assert.equal(untrackedLanding(q), false, q);
+test("untrackedLanding: the meetup card, the host portal, the deck and the account page load with nothing counted", () => {
+  for (const q of ["?meetup=tea-party", "?x=1&meetup=a", "?host=1", "?deck=1", "?stranger=account"]) assert.equal(untrackedLanding(q), true, q);
+  for (const q of ["", "?game=abc", "?devmxid=@a:local", "?hosted=1", "?meetups=1", "?stranger=identity", "?stranger=queue", "?account=1"]) assert.equal(untrackedLanding(q), false, q);
 });

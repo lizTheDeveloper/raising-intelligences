@@ -99,6 +99,8 @@ export interface GameRepository {
     epilogue: string,
     reportCard: string
   ): Promise<void>;
+  /** The stored epilogue and report card, or null. */
+  loadEndgame(gameId: string): Promise<{ epilogue: string; reportCard: string } | null>;
   /** Reconstruct an in-memory GameState from the latest checkpoint, or null. */
   loadGame(gameId: string): Promise<GameState | null>;
   /**
@@ -522,6 +524,11 @@ export class PgGameRepository implements GameRepository {
          report_card = EXCLUDED.report_card`,
       [gameId, epilogue, reportCard]
     );
+  }
+
+  async loadEndgame(gameId: string): Promise<{ epilogue: string; reportCard: string } | null> {
+    const { rows } = await this.db.query(`SELECT epilogue, report_card FROM endgames WHERE game_id = $1`, [gameId]);
+    return rows[0] ? { epilogue: String(rows[0].epilogue ?? ""), reportCard: String(rows[0].report_card ?? "") } : null;
   }
 
   async savePlayer(gameId: string, slot: string, displayName: string, token: string, userId?: string, campusSub?: string): Promise<void> {
@@ -1517,6 +1524,10 @@ export class InMemoryGameRepository implements GameRepository {
       therapyMessages: game.therapyMessages.map((m) => ({ ...m })),
       interventionText: game.interventionText,
     });
+  }
+
+  async loadEndgame(gameId: string): Promise<{ epilogue: string; reportCard: string } | null> {
+    return this.endgames.get(gameId) ?? null;
   }
 
   /** Test helper: read the persisted endgame, if any. */

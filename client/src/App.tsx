@@ -14,6 +14,8 @@ import { asCard, clearAck, loadAck, urlWithoutMeetup, type MeetupCard } from "./
 import { HostPortal } from "./components/HostPortal";
 import { Deck, loadDeck } from "./components/Deck";
 import { hostRoute, type Deck as DeckData } from "./hostPortal";
+import { Account, probeAccount } from "./components/Account";
+import { isAccountRoute } from "./shareCodes";
 
 const TAGLINES = [
   // funny
@@ -183,7 +185,9 @@ const TAGLINE = TAGLINES[Math.floor(Math.random() * TAGLINES.length)];
 // "card" / "notforme": the meetup host tools' card (spec §3), shown first.
 // "hostcheck": a ?host=1 / ?deck=1 link, waiting to hear whether host tools are on.
 // "host" / "deck": the host portal and the discussion deck (spec §4, B.6). Untracked.
-type Mode = "choose" | "solo" | "multiplayer" | "stranger" | "pending" | "card" | "notforme" | "hostcheck" | "host" | "deck";
+// "accountcheck" / "account": a ?stranger=account link, waiting to hear whether host
+// tools are on, then the stranger player's account page (spec §5.4). Untracked.
+type Mode = "choose" | "solo" | "multiplayer" | "stranger" | "pending" | "card" | "notforme" | "hostcheck" | "host" | "deck" | "accountcheck" | "account";
 type Theme = "" | "theme-ocean-grunge" | "theme-cyber";
 
 const THEMES: { id: Theme; label: string }[] = [
@@ -217,9 +221,22 @@ export function App() {
   // nothing paints until the server answers; with host tools off the deck
   // request isn't a 200 and this becomes "choose", as if there were no param.
   const [hostTarget] = useState(() => (joinGameId || backFromIdCheck || arrivedForCard ? null : hostRoute(window.location.search)));
+  // ?stranger=account: the account page. Nothing paints until the server says
+  // host tools are on; otherwise this becomes "choose", as if there were no param.
+  const [accountTarget] = useState(() => !joinGameId && !arrivedForCard && !hostTarget && isAccountRoute(window.location.search));
   const [mode, setMode] = useState<Mode>(
-    isSoloResume ? "solo" : joinGameId ? "multiplayer" : backFromIdCheck ? "stranger" : arrivedForCard ? "pending" : hostTarget ? "hostcheck" : "choose",
+    isSoloResume ? "solo" : joinGameId ? "multiplayer" : backFromIdCheck ? "stranger" : arrivedForCard ? "pending" : hostTarget ? "hostcheck" : accountTarget ? "accountcheck" : "choose",
   );
+  useEffect(() => {
+    if (!accountTarget) return;
+    let live = true;
+    const giveUp = setTimeout(() => setMode((m) => (m === "accountcheck" ? "choose" : m)), 8000);
+    void probeAccount().then((on) => {
+      clearTimeout(giveUp);
+      if (live) setMode((m) => (m === "accountcheck" ? (on ? "account" : "choose") : m));
+    });
+    return () => { live = false; clearTimeout(giveUp); };
+  }, [accountTarget]);
   const [deck, setDeck] = useState<DeckData | null>(null);
   useEffect(() => {
     if (!hostTarget) return;
@@ -359,7 +376,8 @@ export function App() {
     if (mode === "choose") clearResume();
   }, [mode]);
 
-  if (mode === "pending" || mode === "hostcheck") return <div className="app"><div className="lobby" aria-busy="true" /></div>;
+  if (mode === "pending" || mode === "hostcheck" || mode === "accountcheck") return <div className="app"><div className="lobby" aria-busy="true" /></div>;
+  if (mode === "account") return <div className="app fade-in"><Account /></div>;
   if (mode === "host" && deck) return <div className="app fade-in"><HostPortal deck={deck} /></div>;
   if (mode === "deck" && deck) {
     return (

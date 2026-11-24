@@ -84,6 +84,16 @@ To check the host side: a host who joins their own event's queue gets "stranger 
 - **Discussion deck alone:** `http://localhost:5173/?deck=1`. No sign-in is needed, and it prints cleanly.
 - **Untracked pages:** the meetup card, the portal and the deck send no Umami pageview and don't start the session beats.
 
+## 3c. Share codes, end to end
+
+1. Create an outside host at level 3 (needs `RI_SHARE_CODE_SECRET`): `"kind":"outside","level":3,"hostPersonId":"<id>","handleExchange":false`. A studio event at level 3 needs a guest reader instead.
+2. Drive two players through a game at that code (section 3). With `RI_DEV_MOCK_LLM`, play to the report card.
+3. After the report card, each seat sees the share step. Both say **yes**.
+4. The code appears on each player's account page (`http://localhost:5173/?stranger=account&devmxid=@ash:local`) 2 to 10 minutes after the second yes. Locally you have to wait, because the delay is real.
+5. The host enters the four words in the portal (`?host=1&devmxid=@robin:local`, under "share codes"). The view shows the scrubbed report card and epilogue with a watermark. Each opening appears on both players' account pages.
+6. **A game that can't make a code** behaves exactly the same for its players, except that no code ever appears. Examples: the safety ladder fired, there is a child-safety case or hold, a seat is now a minor, banned or suspended, or the pair is blocked. After 14 days the account page says "no code was made for this game."
+7. **Stopping:** "stop this code" on the account page. The host's next attempt to open it says "this code isn't available." The co-parent's row doesn't change.
+
 ## 4. Run the tests
 
 On the Mac, run only the host tests; send the full suite to the vast box.

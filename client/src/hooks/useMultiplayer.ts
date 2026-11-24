@@ -1,4 +1,5 @@
 import type { HandleState } from "../components/StrangerExchange";
+import { asShareMessage, type ShareMessage, type ShareSnapshot, type ShareView } from "../shareCodes";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import { track, mark, secondsSince, bucketSeconds } from "../analytics";
@@ -26,6 +27,10 @@ const E = {
   STRANGER_NO_SHOW: "stranger_no_show",
   HANDLE_EXCHANGE: "handle_exchange",
   HANDLE_STATE: "handle_state",
+  /** Host tools share step: client → server `{ answer: "yes" | "no" | "later" | "status" | "preview" }`. */
+  SHARE_DECISION: "share_decision",
+  /** Server → this seat only: `{ view } | { preview } | { error }`. */
+  SHARE_STATE: "share_state",
   STRANGER_REPORT: "stranger_report",
   STRANGER_REPORTED: "stranger_reported",
   STRANGER_GAME_ENDED: "stranger_game_ended",
@@ -257,6 +262,12 @@ interface ViewerState {
   payment?: PartnerPayment | null;
   /** A stranger-mode game: no invite link, seats bound to the matched adults. */
   strangerRun?: boolean;
+  /**
+   * A stranger game at a host-tools meetup: which end screens follow the
+   * report card (`handles`: the handle exchange; `share`: the share step).
+   * `host` is the name the share step's copy uses.
+   */
+  meetupEnd?: { handles: boolean; share: boolean; learning: boolean; host?: string };
 }
 
 export interface PartnerPayment {
@@ -294,6 +305,12 @@ export function useMultiplayer() {
   const [error, setError] = useState<string | null>(null);
   const [strangerNoShow, setStrangerNoShow] = useState(false);
   const [handleState, setHandleState] = useState<HandleState | null>(null);
+  // The share step (host tools §5.1): this seat's own view, the last preview
+  // asked for, and the last thing the server said (for the screen order).
+  const [shareView, setShareView] = useState<ShareView | null>(null);
+  const [sharePreview, setSharePreview] = useState<{ snapshot: ShareSnapshot | null } | null>(null);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [shareLatest, setShareLatest] = useState<ShareMessage | null>(null);
   const [strangerReported, setStrangerReported] = useState(false);
   const [strangerEnded, setStrangerEnded] = useState(false);
   const [inLobby, setInLobby] = useState(false);
@@ -577,6 +594,10 @@ export function useMultiplayer() {
       if (gameIdRef.current !== d.gameId) {
         // A different game: nothing from the last one's exchange carries over.
         setHandleState(null);
+        setShareView(null);
+        setSharePreview(null);
+        setShareError(null);
+        setShareLatest(null);
         setStrangerReported(false);
         setStrangerNoShow(false);
         setStrangerEnded(false);
@@ -722,6 +743,23 @@ export function useMultiplayer() {
     });
     socket.on(E.STRANGER_NO_SHOW, () => setStrangerNoShow(true));
     socket.on(E.HANDLE_STATE, (st: HandleState) => setHandleState(st));
+    socket.on(E.SHARE_STATE, (raw: unknown) => {
+      const m = asShareMessage(raw);
+      if (!m) return;
+      if ("view" in m) {
+        setShareView(m.view);
+        setShareError(null);
+        setShareLatest(m);
+      } else if ("preview" in m) {
+        setSharePreview({ snapshot: m.preview });
+        setShareError(null);
+      } else {
+        setShareError(m.error);
+        // An answered view stands; otherwise the refusal is the latest word, so
+        // the handle exchange after the share step is never held back by it.
+        setShareLatest((prev) => (prev && "view" in prev && prev.view.state !== "ask" ? prev : m));
+      }
+    });
     socket.on(E.STRANGER_REPORTED, () => setStrangerReported(true));
     socket.on(E.STRANGER_GAME_ENDED, () => setStrangerEnded(true));
 
@@ -783,6 +821,12 @@ export function useMultiplayer() {
   }, []);
   const handleStatus = useCallback(() => {
     socketRef.current?.emit(E.HANDLE_EXCHANGE, { answer: "status" });
+  }, []);
+  /** Host tools share step: an answer, "status" (a reload) or "preview". Nothing here is tracked. */
+  const shareDecision = useCallback((answer: "yes" | "no" | "later" | "status" | "preview") => {
+    if (answer === "preview") setSharePreview(null);
+    setShareError(null);
+    socketRef.current?.emit(E.SHARE_DECISION, { answer });
   }, []);
   const reportStranger = useCallback((reason: string) => {
     socketRef.current?.emit(E.STRANGER_REPORT, { reason });
@@ -1044,6 +1088,11 @@ export function useMultiplayer() {
     handleState,
     answerHandle,
     handleStatus,
+    shareView,
+    sharePreview,
+    shareError,
+    shareLatest,
+    shareDecision,
     strangerReported,
     reportStranger,
     strangerEnded,
