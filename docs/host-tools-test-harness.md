@@ -16,7 +16,8 @@ export RI_DEV_FAKE_IDENTITY=true                        # the ID check passes at
 export RI_STRANGER_ALLOW_TEST_IDENTITY=true             # ...which is a test-mode result, so allow those
 export RI_DEV_MOCK_LLM=true                             # canned scenes and replies: no model calls
 # optional: export RI_MEETUP_CODES=tea-party            # listed codes become studio level-0 events
-npm run dev                                             # server :3000, client :5173
+# optional: export DATABASE_URL=postgres://…            # needed for the admin screen; keeps data across restarts
+npm run dev                                             # server :3000 (or $PORT), client :5173
 ```
 
 Notes:
@@ -26,7 +27,7 @@ Notes:
 
 ## 2. Create a host (or guest reader) and an event
 
-**Admin screen:** open `http://localhost:5173/admin`, enter the `ADMIN_TOKEN`, and choose **host tools**. The same page works in production at `https://multiversegames.ai/raising-intelligences/admin`.
+**Admin screen:** open `http://localhost:5173/admin`, enter the `ADMIN_TOKEN`, and choose **Host tools**. The same page works in production at `https://multiversegames.ai/raising-intelligences/admin`. Locally the admin sign-in needs `DATABASE_URL` (the general admin routes only mount on Postgres); without it, use the curl calls below, which work either way.
 
 **With curl.** For production, change `BASE` to `https://multiversegames.ai/raising-intelligences` and use the real `ADMIN_TOKEN`.
 
