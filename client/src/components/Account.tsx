@@ -2,6 +2,7 @@ import { loadDeck } from "./Deck";
 import { useCallback, useEffect, useState } from "react";
 import { formatDate } from "../hostPortal";
 import {
+  LEARNING_WITHDRAW,
   PANEL_NOTHING,
   REPORT_CARD_OMITTED,
   SHARE_SILENCE,
@@ -10,6 +11,9 @@ import {
   asAccountPage,
   asShareRow,
   asSnapshot,
+  codeOpeningsLine,
+  forgetWarning,
+  gameRowTitle,
   hostForEvent,
   learningLine,
   loadAccountPass,
@@ -78,7 +82,9 @@ type Panel =
   | { ref: string; kind: "decide" }
   | { ref: string; kind: "preview"; snapshot: ShareSnapshot | null | undefined }
   | { ref: string; kind: "stop" }
-  | { ref: string; kind: "unlink" };
+  | { ref: string; kind: "unlink" }
+  | { ref: string; kind: "learning" }
+  | { ref: string; kind: "forget" };
 
 export function Account() {
   const [pass, setPass] = useState<string | null>(() => loadAccountPass());
@@ -236,9 +242,18 @@ export function Account() {
       if (pass) void loadPage(pass);
     });
 
+  /** Studio learning: a yes becomes no (H18). The allow-list follows at once. */
+  const withdrawLearning = (g: AccountGame) =>
+    rowCall(g.ref, "/stranger/account/learning", { gameRef: g.ref, answer: "no" }, () => {
+      setPage((pg) => (pg ? { ...pg, games: pg.games.map((x) => (x.ref === g.ref ? { ...x, learning: "no" } : x)) } : pg));
+      setPanel(null);
+    });
+
+  /** "remove from my list": deletes the attendance record (after a confirm that says so). */
   const forget = (ref: string) =>
     rowCall(ref, "/stranger/account/forget-meetup", { eventRef: ref }, () => {
       setPage((pg) => (pg ? { ...pg, meetups: pg.meetups.filter((m) => m.ref !== ref) } : pg));
+      setPanel(null);
     });
 
   const toggleCard = (ref: string) =>
@@ -295,7 +310,7 @@ export function Account() {
     const learning = learningLine(g.learning);
     return (
       <div key={g.ref} className="account-game" data-testid="account-game">
-        <p><strong>{g.childName}</strong> · {g.eventName}</p>
+        <p><strong>{gameRowTitle(g)}</strong></p>
         {lines && (
           <p className="account-share-line">
             {lines.runs.map((r, i) => (r.bold ? <strong key={i}>{r.text}</strong> : <span key={i}>{r.text}</span>))}
@@ -352,6 +367,20 @@ export function Account() {
           </div>
         )}
         {learning && <p className="dim">{learning}</p>}
+        {g.learning === "yes" && !p && (
+          <button className="btn-link" onClick={() => { setRowError(null); setPanel({ ref: g.ref, kind: "learning" }); }} disabled={busy}>
+            change it to no
+          </button>
+        )}
+        {p?.kind === "learning" && (
+          <div className="account-panel">
+            <p>{LEARNING_WITHDRAW}</p>
+            <div className="event-card-actions">
+              <button className="btn btn-secondary" onClick={() => void withdrawLearning(g)} disabled={busy}>change it to no</button>
+              <button className="btn btn-secondary" onClick={() => setPanel(null)} disabled={busy}>back</button>
+            </div>
+          </div>
+        )}
 
         {g.unlink === "requested" ? (
           <p className="dim" data-testid="account-unlink-requested">{UNLINK_REQUESTED}</p>
@@ -395,8 +424,17 @@ export function Account() {
                   <strong>{m.name}</strong> · {formatDate(m.at)} ·{" "}
                   <button className="btn-link" onClick={() => toggleCard(m.ref)} aria-expanded={openCards.has(m.ref)}>the card you agreed to</button>
                   {" · "}
-                  <button className="btn-link" onClick={() => void forget(m.ref)} disabled={busy}>remove from my list</button>
+                  <button className="btn-link" onClick={() => { setRowError(null); setPanel({ ref: m.ref, kind: "forget" }); }} disabled={busy}>remove from my list</button>
                 </p>
+                {panel?.ref === m.ref && panel.kind === "forget" && (
+                  <div className="account-panel">
+                    <p>{forgetWarning(m.name)}</p>
+                    <div className="event-card-actions">
+                      <button className="btn btn-secondary" onClick={() => void forget(m.ref)} disabled={busy}>delete it</button>
+                      <button className="btn btn-secondary" onClick={() => setPanel(null)} disabled={busy}>cancel</button>
+                    </div>
+                  </div>
+                )}
                 {openCards.has(m.ref) && (
                   <div className="account-card">
                     {m.card ? <CardTerms card={m.card} headingLevel={2} /> : <p className="dim">that card isn't available.</p>}
@@ -414,12 +452,14 @@ export function Account() {
           </section>
 
           <section className="event-card-section">
-            <h2><strong>what your host saw</strong></h2>
+            <h2><strong>what the host or guest saw</strong></h2>
             {hostSaw.length === 0 && <p>{PANEL_NOTHING}</p>}
             {hostSaw.map((h, i) => (
               <p key={i}><strong>{h.name}</strong>: {panelLine(h.panel)}</p>
             ))}
-            <p className="dim">and your code's openings above. nothing else.</p>
+            {codeOpeningsLine(games.some((g) => g.share !== null)) && (
+              <p className="dim">{codeOpeningsLine(games.some((g) => g.share !== null))}</p>
+            )}
           </section>
         </>
       )}

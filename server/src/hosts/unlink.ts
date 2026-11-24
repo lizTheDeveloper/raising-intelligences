@@ -16,10 +16,21 @@ import type { HostEvent, Slot } from "./types.js";
  * learning choice go, the run stops naming them, and their seat can't be
  * taken again. The co-parent keeps their copy of the game.
  */
+/** The name the co-parent sees for a seat once its player is unlinked. */
+export const PLACEHOLDER_NAME: Record<Slot, string> = { parent1: "Parent 1", parent2: "Parent 2" };
+
+/**
+ * Retires an unlinked seat where the game's seats live (app.ts): its display
+ * name becomes the placeholder, saved and live, and its seat token is
+ * replaced, so the old resume credential reads nothing.
+ */
+export type RetireSeat = (gameId: string, slot: Slot, placeholder: string) => Promise<void>;
+
 export class UnlinkService {
   constructor(
     private readonly hosts: HostTools,
     private readonly share: ShareService,
+    private readonly retireSeat: RetireSeat | null = null,
   ) {}
 
   /** The player asks. Idempotent: one open request per seat. */
@@ -59,9 +70,25 @@ export class UnlinkService {
       await this.hosts.store.deleteLearning(u.gameId, slot);
       await stranger.store.unlinkRunSeat(u.gameId, slot, `${UNLINKED_SEAT_PREFIX}${u.id}`);
       stranger.matching?.forgetSeats(u.gameId);
+      // "without your name": the co-parent's copy shows the placeholder, and the old seat token stops working.
+      // Before the disconnect, so the lobby the co-parent is sent already carries the placeholder.
+      await this.retireSeat?.(u.gameId, slot, PLACEHOLDER_NAME[slot]);
       stranger.onSeatUnlinked?.(u.gameId, slot);
     }
     return this.hosts.store.markUnlinkDone(id, this.hosts.now());
+  }
+
+  /**
+   * May this Matrix account list this game on its kid list? A stranger game
+   * only while the account holds one of its seats and hasn't asked to be
+   * taken off it. Any other game: yes (not this service's to decide).
+   */
+  async mayList(mxid: string, gameId: string): Promise<boolean> {
+    const run = await this.hosts.stranger.store.getRun(gameId);
+    if (!run) return true;
+    const subject = await this.hosts.stranger.age.subjectHash(mxid);
+    if (run.parent1 !== subject && run.parent2 !== subject) return false;
+    return !(await this.pending(subject, gameId));
   }
 
   /** The account a placeholder seat subject was, for a report filed after the unlink. */

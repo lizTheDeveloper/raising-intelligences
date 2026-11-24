@@ -31,7 +31,7 @@ describe("the event card", () => {
     expect(text).not.toContain("isn't told you were asked");
     expect(text).not.toContain("no list of who played or who made a code");
     expect(l3Block("Dev")).toEqual([
-      "Dev only sees your game if **you two** give them a share code. at the end you'll each be asked, on your own, and you'll see exactly what it shows first. if you both say yes, a code appears on your account page, and you decide whether and when to give it to Dev.",
+      "Dev only sees your game if **you two** give them a share code. at the end you'll each be asked, on your own, and you'll see exactly what it shows first. if you both say yes, a code appears on your account page, and you decide whether and when to give it to Dev. Dev can open a code for 14 days after it appears, then read it for 30 days after opening it.",
       "RI never gives Dev a list of who played or who made a code. but Dev may know you came, and may notice that no code came from your pair. they can't tell why. games end up without a code when they don't finish, when either of you says no or waits, when you keep the code to yourselves, or for reasons RI doesn't share.",
       "a code shows: your report card (without its quotes) and your child's epilogue. both were written from your whole game, including your private talks with your child. they don't show those talks, but they can reflect them. you'll read exactly what Dev would see before you choose.",
       "if you both say yes but no code appears, your game couldn't make one. RI doesn't say why.",
@@ -93,7 +93,11 @@ describe("the event card", () => {
     expect(flat).toContain("it's free at this meetup.");
     expect(flat).toContain("about two and a half hours. you'll raise one child from birth to 25");
     expect(flat).toContain(STUDIO_BLOCK);
-    expect(flat).toContain("it's kept on the studio's own servers until the studio deletes it.");
+    expect(flat).toContain("it's kept on the studio's own servers until the studio deletes it, and there's no way yet to ask for that. taking a game off your account (on your account page) takes your name off your co-parent's copy, but deletes neither the game nor this record.");
+    // Unlink and purge delete no game data: nothing on the card may suggest the account page deletes the record.
+    expect(flat).not.toContain("you can ask the studio to take your game off your account");
+    // Attendance is a record of its own, disclosed with how long it's kept and how to delete it.
+    expect(flat).toContain("the studio records that your account came to this meetup, and which card you agreed to, until a year after the meetup closes.");
     expect(flat).toContain("games from this meetup are never used in the studio's blog posts, research or AI training.");
     expect(flat).toContain("if you both say yes, you'll each see the other's Matrix handle");
     expect(card.hostName).toBeNull();

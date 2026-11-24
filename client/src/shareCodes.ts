@@ -78,7 +78,7 @@ export const REPORT_CARD_OMITTED = "your report card couldn't be trimmed safely,
 export type ShareView =
   | { state: "ask" }
   | { state: "waiting" }
-  | { state: "no" }
+  | { state: "no"; until?: number }
   | { state: "later"; until: number };
 
 export type ShareMessage =
@@ -88,7 +88,8 @@ export type ShareMessage =
 
 function asView(v: unknown): ShareView | null {
   if (!isRec(v)) return null;
-  if (v.state === "ask" || v.state === "waiting" || v.state === "no") return { state: v.state };
+  if (v.state === "ask" || v.state === "waiting") return { state: v.state };
+  if (v.state === "no") return isTime(v.until) ? { state: "no", until: v.until } : { state: "no" };
   if (v.state === "later" && isTime(v.until)) return { state: "later", until: v.until };
   return null;
 }
@@ -121,7 +122,10 @@ export const previewTitle = (host: string) => `this is everything ${host} would 
 export function shareViewLine(view: ShareView, timeZone?: string): string | null {
   switch (view.state) {
     case "waiting": return "if your co-parent says yes too, a code will appear on your account page.";
-    case "no": return "okay, nothing will be made.";
+    case "no":
+      return view.until === undefined
+        ? "okay, nothing will be made."
+        : `okay, nothing will be made. if you change your mind, you can say yes on your account page until ${formatDate(view.until, timeZone)}.`;
     case "later": return `you can decide on your account page until ${formatDate(view.until, timeZone)}.`;
     default: return null;
   }
@@ -156,7 +160,7 @@ export function asLearningMessage(v: unknown): LearningMessage | null {
 
 export const LEARNING_QUESTION = "can the studio learn from your game?";
 export const LEARNING_EXPLAINS =
-  "the studio would read your game, including private talks, to improve stranger mode. it's never published, never in a blog post and never used to train AI. it only happens if you both say yes, and RI won't tell your co-parent what you chose.";
+  "the studio would read your game, including private talks, to improve stranger mode. it's never published, never in a blog post and never used to train AI. it only happens if you both say yes, and RI won't tell your co-parent what you chose. a yes isn't final: you can change it to no on your account page at any time.";
 /** H20: two equal answers, in this order, and neither is the default. */
 export const LEARNING_ANSWERS: ReadonlyArray<{ answer: "yes" | "no"; label: string }> = [
   { answer: "yes", label: "yes, let the studio learn from our game" },
@@ -190,11 +194,18 @@ export function endSteps(
 
 // ---- The account page ----
 
+/**
+ * "code": until is the latest day anyone can read it; openBy is there only
+ * while it hasn't been opened. "ended": it no longer opens, and the row never
+ * says why (the co-parent stopped it, it lapsed, or the game can't share).
+ */
 export type ShareRow =
   | { state: "waiting" }
   | { state: "later"; until: number }
-  | { state: "code"; words: string; host: string; until: number; opened: number[] }
+  | { state: "no"; until: number }
+  | { state: "code"; words: string; host: string; until: number; openBy?: number; opened: number[] }
   | { state: "stopped"; at: number }
+  | { state: "ended" }
   | { state: "none" };
 
 export interface AccountMeetup { ref: string; name: string; at: number; card: MeetupCard | null }
@@ -208,8 +219,20 @@ export interface AccountGame {
   learning: LearningRow;
   /** "requested": asked the studio to take this game off the account, not done yet. */
   unlink: "requested" | null;
+  /** When the game finished (null: not finished, or an older server). */
+  finishedAt: number | null;
 }
-export type HostPanel = { kind: "nothing" } | { kind: "pending" } | { kind: "funnel"; funnel: PublishedFunnel };
+/**
+ * What the host side saw of a meetup, as that role sees it. The bare
+ * "nothing" / "pending" / "funnel" shapes are an older server's.
+ */
+export type HostPanel =
+  | { kind: "nothing"; who?: undefined }
+  | { kind: "nothing"; who: "nobody" }
+  | { kind: "nothing"; who: "guest"; reader: string }
+  | { kind: "status"; host: string }
+  | { kind: "pending"; host?: string }
+  | { kind: "funnel"; host?: string; funnel: PublishedFunnel };
 export interface HostSaw { name: string; panel: HostPanel }
 export interface AccountPage { meetups: AccountMeetup[]; games: AccountGame[]; hostSaw: HostSaw[] }
 
@@ -220,12 +243,19 @@ export function asShareRow(v: unknown): ShareRow | null | undefined {
   switch (v.state) {
     case "waiting": return { state: "waiting" };
     case "none": return { state: "none" };
+    case "ended": return { state: "ended" };
+    case "no": return isTime(v.until) ? { state: "no", until: v.until } : undefined;
     case "later": return isTime(v.until) ? { state: "later", until: v.until } : undefined;
     case "stopped": return isTime(v.at) ? { state: "stopped", at: v.at } : undefined;
     case "code":
       if (!isStr(v.words) || !v.words || !isStr(v.host) || !isTime(v.until)) return undefined;
       if (!Array.isArray(v.opened) || !v.opened.every(isTime)) return undefined;
-      return { state: "code", words: v.words, host: v.host, until: v.until, opened: [...(v.opened as number[])] };
+      if (v.openBy !== undefined && !isTime(v.openBy)) return undefined;
+      return {
+        state: "code", words: v.words, host: v.host, until: v.until,
+        ...(isTime(v.openBy) ? { openBy: v.openBy } : {}),
+        opened: [...(v.opened as number[])],
+      };
     default: return undefined;
   }
 }
@@ -238,25 +268,57 @@ export function asLearningRow(v: unknown): LearningRow {
 /** The player's own studio-learning answer on the account page; null shows nothing. */
 export function learningLine(l: LearningRow): string | null {
   switch (l) {
-    case "yes": return "studio learning: you said yes.";
+    case "yes": return "studio learning: you said yes. you can change it to no.";
     case "no": return "studio learning: you said no.";
     case "unanswered": return "studio learning: you didn't answer.";
     default: return null;
   }
 }
 
-/** "take this game off my account" (spec §6), exactly. */
+/** After "change it to no": withdrawing studio learning (H18). */
+export const LEARNING_WITHDRAW =
+  "from now on the studio won't read this game to learn from it. it can't unread what it has already read. RI won't tell your co-parent.";
+
+/**
+ * "take this game off my account" (spec §6): exactly what it does and
+ * doesn't do. The request stops any code and takes the game off the kid list
+ * at once; the studio's "done" renames the seat, retires its link and takes
+ * the game off this page. Nothing is deleted from the game itself.
+ */
 export const UNLINK_WARNING =
-  "the studio will take this game off your account and cancel any code. your co-parent keeps their copy of the game, which includes what you wrote, without your name.";
+  "any share code stops now, and the game leaves your list of kids now. once the studio has done the rest, the game leaves this page, your old link to it stops working, and your co-parent's copy shows \"Parent 1\" or \"Parent 2\" where your name was. your co-parent keeps their copy, with everything you wrote in it. this doesn't delete the game, or the studio's technical record of it.";
 export const UNLINK_REQUESTED =
-  "you asked the studio to take this game off your account. it will disappear from this page when that's done.";
+  "you asked the studio to take this game off your account. it's off your list of kids and any code has stopped. it will leave this page when the studio has done the rest.";
+
+/** "remove from my list": it deletes the attendance record, so it says so first. */
+export const forgetWarning = (meetup: string) =>
+  `this deletes the studio's record that your account came to ${meetup}, and the card you agreed to leaves this page. games you played there stay below until you take them off.`;
+
+/** A game row's title: child, meetup and, once it has finished, the day. */
+export function gameRowTitle(g: Pick<AccountGame, "childName" | "eventName" | "finishedAt">, timeZone?: string): string {
+  const base = `${g.childName} · ${g.eventName}`;
+  return g.finishedAt === null ? base : `${base} · finished ${formatDate(g.finishedAt, timeZone)}`;
+}
+
+/** The line under "what the host or guest saw": only on a page with share codes. */
+export function codeOpeningsLine(anyShareCodes: boolean): string | null {
+  return anyShareCodes ? "and, if you gave them a share code, what's in it: its openings are listed with the game above. nothing else." : null;
+}
 
 function asPanel(v: unknown): HostPanel | null {
   if (!isRec(v)) return null;
-  if (v.kind === "nothing" || v.kind === "pending") return { kind: v.kind };
+  const host = isStr(v.host) && v.host ? v.host : undefined;
+  if (v.kind === "nothing") {
+    if (v.who === "nobody") return { kind: "nothing", who: "nobody" };
+    if (v.who === "guest") return isStr(v.reader) && v.reader ? { kind: "nothing", who: "guest", reader: v.reader } : null;
+    return v.who === undefined ? { kind: "nothing" } : null;
+  }
+  if (v.kind === "status") return host ? { kind: "status", host } : null;
+  if (v.kind === "pending") return host ? { kind: "pending", host } : { kind: "pending" };
   if (v.kind === "funnel") {
     const f = asFunnel(v.funnel);
-    return f ? { kind: "funnel", funnel: f } : null;
+    if (!f) return null;
+    return host ? { kind: "funnel", host, funnel: f } : { kind: "funnel", funnel: f };
   }
   return null;
 }
@@ -278,6 +340,7 @@ export function asAccountPage(v: unknown): AccountPage | null {
       ref: g.ref, childName: g.childName, eventName: g.eventName, share,
       learning: asLearningRow(g.learning),
       unlink: g.unlink === "requested" ? "requested" : null,
+      finishedAt: isTime(g.finishedAt) ? g.finishedAt : null,
     });
   }
   const hostSaw: HostSaw[] = [];
@@ -319,6 +382,10 @@ export function shareRowLines(row: ShareRow, timeZone?: string): ShareRowLines {
       return { runs: plain(`you haven't decided yet. you can until ${formatDate(row.until, timeZone)}.`), action: "decide" };
     case "stopped":
       return { runs: plain(`you stopped this code on ${formatDate(row.at, timeZone)}.`) };
+    case "ended":
+      return { runs: plain("this code no longer opens.") };
+    case "no":
+      return { runs: plain(`you said no, so nothing will be made. you can change it to yes until ${formatDate(row.until, timeZone)}.`), action: "decide" };
     case "none":
       return { runs: plain("no code was made for this game.") };
     case "code": {
@@ -327,7 +394,12 @@ export function shareRowLines(row: ShareRow, timeZone?: string): ShareRowLines {
         runs: [
           { text: `share code for ${h}: `, bold: false },
           { text: row.words, bold: true },
-          { text: `. give it to ${h} when and if you want to. it works for ${h} only, until ${formatDate(row.until, timeZone)}.`, bold: false },
+          {
+            text: row.openBy === undefined
+              ? `. give it to ${h} when and if you want to. it works for ${h} only, and ${h} can read it until ${formatDate(row.until, timeZone)}.`
+              : `. give it to ${h} when and if you want to. it works for ${h} only. ${h} can open it until ${formatDate(row.openBy, timeZone)}, then read it for 30 days after opening it: no later than ${formatDate(row.until, timeZone)}.`,
+            bold: false,
+          },
         ],
         access: row.opened.length > 0 ? `${h} opened it on ${formatDates(row.opened, timeZone)}.` : `${h} hasn't opened it.`,
         action: "stop",
@@ -342,11 +414,27 @@ export const stopWarning = (host: string) =>
 export const PANEL_PENDING = "nothing yet. numbers, if there are any, appear a day after the meetup closes.";
 export const PANEL_NOTHING = "nothing.";
 
-/** What the host saw of one meetup (the published panel, or why there isn't one). */
+/** What the host side saw of one meetup, exactly as that role sees it. */
 export function panelLine(p: HostPanel): string {
-  if (p.kind === "pending") return PANEL_PENDING;
-  if (p.kind === "nothing") return PANEL_NOTHING;
-  return funnelLine(p.funnel) ?? PANEL_NOTHING;
+  switch (p.kind) {
+    case "nothing":
+      if (p.who === "nobody") return "no host or guest saw anything: the studio ran this meetup alone.";
+      if (p.who === "guest") {
+        const r = p.reader;
+        return `${r} saw nothing about this meetup: not who came, who played, or how many. only what's in a share code, if you both made one and gave it to ${r}.`;
+      }
+      return PANEL_NOTHING;
+    case "status":
+      return `${p.host} saw only whether the meetup was open, full, paused or closed.`;
+    case "pending":
+      return p.host
+        ? `nothing yet. a day after the meetup closes, ${p.host} sees rough totals for the whole meetup, or only that it was too small if fewer than 5 games started.`
+        : PANEL_PENDING;
+    case "funnel": {
+      const line = funnelLine(p.funnel) ?? PANEL_NOTHING;
+      return p.host ? `${p.host} saw: ${line}` : line;
+    }
+  }
 }
 
 /**

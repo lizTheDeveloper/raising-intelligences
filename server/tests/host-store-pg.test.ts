@@ -163,6 +163,12 @@ describe.skipIf(!process.env.DATABASE_URL)("host tools store on Postgres", () =>
     expect(await store.learningGames()).toContain(gameId);
     await store.deleteLearning(gameId, "parent1");
     expect(await store.getLearning(gameId)).toEqual([{ slot: "parent2", answer: "yes" }]);
+    // Withdrawal from the account page: a yes becomes no; an unanswered seat gets a no.
+    await store.withdrawLearning(gameId, "parent2", 4);
+    await store.withdrawLearning(gameId, "parent1", 5);
+    expect((await store.getLearning(gameId)).sort((a, b) => a.slot.localeCompare(b.slot))).toEqual([
+      { slot: "parent1", answer: "no" }, { slot: "parent2", answer: "no" },
+    ]);
 
     // Decisions and acknowledgements go per seat / per subject.
     await store.setDecision({ gameId, slot: "parent1", answer: "later", at: 1, windowEndsAt: 50 });

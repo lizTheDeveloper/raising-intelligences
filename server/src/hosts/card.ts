@@ -102,13 +102,17 @@ export function traceLine(t: FrozenTerms): string {
   const where = t.traceWhere === "studio" ? "on the studio's own servers" : "with Langfuse, our tracing provider";
   return t.traceRetentionDays !== null
     ? `it's kept ${where} for ${t.traceRetentionDays} days, then deleted.`
-    : `it's kept ${where} until the studio deletes it. you can ask the studio to take your game off your account from your account page.`;
+    : `it's kept ${where} until the studio deletes it, and there's no way yet to ask for that. taking a game off your account (on your account page) takes your name off your co-parent's copy, but deletes neither the game nor this record.`;
 }
 
 const LEARNING_LINE = {
   studio: "if you both say so at the end, the studio may read your game to improve stranger mode. it's never published or used to train AI. if either of you says no, it isn't read for that.",
   never: "games from this meetup are never used in the studio's blog posts, research or AI training.",
 };
+
+/** Coming to a meetup is itself a record (attendance can be sensitive: a faith or health group). */
+export const ATTENDANCE_LINE =
+  "the studio records that your account came to this meetup, and which card you agreed to, until a year after the meetup closes. \"remove from my list\" on your account page deletes that record sooner. a game you play here is a separate record.";
 
 const HANDLE_LINE = {
   on: "if you both say yes, you'll each see the other's Matrix handle (not a phone number or email). if either says no, nothing is shared.",
@@ -131,7 +135,7 @@ export function l1Block(host: string): string[] {
 
 export function l3Block(host: string): string[] {
   return [
-    `${host} only sees your game if **you two** give them a share code. at the end you'll each be asked, on your own, and you'll see exactly what it shows first. if you both say yes, a code appears on your account page, and you decide whether and when to give it to ${host}.`,
+    `${host} only sees your game if **you two** give them a share code. at the end you'll each be asked, on your own, and you'll see exactly what it shows first. if you both say yes, a code appears on your account page, and you decide whether and when to give it to ${host}. ${host} can open a code for 14 days after it appears, then read it for 30 days after opening it.`,
     `RI never gives ${host} a list of who played or who made a code. but ${host} may know you came, and may notice that no code came from your pair. they can't tell why. games end up without a code when they don't finish, when either of you says no or waits, when you keep the code to yourselves, or for reasons RI doesn't share.`,
     `a code shows: your report card (without its quotes) and your child's epilogue. both were written from your whole game, including your private talks with your child. they don't show those talks, but they can reflect them. you'll read exactly what ${host} would see before you choose.`,
     "if you both say yes but no code appears, your game couldn't make one. RI doesn't say why.",
@@ -201,6 +205,7 @@ export function buildCard(input: {
     "the game runs on the studio's servers. what you type is sent to AI providers, through OpenRouter, to write your child's replies. they don't get your name or your ID.",
     `the studio keeps a technical record of every game, including private talks, to fix problems and review reports. ${traceLine(terms)}`,
     terms.learning ? LEARNING_LINE.studio : LEARNING_LINE.never,
+    ATTENDANCE_LINE,
     "the studio counts, without cookies, how many people reach each step of stranger mode, across all meetups. nothing on this page is counted.",
   ];
   const who = name ? `${name} sees nothing about it` : "nobody at this meetup sees anything about it";

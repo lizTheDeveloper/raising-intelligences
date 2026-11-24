@@ -18,7 +18,7 @@ export type ShareAnswer = "yes" | "no" | "later";
 export type ShareView =
   | { state: "ask" }
   | { state: "waiting" }
-  | { state: "no" }
+  | { state: "no"; until: number }
   | { state: "later"; until: number };
 
 /** Every failure of a redemption, whatever the reason (§5.2). */
@@ -70,7 +70,7 @@ export class ShareService {
 
   private view(answer: ShareAnswer | null, windowEndsAt: number): ShareView {
     if (answer === "yes") return { state: "waiting" };
-    if (answer === "no") return { state: "no" };
+    if (answer === "no") return { state: "no", until: windowEndsAt };
     if (answer === "later") return { state: "later", until: windowEndsAt };
     return { state: "ask" };
   }
@@ -86,9 +86,11 @@ export class ShareService {
   }
 
   /**
-   * One seat answers. yes and no are final; "later" can become yes or no until
-   * the window closes. The reply is only this seat's own view, and nothing is
-   * ever sent to the other seat because of it.
+   * One seat answers. yes is final. "later" can become yes or no, and no can
+   * become yes, until the window closes: a no turned yes looks to the other
+   * seat exactly like a "later" turned yes (the same random delay before a
+   * code, and no message either way). The reply is only this seat's own view,
+   * and nothing is ever sent to the other seat because of it.
    */
   async answer(gameId: string, slot: Slot, answer: unknown): Promise<ShareView | null> {
     if (answer !== "yes" && answer !== "no" && answer !== "later") return null;
@@ -98,7 +100,8 @@ export class ShareService {
     if (this.now() >= windowEndsAt) return null;
     if (await this.hosts.store.codeByGame(gameId)) return { state: "waiting" };
     const prior = (await this.hosts.store.getDecisions(gameId)).find((x) => x.slot === slot);
-    if (prior && prior.answer !== "later") return this.view(prior.answer, windowEndsAt);
+    if (prior?.answer === "yes") return this.view("yes", windowEndsAt);
+    if (prior?.answer === "no" && answer !== "yes") return this.view("no", windowEndsAt);
     await this.hosts.store.setDecision({ gameId, slot, answer, at: this.now(), windowEndsAt });
     const all = await this.hosts.store.getDecisions(gameId);
     if (answer === "yes" && all.length === 2 && all.every((d) => d.answer === "yes")) await this.secondYes(gameId, ctx);

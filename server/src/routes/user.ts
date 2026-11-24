@@ -14,8 +14,21 @@ import { requireMatrixUser, type MatrixVerifier, type SeatOf } from "../security
  * proof of access when the device has it (the game's secret, or its seat
  * token); only a proven row lets its owner read the game later.
  */
-export function createUserRoutes(repo: GameRepository, deps: { verifyMatrix: MatrixVerifier; seatOf: SeatOf }): Router {
+export function createUserRoutes(
+  repo: GameRepository,
+  deps: {
+    verifyMatrix: MatrixVerifier;
+    seatOf: SeatOf;
+    /**
+     * May this account list this game? False for a stranger game the account
+     * no longer holds a seat in, or has asked to be taken off (host tools
+     * unlink, spec §6). Absent: every game may be listed.
+     */
+    mayList?: (userId: string, gameId: string) => Promise<boolean>;
+  },
+): Router {
   const router = Router();
+  const mayList = deps.mayList ?? (async () => true);
   const owner = requireMatrixUser(deps.verifyMatrix);
 
   const validUser = (req: Request, res: Response): boolean => {
@@ -26,7 +39,13 @@ export function createUserRoutes(repo: GameRepository, deps: { verifyMatrix: Mat
 
   router.get("/user/:userId/kids", owner, async (req: Request, res: Response) => {
     if (!validUser(req, res)) return;
-    res.json(await repo.listUserKids(String(req.params.userId)));
+    const userId = String(req.params.userId);
+    const kids = [];
+    for (const kid of await repo.listUserKids(userId)) {
+      if (await mayList(userId, kid.gameId)) kids.push(kid);
+      else await repo.deleteUserGame(userId, kid.gameId); // taken off this account: the row goes too
+    }
+    res.json(kids);
   });
 
   router.post("/user/:userId/kids", owner, async (req: Request, res: Response) => {
@@ -39,6 +58,7 @@ export function createUserRoutes(repo: GameRepository, deps: { verifyMatrix: Mat
     }
     for (const kid of kids) {
       if (typeof kid?.gameId !== "string" || !UUID_RE.test(kid.gameId) || typeof kid.childName !== "string" || !kid.childName) continue;
+      if (!(await mayList(userId, kid.gameId))) continue;
       const proven =
         (typeof kid.secret === "string" && verifyGameSecret(kid.secret, await repo.getAccessSecretHash(kid.gameId))) ||
         (typeof kid.playerToken === "string" && kid.playerToken.length > 0 && (await deps.seatOf(kid.gameId, kid.playerToken)).slot !== null);
